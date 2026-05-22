@@ -84,6 +84,8 @@ def test_crab_classifier_keeps_native_rock_under_red_attenuation():
     assert green_count == 4
 
 
+@pytest.mark.groundtruth
+@pytest.mark.slow
 def test_reference_copy_detector_counts_underwater_aux_video_frame():
     video_path = (
         REPO_ROOT
@@ -112,6 +114,8 @@ def test_reference_copy_detector_counts_underwater_aux_video_frame():
     assert result["species_counts"]["native_rock"] == 2
 
 
+@pytest.mark.groundtruth
+@pytest.mark.slow
 def test_reference_copy_detector_ignores_tiny_artifact_candidate():
     video_path = (
         REPO_ROOT
@@ -137,6 +141,8 @@ def test_reference_copy_detector_ignores_tiny_artifact_candidate():
     assert result["count"] == 8
 
 
+@pytest.mark.groundtruth
+@pytest.mark.slow
 def test_video_detector_selects_underwater_frame_with_expected_counts():
     video_path = (
         REPO_ROOT
@@ -165,6 +171,8 @@ def test_video_detector_selects_underwater_frame_with_expected_counts():
     assert result["quality"]["confidence"] > 0.0
 
 
+@pytest.mark.groundtruth
+@pytest.mark.slow
 def test_video_detector_rejects_low_evidence_gripper_scan():
     video_path = (
         REPO_ROOT
@@ -187,6 +195,8 @@ def test_video_detector_rejects_low_evidence_gripper_scan():
     assert result is None
 
 
+@pytest.mark.groundtruth
+@pytest.mark.slow
 def test_hard_pool_video_rejects_compression_artifact_frame():
     video_path = (
         REPO_ROOT
@@ -210,6 +220,8 @@ def test_hard_pool_video_rejects_compression_artifact_frame():
     assert result is None or result["count"] <= 12
 
 
+@pytest.mark.groundtruth
+@pytest.mark.slow
 def test_video_detector_selects_plausible_frame_in_hard_pool_video():
     video_path = (
         REPO_ROOT
@@ -239,6 +251,8 @@ def test_video_detector_selects_plausible_frame_in_hard_pool_video():
     assert result["temporal_vote"]["signature"][:3] == (4, 2, 2)
 
 
+@pytest.mark.groundtruth
+@pytest.mark.slow
 def test_hard_pool_video_keeps_edge_touching_green_crab():
     video_path = (
         REPO_ROOT

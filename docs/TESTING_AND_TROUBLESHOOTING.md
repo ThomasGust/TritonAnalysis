@@ -3,7 +3,7 @@
 The test suite is hardware-free. Some computer-vision cases use local sample
 recordings when present and skip themselves when those recordings are missing.
 
-## Run The Full Test Suite
+## Run The Quick Trust Check
 
 From the TritonAnalysis repository root:
 
@@ -15,8 +15,40 @@ python -m pytest
 If `pytest` is not installed:
 
 ```powershell
-python -m pip install pytest
+python -m pip install -r requirements-dev.txt
 ```
+
+`pytest.ini` sets `tests/` as the test root, quiet output, and strict marker
+validation. The default suite is the fast trust check: it includes lightweight
+logic, GUI-offscreen, synthetic, and bundled-sample tests, while skipping tests
+marked `network`, `hardware`, `slow`, or `groundtruth`.
+
+The helper script exposes the common tiers:
+
+```powershell
+python .\tools\trust_check.py quick
+python .\tools\trust_check.py groundtruth
+python .\tools\trust_check.py extended
+python .\tools\trust_check.py full
+```
+
+Equivalent direct pytest commands:
+
+| Goal | Command |
+| --- | --- |
+| Fast software-only check | `python -m pytest` |
+| Saved CV recording/data regression tests | `python -m pytest --run-groundtruth -m groundtruth` |
+| All non-hardware optional tiers | `python -m pytest --run-extended` |
+| Physical hardware tests, if added | `python -m pytest --run-hardware -m hardware` |
+| Everything | `python -m pytest --run-all-trust` |
+| Coverage report, if `pytest-cov` is installed | `python .\tools\trust_check.py coverage` |
+
+Environment variables work for CI or shell profiles:
+
+- `TRITON_RUN_NETWORK=1`
+- `TRITON_RUN_GROUNDTRUTH=1`
+- `TRITON_RUN_SLOW=1`
+- `TRITON_RUN_HARDWARE=1`
 
 ## Focused Tests
 
@@ -33,8 +65,24 @@ python -m pytest tests\test_color_corr.py
 python -m pytest tests\test_analysis_app_windows_responsive.py
 ```
 
-`pytest.ini` defines the `vision` marker for CV tests that may depend on larger
-local recordings.
+`pytest.ini` defines the `vision` marker for computer-vision tests. Lightweight
+vision tests with bundled or synthetic fixtures stay in the quick suite. CV tests
+that need saved recordings or other larger local datasets should also be marked
+`groundtruth` and usually `slow`.
+
+## Test Marker Policy
+
+Use the default suite for deterministic tests that can run on any developer
+machine. Mark new tests when they leave that boundary:
+
+- `vision`: exercises image/video analysis behavior.
+- `groundtruth`: depends on optional saved media or datasets outside the normal
+  repository fixtures.
+- `slow`: intentionally takes long enough that it should not block quick checks.
+- `network`: opens sockets or depends on active networking.
+- `hardware`: touches physical hardware or live services.
+- `integration`: crosses applet/module boundaries but remains deterministic and
+  hardware-free.
 
 ## What The Tests Cover
 
