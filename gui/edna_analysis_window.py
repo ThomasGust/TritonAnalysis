@@ -1,3 +1,5 @@
+"""PyQt applet for eDNA frequency analysis and report export."""
+
 from __future__ import annotations
 
 import re
@@ -41,6 +43,8 @@ from gui.responsive import horizontal_scroll_area, resize_to_available_screen
 
 
 class JudgeDisplayWidget(QWidget):
+    """Readonly judge-facing preview of eDNA frequency rows."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("ednaJudgeDisplay")
@@ -171,6 +175,8 @@ class JudgeDisplayWidget(QWidget):
 
 
 class JudgeDisplayWindow(QMainWindow):
+    """Detached window for presenting the judge-facing eDNA table."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
@@ -185,6 +191,8 @@ class JudgeDisplayWindow(QMainWindow):
 
 
 class EDNAAnalysisWindow(QMainWindow):
+    """Window for entering species counts and exporting eDNA results."""
+
     def __init__(self, *, use_sample: bool = False, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)

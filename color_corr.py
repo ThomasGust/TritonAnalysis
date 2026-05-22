@@ -59,6 +59,8 @@ from gui.responsive import horizontal_scroll_area, resize_to_available_screen, v
 
 @dataclass
 class ProcessingSettings:
+    """Image-enhancement settings applied to video frames."""
+
     white_balance_strength: float = 0.35
     red_restore_strength: float = 0.20
     clahe_strength: float = 0.25
@@ -75,6 +77,8 @@ class ProcessingSettings:
 
 @dataclass
 class FrameSelectionSettings:
+    """Settings for selecting representative frames from a video."""
+
     window_seconds: float = 0.25
     min_motion_px: float = 8.0
     force_every_seconds: float = 2.0
@@ -84,6 +88,8 @@ class FrameSelectionSettings:
 
 @dataclass
 class FrameCandidate:
+    """Candidate frame and quality metrics used by frame export workers."""
+
     frame_index: int
     time_s: float
     frame: np.ndarray
@@ -492,6 +498,8 @@ class VideoProcessor:
 
 
 class ExportWorker(QThread):
+    """Background worker for exporting a processed full video."""
+
     progress = pyqtSignal(int)
     status = pyqtSignal(str)
     finished_ok = pyqtSignal(str)
@@ -583,6 +591,8 @@ class ExportWorker(QThread):
 
 
 class FixedIntervalFrameExportWorker(QThread):
+    """Background worker for exporting frames at fixed time intervals."""
+
     progress = pyqtSignal(int)
     status = pyqtSignal(str)
     finished_ok = pyqtSignal(str)
@@ -721,6 +731,8 @@ class FixedIntervalFrameExportWorker(QThread):
 
 
 class FrameExportWorker(QThread):
+    """Background worker for exporting quality-selected still frames."""
+
     progress = pyqtSignal(int)
     status = pyqtSignal(str)
     finished_ok = pyqtSignal(str)
@@ -909,6 +921,8 @@ class FrameExportWorker(QThread):
 
 
 class MainWindow(QMainWindow):
+    """PyQt6 color-correction and frame-export applet window."""
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Underwater PVC / Red Target Color Corrector")
@@ -1476,6 +1490,7 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    """Launch the color-correction GUI."""
     app = QApplication(sys.argv)
     win = MainWindow()
     win.show()

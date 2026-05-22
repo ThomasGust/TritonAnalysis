@@ -1,3 +1,5 @@
+"""PyQt applet for previewing and exporting the coral garden prism model."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -35,6 +37,8 @@ from gui.responsive import resize_to_available_screen
 
 
 class CoralGardenViewport(QWidget):
+    """Matplotlib-backed 3D viewport for the coral garden prism model."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._length_cm = 150.0
@@ -278,6 +282,8 @@ class CoralGardenViewport(QWidget):
 
 
 class CoralGardenModelWindow(QMainWindow):
+    """Window for entering dimensions and exporting the coral garden model."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Coral Garden CAD Model")

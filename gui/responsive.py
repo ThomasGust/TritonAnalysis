@@ -1,3 +1,5 @@
+"""Responsive Qt layout helpers shared by analysis applets."""
+
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt
@@ -84,4 +86,3 @@ def vertical_scroll_area(widget: QWidget, *, object_name: str = "responsiveContr
     scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
     scroll.setMinimumWidth(0)
     return scroll
-

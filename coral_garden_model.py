@@ -1,3 +1,5 @@
+"""Manual coral garden model generation and OBJ export helpers."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,6 +13,8 @@ _SEGMENT_HEIGHT_FACTORS = (0.56, 1.0, 0.36)
 
 @dataclass(frozen=True)
 class RectangularPrism:
+    """Axis-aligned rectangular prism in centimeter model coordinates."""
+
     name: str
     x_min: float
     x_max: float
@@ -66,6 +70,7 @@ def build_coral_garden_prisms(
     height_cm: float,
     width_cm: float = DEFAULT_CORAL_GARDEN_WIDTH_CM,
 ) -> tuple[RectangularPrism, RectangularPrism, RectangularPrism]:
+    """Build the three-prism approximation from measured overall dimensions."""
     length_cm = _positive_finite(length_cm, "length_cm")
     height_cm = _positive_finite(height_cm, "height_cm")
     width_cm = _positive_finite(width_cm, "width_cm")
@@ -109,6 +114,7 @@ def build_coral_garden_prisms(
 def model_bounds(
     prisms: tuple[RectangularPrism, ...],
 ) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+    """Return ``(min_xyz, max_xyz)`` bounds for a prism collection."""
     if not prisms:
         raise ValueError("at least one prism is required")
 
@@ -128,6 +134,7 @@ def model_bounds(
 
 
 def format_cm(value: float) -> str:
+    """Format a centimeter value for UI labels and OBJ comments."""
     return f"{float(value):.1f} cm"
 
 
@@ -138,6 +145,7 @@ def export_obj(
     height_cm: float,
     width_cm: float,
 ) -> str:
+    """Export prism faces and dimension guide lines as Wavefront OBJ text."""
     lines = [
         "# Coral garden manual CAD model",
         f"# Length: {format_cm(length_cm)}",

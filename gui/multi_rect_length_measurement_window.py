@@ -1,3 +1,5 @@
+"""PyQt applet for multi-rectangle planar length measurement."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -70,18 +72,22 @@ ANCHOR_KEYS = [
 
 
 def measurement_segment_key(index: int) -> str:
+    """Return the storage key for a measurement segment by zero-based index."""
     return f"measure_{index + 1}"
 
 
 def measurement_start_key(index: int) -> str:
+    """Return the click key for a measurement segment start point."""
     return f"{measurement_segment_key(index)}_start"
 
 
 def measurement_end_key(index: int) -> str:
+    """Return the click key for a measurement segment end point."""
     return f"{measurement_segment_key(index)}_end"
 
 
 def measurement_index_from_key(key: str) -> int | None:
+    """Extract a zero-based measurement index from a start/end key."""
     parts = key.split("_")
     if len(parts) != 3 or parts[0] != "measure" or parts[2] not in {"start", "end"}:
         return None
@@ -95,6 +101,7 @@ def measurement_index_from_key(key: str) -> int | None:
 
 
 def measurement_indices_from_specs(specs: list[ClickSpec]) -> list[int]:
+    """Return sorted measurement indices referenced by click specs."""
     indices = {
         index
         for spec in specs
@@ -106,15 +113,19 @@ def measurement_indices_from_specs(specs: list[ClickSpec]) -> list[int]:
 
 @dataclass(frozen=True)
 class ClickSpec:
+    """Named click target displayed by the multi-rectangle canvas."""
+
     key: str
     label: str
 
 
 def is_supported_image_path(path: Path) -> bool:
+    """Return whether ``path`` is a supported image file."""
     return path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES
 
 
 def is_supported_video_path(path: Path) -> bool:
+    """Return whether ``path`` is a supported video file."""
     return path.is_file() and path.suffix.lower() in VIDEO_SUFFIXES
 
 
@@ -124,6 +135,7 @@ def line_intersection(
     line_b_start: tuple[float, float],
     line_b_end: tuple[float, float],
 ) -> tuple[float, float]:
+    """Return the intersection point of two infinite image lines."""
     a1 = np.array([line_a_start[0], line_a_start[1], 1.0], dtype=np.float64)
     a2 = np.array([line_a_end[0], line_a_end[1], 1.0], dtype=np.float64)
     b1 = np.array([line_b_start[0], line_b_start[1], 1.0], dtype=np.float64)
@@ -143,6 +155,7 @@ def homogeneous_line(
     point_a: tuple[float, float],
     point_b: tuple[float, float],
 ) -> np.ndarray:
+    """Return a homogeneous line through two image points."""
     a = np.array([point_a[0], point_a[1], 1.0], dtype=np.float64)
     b = np.array([point_b[0], point_b[1], 1.0], dtype=np.float64)
     line = np.cross(a, b)
@@ -153,6 +166,7 @@ def homogeneous_line(
 
 
 def fit_line_through_points(points: list[tuple[float, float]]) -> np.ndarray:
+    """Least-squares fit a homogeneous line through clicked points."""
     if len(points) < 2:
         raise MeasurementError("At least two points are required to fit a line")
     homogeneous_points = np.asarray(
@@ -171,6 +185,7 @@ def fit_line_through_points(points: list[tuple[float, float]]) -> np.ndarray:
 
 
 def fit_vanishing_point(lines: list[np.ndarray]) -> np.ndarray:
+    """Least-squares fit a vanishing point from homogeneous lines."""
     if len(lines) < 2:
         raise MeasurementError("At least two parallel direction lines are required")
     line_matrix = np.asarray(lines, dtype=np.float64)
@@ -188,6 +203,7 @@ def line_through_anchor_and_vanishing(
     anchor: tuple[float, float],
     vanishing: np.ndarray,
 ) -> np.ndarray:
+    """Build a line from an anchor point toward a vanishing point."""
     anchor_h = np.array([anchor[0], anchor[1], 1.0], dtype=np.float64)
     line = np.cross(anchor_h, vanishing)
     norm = float(np.linalg.norm(line[:2]))
@@ -197,6 +213,7 @@ def line_through_anchor_and_vanishing(
 
 
 def intersection_from_lines(line_a: np.ndarray, line_b: np.ndarray) -> tuple[float, float]:
+    """Return the finite intersection of two homogeneous lines."""
     point = np.cross(line_a, line_b)
     if abs(float(point[2])) < 1.0e-9:
         raise MeasurementError("Boundary lines are too close to parallel")
@@ -207,11 +224,14 @@ def intersection_from_lines(line_a: np.ndarray, line_b: np.ndarray) -> tuple[flo
 
 
 def average_point(points: list[tuple[float, float]]) -> tuple[float, float]:
+    """Return the centroid of a non-empty point list."""
     value = np.asarray(points, dtype=np.float64)
     return (float(np.mean(value[:, 0])), float(np.mean(value[:, 1])))
 
 
 class PlanarMeasurementCanvas(QWidget):
+    """Zoomable canvas for source, anchor, reference, and measurement points."""
+
     points_changed = pyqtSignal(int)
     selection_changed = pyqtSignal(str)
     zoom_changed = pyqtSignal(float)
@@ -908,6 +928,8 @@ class PlanarMeasurementCanvas(QWidget):
 
 
 class MultiRectLengthMeasurementWindow(QMainWindow):
+    """Window for measuring several planar lengths from one media frame."""
+
     def __init__(self, media_paths: list[str | Path] | None = None, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)

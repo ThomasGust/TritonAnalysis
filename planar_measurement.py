@@ -1,3 +1,5 @@
+"""Planar homography measurement helpers for saved mission media."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -16,6 +18,8 @@ class MeasurementError(ValueError):
 
 @dataclass(frozen=True)
 class PlanarHeightMeasurementResult:
+    """Result of measuring a vertical/in-plane height on a rectified plane."""
+
     height_cm: float
     plane_width_cm: float
     plane_height_cm: float
@@ -29,6 +33,8 @@ class PlanarHeightMeasurementResult:
 
 @dataclass(frozen=True)
 class PlanarSegmentMeasurementResult:
+    """Result of measuring a general segment on a rectified plane."""
+
     length_cm: float
     plane_width_cm: float
     plane_height_cm: float

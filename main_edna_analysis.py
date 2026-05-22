@@ -1,3 +1,5 @@
+"""Entry point for the standalone eDNA frequency analysis GUI."""
+
 from __future__ import annotations
 
 import argparse
@@ -14,6 +16,7 @@ from gui.style import apply_modern_style
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the eDNA analysis command-line parser."""
     parser = argparse.ArgumentParser(
         description="Standalone GUI for MATE ROV 2026 eDNA percent-frequency analysis.",
     )
@@ -26,6 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Launch the eDNA analysis applet."""
     parser = build_parser()
     args = parser.parse_args(argv)
 

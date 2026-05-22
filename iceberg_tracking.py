@@ -1,3 +1,5 @@
+"""Iceberg coordinate geometry, threat assessment, and report formatting."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -14,6 +16,8 @@ NAUTICAL_MILES_PER_DEGREE_LATITUDE = 60.0
 
 @dataclass(frozen=True)
 class Platform:
+    """Fixed offshore platform location and local water depth."""
+
     name: str
     latitude_deg: float
     longitude_deg: float
@@ -26,6 +30,8 @@ class Platform:
 
 @dataclass(frozen=True)
 class TrackGeometry:
+    """Local geometry between an iceberg track and one platform."""
+
     east_nm: float
     north_nm: float
     range_nm: float
@@ -40,6 +46,8 @@ class TrackGeometry:
 
 @dataclass(frozen=True)
 class ThreatAssessment:
+    """Surface/subsea threat result for one platform."""
+
     platform: Platform
     geometry: TrackGeometry
     keel_depth_m: float
@@ -53,6 +61,8 @@ class ThreatAssessment:
 
 @dataclass(frozen=True)
 class SurveyStatus:
+    """Validation result for manually entered survey sequence numbers."""
+
     numbers: tuple[int | None, ...]
     surveyed_count: int
     complete: bool
@@ -69,6 +79,7 @@ DEFAULT_PLATFORMS: tuple[Platform, ...] = (
 
 
 def normalize_heading_deg(heading_deg: float) -> float:
+    """Normalize a true-bearing heading into the range ``[0, 360)``."""
     heading = float(heading_deg) % 360.0
     if heading < 0.0:
         heading += 360.0
@@ -113,6 +124,7 @@ def local_point_to_lat_lon(
     east_nm: float,
     north_nm: float,
 ) -> tuple[float, float]:
+    """Convert local nautical-mile offsets back to latitude/longitude."""
     latitude = float(origin_latitude_deg) + float(north_nm) / NAUTICAL_MILES_PER_DEGREE_LATITUDE
     mean_latitude = math.radians((float(origin_latitude_deg) + latitude) * 0.5)
     cosine = max(abs(math.cos(mean_latitude)), 1.0e-9)
@@ -128,6 +140,7 @@ def decimal_degrees_from_dms(
     seconds: int | float,
     hemisphere: str,
 ) -> float:
+    """Convert degrees/minutes/seconds plus hemisphere to decimal degrees."""
     hemi = str(hemisphere).strip().upper()
     if hemi not in {"N", "S", "E", "W"}:
         raise ValueError("hemisphere must be N, S, E, or W")
@@ -138,6 +151,7 @@ def decimal_degrees_from_dms(
 
 
 def decimal_degrees_to_dms(value: float, *, seconds_decimals: int = 2) -> tuple[int, int, float]:
+    """Convert decimal degrees to absolute degrees/minutes/seconds."""
     absolute = abs(float(value))
     degrees = int(math.floor(absolute))
     minutes_total = (absolute - degrees) * 60.0
@@ -160,6 +174,7 @@ def format_dms_coordinate(
     *,
     seconds_decimals: int = 0,
 ) -> str:
+    """Format a latitude or longitude in the competition DMS notation."""
     coordinate_type = str(coordinate).strip().lower()
     if coordinate_type not in {"lat", "latitude", "lon", "longitude"}:
         raise ValueError("coordinate must be latitude/lat or longitude/lon")
@@ -194,6 +209,7 @@ def closest_approach_to_platform(
     platform: Platform,
     future_track_only: bool = True,
 ) -> TrackGeometry:
+    """Project the platform onto the iceberg track and measure closest approach."""
     east_nm, north_nm = local_offset_nm(
         iceberg_latitude_deg,
         iceberg_longitude_deg,
@@ -230,6 +246,7 @@ def closest_approach_to_platform(
 
 
 def surface_threat_level(*, closest_approach_nm: float, grounds_before_platform: bool) -> tuple[str, str]:
+    """Classify surface-threat level from closest approach and grounding."""
     if grounds_before_platform:
         return (
             THREAT_GREEN,
@@ -243,6 +260,7 @@ def surface_threat_level(*, closest_approach_nm: float, grounds_before_platform:
 
 
 def subsea_threat_level(*, closest_approach_nm: float, keel_to_depth_ratio: float) -> tuple[str, str]:
+    """Classify subsea-asset threat level from range and keel-depth ratio."""
     if closest_approach_nm > 25.0:
         return THREAT_GREEN, "Track stays more than 25 NM from this platform's subsea assets."
     if keel_to_depth_ratio >= 1.10:
@@ -266,6 +284,7 @@ def assess_platform(
     platform: Platform,
     future_track_only: bool = True,
 ) -> ThreatAssessment:
+    """Assess one platform against the entered iceberg track."""
     keel_depth = float(keel_depth_m)
     if keel_depth < 0.0:
         raise ValueError("keel_depth_m must be non-negative")
@@ -311,6 +330,7 @@ def assess_all_platforms(
     platforms: Iterable[Platform] = DEFAULT_PLATFORMS,
     future_track_only: bool = True,
 ) -> list[ThreatAssessment]:
+    """Assess every platform in ``platforms`` using the same iceberg state."""
     return [
         assess_platform(
             iceberg_latitude_deg=iceberg_latitude_deg,
@@ -325,6 +345,7 @@ def assess_all_platforms(
 
 
 def evaluate_survey_numbers(numbers: Sequence[int | None]) -> SurveyStatus:
+    """Validate the survey numbers expected by the task workflow."""
     normalized = tuple(None if number is None else int(number) for number in numbers)
     present = [number for number in normalized if number is not None]
     surveyed_count = len(present)
@@ -374,6 +395,7 @@ def evaluate_survey_numbers(numbers: Sequence[int | None]) -> SurveyStatus:
 
 
 def count_levels(assessments: Iterable[ThreatAssessment], attribute: str) -> dict[str, int]:
+    """Count green/yellow/red levels on ``surface_level`` or ``subsea_level``."""
     counts = {THREAT_GREEN: 0, THREAT_YELLOW: 0, THREAT_RED: 0}
     for assessment in assessments:
         level = str(getattr(assessment, attribute))
@@ -383,6 +405,7 @@ def count_levels(assessments: Iterable[ThreatAssessment], attribute: str) -> dic
 
 
 def format_level(level: str) -> str:
+    """Return a display label for a threat-level token."""
     normalized = str(level).strip().lower()
     if normalized == THREAT_RED:
         return "RED"
@@ -401,6 +424,7 @@ def build_judge_report(
     assessments: Sequence[ThreatAssessment],
     future_track_only: bool = True,
 ) -> str:
+    """Build the text report shown/copied from the iceberg tracking applet."""
     track_mode = "forward heading ray" if future_track_only else "full heading line"
     lines = [
         "Iceberg Tracking Report",

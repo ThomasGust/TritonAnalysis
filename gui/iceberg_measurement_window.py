@@ -1,3 +1,5 @@
+"""PyQt applet for iceberg PVC segment measurement from saved media."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -40,20 +42,26 @@ SPATIAL_MODE = "spatial"
 
 @dataclass(frozen=True)
 class ClickSpec:
+    """Named click target displayed by the measurement canvas."""
+
     key: str
     label: str
     marker: str | None = None
 
 
 def is_supported_image_path(path: Path) -> bool:
+    """Return whether ``path`` is a supported image file."""
     return path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES
 
 
 def is_supported_video_path(path: Path) -> bool:
+    """Return whether ``path`` is a supported video file."""
     return path.is_file() and path.suffix.lower() in VIDEO_SUFFIXES
 
 
 class MeasurementCanvas(QWidget):
+    """Zoomable canvas for selecting iceberg calibration and measurement points."""
+
     points_changed = pyqtSignal(int)
     selection_changed = pyqtSignal(str)
     zoom_changed = pyqtSignal(float)
@@ -555,6 +563,8 @@ class MeasurementCanvas(QWidget):
 
 
 class IcebergMeasurementWindow(QMainWindow):
+    """Window for measuring the iceberg variable segment from media."""
+
     def __init__(self, media_paths: list[str | Path] | None = None, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)

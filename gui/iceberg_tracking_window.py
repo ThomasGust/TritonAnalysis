@@ -1,3 +1,5 @@
+"""PyQt applet for iceberg tracking threat assessment."""
+
 from __future__ import annotations
 
 import math
@@ -75,6 +77,8 @@ def _level_text_color(level: str) -> QColor:
 
 
 class IcebergMapWidget(QWidget):
+    """Map-style visualization of iceberg track and platform threat zones."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._iceberg_latitude_deg = 46.5
@@ -423,6 +427,8 @@ class IcebergMapWidget(QWidget):
 
 
 class IcebergTrackingWindow(QMainWindow):
+    """Operator window for entering iceberg data and reviewing threat results."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Iceberg Tracking Threat Assessment")

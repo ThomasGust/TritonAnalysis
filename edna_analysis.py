@@ -1,3 +1,5 @@
+"""eDNA percent-frequency calculations and report formatting."""
+
 from __future__ import annotations
 
 import csv
@@ -8,6 +10,8 @@ from typing import Sequence
 
 @dataclass(frozen=True)
 class Species:
+    """Species label used by the eDNA task table."""
+
     common_name: str
     scientific_name: str
 
@@ -18,6 +22,8 @@ class Species:
 
 @dataclass(frozen=True)
 class FrequencyRow:
+    """Calculated count and percent-frequency row for one species."""
+
     species: Species
     count: int
     percent_frequency: float
@@ -43,6 +49,7 @@ def calculate_frequency_rows(
     counts: Sequence[int],
     species: Sequence[Species] = DEFAULT_SPECIES,
 ) -> list[FrequencyRow]:
+    """Validate counts and calculate percent-frequency rows."""
     if len(counts) != len(species):
         raise ValueError(f"expected {len(species)} counts, received {len(counts)}")
 
@@ -62,15 +69,18 @@ def calculate_frequency_rows(
 
 
 def total_seen(rows: Sequence[FrequencyRow]) -> int:
+    """Return the total number of organisms represented by ``rows``."""
     return sum(row.count for row in rows)
 
 
 def format_percent(value: float, precision: int = 2) -> str:
+    """Format a percentage with a bounded decimal precision."""
     precision = max(0, min(int(precision), 6))
     return f"{float(value):.{precision}f}%"
 
 
 def build_judge_report(rows: Sequence[FrequencyRow], *, precision: int = 2) -> str:
+    """Build a fixed-width text report suitable for copy/paste review."""
     total = total_seen(rows)
     species_width = max(
         [len("Species"), *(len(row.species.display_name) for row in rows)],
@@ -103,6 +113,7 @@ def build_judge_report(rows: Sequence[FrequencyRow], *, precision: int = 2) -> s
 
 
 def build_csv_text(rows: Sequence[FrequencyRow], *, precision: int = 2) -> str:
+    """Build CSV text for spreadsheet or judge-record handoff."""
     output = io.StringIO()
     writer = csv.writer(output, lineterminator="\n")
     writer.writerow(["Species", "Scientific name", "Number Seen", "% Frequency"])

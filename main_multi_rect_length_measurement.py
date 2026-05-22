@@ -1,3 +1,5 @@
+"""Entry point for the standalone multi-rectangle length measurement GUI."""
+
 from __future__ import annotations
 
 import argparse
@@ -14,6 +16,7 @@ from gui.style import apply_modern_style
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the multi-rectangle measurement command-line parser."""
     parser = argparse.ArgumentParser(
         description="Standalone GUI for multi-rectangle planar prop length measurement.",
     )
@@ -26,6 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Launch the multi-rectangle measurement applet."""
     parser = build_parser()
     args = parser.parse_args(argv)
 

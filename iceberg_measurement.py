@@ -1,3 +1,5 @@
+"""Geometry solvers for the iceberg variable-segment measurement applet."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -15,6 +17,8 @@ class MeasurementError(ValueError):
 
 @dataclass(frozen=True)
 class AffineMeasurementResult:
+    """Diagnostic result from the two-reference affine measurement mode."""
+
     length_cm: float
     parallel_only_length_cm: float
     parallel_component_cm: float
@@ -28,6 +32,8 @@ class AffineMeasurementResult:
 
 @dataclass(frozen=True)
 class SpatialIcebergMeasurementResult:
+    """Diagnostic result from 3D/projective iceberg measurement modes."""
+
     length_cm: float
     variable_start_cm: tuple[float, float, float]
     variable_end_cm: tuple[float, float, float]

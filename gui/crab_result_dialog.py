@@ -1,3 +1,5 @@
+"""Result preview widgets shared by the crab detection applet."""
+
 from __future__ import annotations
 
 import cv2
@@ -13,6 +15,7 @@ COMPETITION_SUBMISSION_URL = "https://cbjfq.share.hsforms.com/2rHEWllQ5QO6D7Z4Cw
 
 
 def frame_to_pixmap(frame: np.ndarray | None) -> QPixmap:
+    """Convert a BGR frame or ``None`` placeholder into a Qt pixmap."""
     if frame is None:
         return QPixmap()
 
@@ -27,6 +30,8 @@ def frame_to_pixmap(frame: np.ndarray | None) -> QPixmap:
 
 
 class ImagePreviewPanel(QWidget):
+    """Labeled image preview panel used in crab result dialogs."""
+
     def __init__(self, title: str, parent=None):
         super().__init__(parent)
         self._pixmap = QPixmap()
@@ -76,6 +81,8 @@ class ImagePreviewPanel(QWidget):
 
 
 class CrabDetectionResultView(QWidget):
+    """Composite view showing detection summary and image previews."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
 
@@ -169,6 +176,8 @@ class CrabDetectionResultView(QWidget):
 
 
 class CrabResultDialog(QDialog):
+    """Modal wrapper for a ``CrabDetectionResultView``."""
+
     def __init__(
         self,
         summary_text: str,

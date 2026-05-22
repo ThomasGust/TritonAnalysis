@@ -1,3 +1,5 @@
+"""Entry point for the standalone planar height measurement GUI."""
+
 from __future__ import annotations
 
 import argparse
@@ -14,6 +16,7 @@ from gui.style import apply_modern_style
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the planar height measurement command-line parser."""
     parser = argparse.ArgumentParser(
         description="Standalone GUI for planar prop height measurement.",
     )
@@ -26,6 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Launch the planar height measurement applet."""
     parser = build_parser()
     args = parser.parse_args(argv)
 

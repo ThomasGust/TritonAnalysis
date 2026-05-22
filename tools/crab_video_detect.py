@@ -1,3 +1,5 @@
+"""Batch helper for finding the best crab-detection frame in a video."""
+
 from __future__ import annotations
 
 import argparse
@@ -19,6 +21,7 @@ from crab_detector_cv import (  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the batch crab-video detector command-line parser."""
     parser = argparse.ArgumentParser(
         description="Find and count competition crab image copies in a video.",
     )
@@ -47,6 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the batch video detector and write annotated outputs."""
     args = build_parser().parse_args(argv)
     result = detect_crabs_in_video(
         args.video,

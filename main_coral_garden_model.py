@@ -1,3 +1,5 @@
+"""Entry point for the standalone coral garden model GUI."""
+
 from __future__ import annotations
 
 import argparse
@@ -14,12 +16,14 @@ from gui.style import apply_modern_style
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the coral garden model command-line parser."""
     return argparse.ArgumentParser(
         description="Standalone GUI for manual coral garden CAD model display.",
     )
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Launch the coral garden model applet."""
     parser = build_parser()
     parser.parse_args(argv)
 

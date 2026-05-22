@@ -1,3 +1,5 @@
+"""PyQt applet for interactive crab detection from saved media."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -41,14 +43,17 @@ VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".wmv"}
 
 
 def is_supported_image_path(path: Path) -> bool:
+    """Return whether ``path`` is a supported image file."""
     return path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES
 
 
 def is_supported_video_path(path: Path) -> bool:
+    """Return whether ``path`` is a supported video file."""
     return path.is_file() and path.suffix.lower() in VIDEO_SUFFIXES
 
 
 def normalize_unwrap_size(value: int | tuple[int, int] | list[int]) -> tuple[int, int]:
+    """Normalize an unwrap-size value to ``(width, height)``."""
     if isinstance(value, int):
         size = int(value)
         return (size, size)
@@ -58,6 +63,7 @@ def normalize_unwrap_size(value: int | tuple[int, int] | list[int]) -> tuple[int
 
 
 def collect_image_paths(inputs: list[str | Path]) -> list[Path]:
+    """Collect supported images from files/folders while preserving stable order."""
     ordered_paths: list[Path] = []
     seen: set[Path] = set()
 
@@ -89,6 +95,8 @@ def collect_image_paths(inputs: list[str | Path]) -> list[Path]:
 
 
 class CornerPickerCanvas(QWidget):
+    """Canvas used to manually pick the four board corners."""
+
     points_changed = pyqtSignal(int)
 
     def __init__(self, parent=None):
@@ -218,6 +226,8 @@ class CornerPickerCanvas(QWidget):
 
 
 class ManualBoardPickerDialog(QDialog):
+    """Dialog for overriding automatic board detection with clicked corners."""
+
     def __init__(self, image: np.ndarray, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Manual Plane Corners")
@@ -276,6 +286,8 @@ class ManualBoardPickerDialog(QDialog):
 
 
 class CrabDetectionWindow(QMainWindow):
+    """Interactive crab detector window for images, folders, and videos."""
+
     def __init__(
         self,
         image_paths: list[str | Path] | None = None,

@@ -1,3 +1,5 @@
+"""Entry point for the standalone crab detection GUI."""
+
 from __future__ import annotations
 
 import argparse
@@ -15,6 +17,7 @@ from gui.style import apply_modern_style
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the crab detection command-line parser."""
     parser = argparse.ArgumentParser(
         description="Standalone GUI for running crab detection against images, folders, or videos.",
     )
@@ -40,6 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Launch the crab detection applet."""
     parser = build_parser()
     args = parser.parse_args(argv)
 

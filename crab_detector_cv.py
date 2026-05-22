@@ -1,3 +1,16 @@
+"""Computer-vision pipeline for the competition crab-counting applet.
+
+The detector has two paths:
+
+- board-unwrapping mode for images where the white competition board can be
+  detected and perspective-corrected;
+- reference-copy mode for underwater video frames where printed crab reference
+  images are detected directly.
+
+Both paths return the same dictionary-shaped result so GUI code, batch tools,
+and tests can share rendering and report helpers.
+"""
+
 import cv2
 import numpy as np
 from pathlib import Path
@@ -29,6 +42,7 @@ SPECIES_DRAW_COLORS = {
 
 
 def resize_for_detection(image, max_side=900):
+    """Return a downscaled copy and scale factor for faster board detection."""
     height, width = image.shape[:2]
     scale = min(1.0, max_side / max(height, width))
     if scale == 1.0:
@@ -38,11 +52,13 @@ def resize_for_detection(image, max_side=900):
 
 
 def odd_kernel_size(value, minimum=7):
+    """Return an odd OpenCV kernel size at least ``minimum``."""
     size = max(minimum, int(value))
     return size if size % 2 == 1 else size + 1
 
 
 def order_corners(points):
+    """Order four points as top-left, top-right, bottom-right, bottom-left."""
     points = np.asarray(points, dtype=np.float32)
     sums = points.sum(axis=1)
     diffs = points[:, 0] - points[:, 1]
@@ -56,15 +72,18 @@ def order_corners(points):
 
 
 def polygon_area(points):
+    """Return the absolute area of a polygon in image pixels."""
     contour = np.asarray(points, dtype=np.float32).reshape(-1, 1, 2)
     return float(abs(cv2.contourArea(contour)))
 
 
 def edge_length(point_a, point_b):
+    """Return Euclidean distance between two image points."""
     return float(np.linalg.norm(np.asarray(point_a, dtype=np.float32) - np.asarray(point_b, dtype=np.float32)))
 
 
 def contour_center(contour):
+    """Return the centroid of a contour, falling back to its bounding box."""
     moments = cv2.moments(contour)
     if moments["m00"] == 0:
         x, y, width, height = cv2.boundingRect(contour)
@@ -76,6 +95,7 @@ def contour_center(contour):
 
 
 def infer_unwrap_size(polygon, force_square=True):
+    """Infer board unwrap dimensions from the detected quadrilateral."""
     top_left, top_right, bottom_right, bottom_left = polygon
 
     top_width = edge_length(top_left, top_right)
@@ -94,6 +114,7 @@ def infer_unwrap_size(polygon, force_square=True):
 
 
 def score_quadrilateral_fit(contour, quadrilateral):
+    """Score overlap between a contour and candidate quadrilateral."""
     x, y, width, height = cv2.boundingRect(contour)
     padding = 8
 
@@ -113,6 +134,7 @@ def score_quadrilateral_fit(contour, quadrilateral):
 
 
 def fit_board_quadrilateral(contour):
+    """Fit the best four-corner approximation for a board candidate contour."""
     best_candidate = None
     best_score = -1.0
 
@@ -139,12 +161,14 @@ def fit_board_quadrilateral(contour):
 
 
 def polygon_mask(shape, polygon):
+    """Create a filled uint8 mask for ``polygon`` in an image of ``shape``."""
     mask = np.zeros(shape[:2], dtype=np.uint8)
     cv2.fillConvexPoly(mask, np.round(polygon).astype(np.int32), 255)
     return mask
 
 
 def board_edge_support(image, polygon):
+    """Measure how strongly image edges support a board polygon outline."""
     height, width = image.shape[:2]
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
@@ -179,6 +203,7 @@ def board_edge_support(image, polygon):
 
 
 def score_board_candidate(image, contour, polygon):
+    """Score how likely a contour/polygon pair is to be the white board."""
     height, width = image.shape[:2]
     image_area = float(height * width)
     ordered_polygon = order_corners(polygon).astype(np.float32)
@@ -273,6 +298,7 @@ def score_board_candidate(image, contour, polygon):
 
 
 def build_white_board_mask(image):
+    """Segment bright low-saturation regions likely to belong to the board."""
     height, width = image.shape[:2]
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
@@ -321,6 +347,7 @@ def build_white_board_mask(image):
 
 
 def build_grabcut_board_mask(image, white_mask):
+    """Refine a board mask with GrabCut seeded from white-board evidence."""
     height, width = image.shape[:2]
     grabcut_mask = np.full((height, width), cv2.GC_PR_BGD, dtype=np.uint8)
 
@@ -367,6 +394,7 @@ def build_grabcut_board_mask(image, white_mask):
 
 
 def is_high_confidence_white_board(contour, image):
+    """Return whether a white contour is confidently the full board."""
     height, width = image.shape[:2]
     image_area = height * width
     contour_area = cv2.contourArea(contour)
@@ -387,6 +415,7 @@ def is_high_confidence_white_board(contour, image):
 
 
 def build_board_mask(image):
+    """Build the best available binary mask for the competition board."""
     white_mask = build_white_board_mask(image)
     contours, _ = cv2.findContours(white_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
@@ -402,6 +431,7 @@ def build_board_mask(image):
 
 
 def build_board_candidate_masks(image):
+    """Return several board-mask hypotheses for robust polygon search."""
     white_mask = build_white_board_mask(image)
     candidate_masks = [white_mask]
 
@@ -426,6 +456,7 @@ def build_board_candidate_masks(image):
 
 
 def find_best_board_polygon_in_image(image):
+    """Return the highest-scoring board polygon in a detection-scale image."""
     best_polygon = None
     best_score = -1.0
     image_area = image.shape[0] * image.shape[1]
@@ -460,6 +491,7 @@ def find_best_board_polygon_in_image(image):
 
 
 def recover_board_mask_from_core(board_mask):
+    """Recover an inner board region when the initial mask includes background."""
     height, width = board_mask.shape[:2]
     image_area = height * width
     erode_kernel_size = odd_kernel_size(min(height, width) // 38, minimum=21)
@@ -507,6 +539,7 @@ def recover_board_mask_from_core(board_mask):
     return recovered_mask
 
 def refine_board_polygon(image, polygon, iterations=1):
+    """Iteratively refine a board polygon by unwrapping and re-detecting edges."""
     current_polygon = order_corners(polygon).astype(np.float32)
     image_area = image.shape[0] * image.shape[1]
 
@@ -546,6 +579,7 @@ def refine_board_polygon(image, polygon, iterations=1):
 
 
 def detect_board_polygon(image):
+    """Detect and refine the board polygon in original image coordinates."""
     detection_image, scale = resize_for_detection(image)
     polygon = find_best_board_polygon_in_image(detection_image)
     if polygon is None:
@@ -557,6 +591,7 @@ def detect_board_polygon(image):
 
 
 def unwrap_board(image, polygon=None, force_square=True, output_size=None):
+    """Perspective-warp the board into a rectangular working image."""
     if polygon is None:
         polygon = detect_board_polygon(image)
     if polygon is None:
@@ -584,6 +619,7 @@ def unwrap_board(image, polygon=None, force_square=True, output_size=None):
 
 
 def build_crab_mask(unwrapped_image):
+    """Segment crab-like colored/dark regions on an unwrapped board image."""
     height, width = unwrapped_image.shape[:2]
     hsv = cv2.cvtColor(unwrapped_image, cv2.COLOR_BGR2HSV)
     gray = cv2.cvtColor(unwrapped_image, cv2.COLOR_BGR2GRAY)
@@ -610,11 +646,13 @@ def build_crab_mask(unwrapped_image):
 
 
 def project_points(points, transform):
+    """Apply an OpenCV perspective transform to a point array."""
     points = np.asarray(points, dtype=np.float32).reshape(-1, 1, 2)
     return cv2.perspectiveTransform(points, transform).reshape(-1, 2)
 
 
 def extract_largest_contour(mask):
+    """Return the largest external contour in ``mask`` or ``None``."""
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return None
@@ -622,6 +660,7 @@ def extract_largest_contour(mask):
 
 
 def build_crop_crab_mask(crop_image):
+    """Build a local crab mask for a candidate crop."""
     hsv = cv2.cvtColor(crop_image, cv2.COLOR_BGR2HSV)
     gray = cv2.cvtColor(crop_image, cv2.COLOR_BGR2GRAY)
 
@@ -650,6 +689,7 @@ def build_crop_crab_mask(crop_image):
 
 
 def select_crab_color_mask(crop_image, crab_mask):
+    """Select pixels in a crop most useful for color-based crab classification."""
     hsv = cv2.cvtColor(crop_image, cv2.COLOR_BGR2HSV)
     saturation = hsv[:, :, 1]
     value = hsv[:, :, 2]
@@ -663,6 +703,7 @@ def select_crab_color_mask(crop_image, crab_mask):
 
 
 def crab_color_stats(crop_image, crab_mask):
+    """Calculate color features for one crab crop and mask."""
     color_mask = select_crab_color_mask(crop_image, crab_mask)
     mean_bgr = cv2.mean(crop_image, mask=color_mask)[:3]
     hsv = cv2.cvtColor(crop_image, cv2.COLOR_BGR2HSV)
@@ -692,6 +733,7 @@ def crab_color_stats(crop_image, crab_mask):
 
 
 def estimate_board_white_balance_gains(unwrapped_image, crab_mask=None):
+    """Estimate per-channel gains from board pixels outside crab masks."""
     height, width = unwrapped_image.shape[:2]
     hsv = cv2.cvtColor(unwrapped_image, cv2.COLOR_BGR2HSV)
     lab = cv2.cvtColor(unwrapped_image, cv2.COLOR_BGR2LAB)
@@ -741,11 +783,13 @@ def estimate_board_white_balance_gains(unwrapped_image, crab_mask=None):
 
 
 def apply_channel_gains(image, gains):
+    """Apply BGR channel gains and return a uint8 image."""
     corrected = image.astype(np.float32) * np.asarray(gains, dtype=np.float32).reshape(1, 1, 3)
     return np.clip(corrected, 0, 255).astype(np.uint8)
 
 
 def load_reference_models():
+    """Load reference images and contour/color features for board-crop classes."""
     cached_models = getattr(load_reference_models, "_cache", None)
     if cached_models is not None:
         return cached_models
@@ -774,6 +818,7 @@ def load_reference_models():
 
 
 def classify_crab_crop(crop_image):
+    """Classify a candidate board crop into crab/reference species labels."""
     mask = build_crop_crab_mask(crop_image)
     contour = extract_largest_contour(mask)
     if contour is None:
@@ -844,6 +889,7 @@ def classify_crab_crop(crop_image):
 
 
 def detect_crabs_in_unwrapped(unwrapped_image):
+    """Detect crab candidates on an already unwrapped board image."""
     crab_mask = build_crab_mask(unwrapped_image)
     height, width = crab_mask.shape[:2]
     image_area = height * width
@@ -899,6 +945,7 @@ def detect_crabs_in_unwrapped(unwrapped_image):
 
 
 def axis_aligned_quad_from_box(box):
+    """Return a four-corner quadrilateral for an axis-aligned box."""
     x, y, width, height = [int(value) for value in box]
     return np.array(
         [
@@ -912,6 +959,7 @@ def axis_aligned_quad_from_box(box):
 
 
 def build_species_counts(detections):
+    """Count species labels across detection dictionaries."""
     counts = {label: 0 for label in REFERENCE_IMAGE_PATHS}
     counts["other"] = 0
     for detection in detections:
@@ -921,6 +969,7 @@ def build_species_counts(detections):
 
 
 def build_reference_copy_color_mask(image):
+    """Build a color mask for printed reference-copy crab candidates."""
     height, width = image.shape[:2]
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
@@ -968,6 +1017,7 @@ def build_reference_copy_color_mask(image):
 
 
 def extract_reference_copy_candidate_boxes(mask):
+    """Extract plausible reference-copy bounding boxes from a color mask."""
     height, width = mask.shape[:2]
     image_area = height * width
     min_area = max(900, int(image_area * 0.00065))
@@ -1010,6 +1060,7 @@ def extract_reference_copy_candidate_boxes(mask):
 
 
 def box_intersection_area(box_a, box_b):
+    """Return intersection area for two ``(x, y, w, h)`` boxes."""
     ax, ay, aw, ah = [int(value) for value in box_a]
     bx, by, bw, bh = [int(value) for value in box_b]
     x1 = max(ax, bx)
@@ -1020,6 +1071,7 @@ def box_intersection_area(box_a, box_b):
 
 
 def merge_reference_copy_candidates(candidates):
+    """Merge overlapping reference-copy candidate boxes."""
     sorted_candidates = sorted(
         candidates,
         key=lambda candidate: int(candidate["area"]),
@@ -1061,6 +1113,7 @@ def merge_reference_copy_candidates(candidates):
 
 
 def select_main_candidate_cluster(candidates, image_shape):
+    """Keep the densest central cluster of reference-copy candidates."""
     if len(candidates) <= 2:
         return candidates
 
@@ -1112,6 +1165,7 @@ def select_main_candidate_cluster(candidates, image_shape):
 
 
 def build_reference_copy_candidate_mask(image_shape, masks, candidates):
+    """Build a combined mask covering selected reference-copy candidates."""
     candidate_mask = np.zeros(image_shape[:2], dtype=np.uint8)
     combined_mask = np.zeros_like(candidate_mask)
     for mask in masks:
@@ -1128,6 +1182,7 @@ def build_reference_copy_candidate_mask(image_shape, masks, candidates):
 
 
 def load_reference_copy_feature_models():
+    """Load feature descriptors used by the reference-copy detector."""
     cached_models = getattr(load_reference_copy_feature_models, "_cache", None)
     if cached_models is not None:
         return cached_models
@@ -1169,6 +1224,7 @@ def load_reference_copy_feature_models():
 
 
 def match_reference_descriptors(reference_descriptors, crop_descriptors, descriptor_kind):
+    """Score descriptor matches between a reference image and a candidate crop."""
     if reference_descriptors is None or crop_descriptors is None:
         return []
     if len(reference_descriptors) < 2 or len(crop_descriptors) < 2:
@@ -1189,6 +1245,7 @@ def match_reference_descriptors(reference_descriptors, crop_descriptors, descrip
 
 
 def score_candidate_reference_features(crop_image):
+    """Score a crop against all reference-copy feature models."""
     feature_models = load_reference_copy_feature_models()
     gray = cv2.cvtColor(crop_image, cv2.COLOR_BGR2GRAY)
     enhanced = feature_models["clahe"].apply(gray)
@@ -1284,6 +1341,7 @@ def score_candidate_reference_features(crop_image):
 
 
 def classify_reference_copy_color(crop_image):
+    """Classify a reference-copy crop using color features only."""
     color_mask = cv2.bitwise_or(
         build_reference_copy_color_mask(crop_image),
         build_crab_mask(crop_image),
@@ -1331,6 +1389,7 @@ def classify_reference_copy_color(crop_image):
 
 
 def expanded_box_crop(image, box, padding_fraction=0.35):
+    """Crop a padded region around a candidate box."""
     x, y, box_width, box_height = [int(value) for value in box]
     padding = int(max(box_width, box_height) * padding_fraction)
     x1 = max(0, x - padding)
@@ -1341,6 +1400,7 @@ def expanded_box_crop(image, box, padding_fraction=0.35):
 
 
 def classify_reference_copy_candidate(image, box):
+    """Classify a reference-copy candidate box in the source image."""
     crop_image, _ = expanded_box_crop(image, box)
     color_label, color_stats = classify_reference_copy_color(crop_image)
     feature_scores = score_candidate_reference_features(crop_image)
@@ -1381,6 +1441,7 @@ def classify_reference_copy_candidate(image, box):
 
 
 def classify_board_crab_candidate(classification_image, box):
+    """Classify a board-unwrapped candidate box."""
     x, y, box_width, box_height = [int(value) for value in box]
     crop_image = classification_image[y : y + box_height, x : x + box_width]
     classification = classify_crab_crop(crop_image)
@@ -1458,6 +1519,7 @@ def classify_board_crab_candidate(classification_image, box):
 
 
 def has_valid_reference_feature(classification, min_inliers=8):
+    """Return whether a classification has enough valid feature support."""
     feature_scores = (
         classification.get("copy_feature_scores")
         or classification.get("board_feature_scores")
@@ -1470,6 +1532,7 @@ def has_valid_reference_feature(classification, min_inliers=8):
 
 
 def reliable_reference_feature_count(detections, min_inliers=8):
+    """Count detections with reliable reference feature support."""
     return sum(
         1
         for detection in detections
@@ -1478,6 +1541,7 @@ def reliable_reference_feature_count(detections, min_inliers=8):
 
 
 def reference_copy_detections_are_reliable(detections):
+    """Return whether reference-copy detections are strong enough to report."""
     count = len(detections)
     if count < 3:
         return False
@@ -1500,6 +1564,7 @@ def reference_copy_detections_are_reliable(detections):
 
 
 def detect_reference_copy_crabs(image):
+    """Detect printed reference-copy crabs directly in the source image."""
     dark_mask = build_crab_mask(image)
     color_mask = build_reference_copy_color_mask(image)
     candidates = extract_reference_copy_candidate_boxes(dark_mask)
@@ -1579,6 +1644,7 @@ def detect_reference_copy_crabs(image):
 
 
 def detect_crabs(image, force_square=True, unwrap_size=DEFAULT_UNWRAP_SIZE, board_polygon=None):
+    """Detect and classify crabs in one BGR image."""
     board_polygon_source = "manual" if board_polygon is not None else "auto"
     if board_polygon is None:
         board_polygon = detect_board_polygon(image)
@@ -1675,6 +1741,7 @@ def detect_crabs(image, force_square=True, unwrap_size=DEFAULT_UNWRAP_SIZE, boar
 
 
 def draw_crab_detections(original_image, detection_result):
+    """Draw board and detection overlays on the original image."""
     annotated = original_image.copy()
     count = detection_result["count"]
     green_count = detection_result["green_count"]
@@ -1734,6 +1801,7 @@ def put_readable_text(
     text_color=(0, 255, 0),
     background_color=(0, 0, 0),
 ):
+    """Draw readable text with a filled background rectangle."""
     font = cv2.FONT_HERSHEY_SIMPLEX
     x, y = [int(value) for value in origin]
     (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, thickness)
@@ -1748,11 +1816,13 @@ def put_readable_text(
 
 
 def european_green_count(detection_result):
+    """Return the European green crab count from a detection result."""
     species_counts = detection_result.get("species_counts", {})
     return int(species_counts.get("european_green", detection_result.get("green_count", 0)))
 
 
 def draw_unwrapped_crab_detections(detection_result):
+    """Draw detection overlays on the unwrapped board image."""
     annotated = detection_result["unwrapped_image"].copy()
     species_counts = detection_result.get("species_counts", {})
     put_readable_text(
@@ -1788,6 +1858,7 @@ def draw_unwrapped_crab_detections(detection_result):
 
 
 def draw_competition_green_crab_detections(detection_result):
+    """Render the competition-facing green-crab count overlay."""
     source_image = detection_result["unwrapped_image"]
     header_height = max(70, min(120, int(round(source_image.shape[0] * 0.12))))
     annotated = np.full(
@@ -1865,6 +1936,7 @@ def draw_competition_green_crab_detections(detection_result):
 
 
 def detection_summary_text(detection_result):
+    """Return a human-readable species summary for a detection result."""
     species_counts = detection_result.get("species_counts", {})
     if species_counts:
         return (
@@ -1881,10 +1953,12 @@ def detection_summary_text(detection_result):
 
 
 def competition_summary_text(detection_result):
+    """Return the competition-facing European-green count summary."""
     return f"European green crabs: {european_green_count(detection_result)}"
 
 
 def render_detection_views(image, force_square=True, unwrap_size=DEFAULT_UNWRAP_SIZE, board_polygon=None):
+    """Run detection and return result plus original/unwrapped overlays."""
     detection_result = detect_crabs(
         image,
         force_square=force_square,
@@ -1899,6 +1973,7 @@ def render_detection_views(image, force_square=True, unwrap_size=DEFAULT_UNWRAP_
 
 
 def score_video_detection_result(detection_result):
+    """Return a coarse sort key for choosing better video detection frames."""
     if detection_result is None:
         return (-1, -1, -1.0)
     species_counts = detection_result.get("species_counts", {})
@@ -1911,6 +1986,7 @@ def score_video_detection_result(detection_result):
 
 
 def detection_species_signature(detection_result):
+    """Return ``(green, jonah, rock, other)`` counts for temporal voting."""
     if detection_result is None:
         return (0, 0, 0, 0)
     species_counts = detection_result.get("species_counts", {})
@@ -1923,6 +1999,7 @@ def detection_species_signature(detection_result):
 
 
 def detection_confidence_score(detection):
+    """Estimate confidence for one classified detection."""
     classification = detection.get("classification", {})
     label = classification.get("label", "other")
 
@@ -1991,6 +2068,7 @@ def detection_confidence_score(detection):
 
 
 def detection_result_confidence(detection_result):
+    """Average per-detection confidence for a full result."""
     if detection_result is None or not detection_result.get("detections"):
         return 0.0
     scores = [
@@ -2001,6 +2079,7 @@ def detection_result_confidence(detection_result):
 
 
 def detection_visibility_score(frame, detection_result):
+    """Score whether detections are large and away from frame edges."""
     if detection_result is None or not detection_result.get("detections"):
         return 0.0
 
@@ -2027,6 +2106,7 @@ def detection_visibility_score(frame, detection_result):
 
 
 def detection_sharpness_score(frame, detection_result):
+    """Score local sharpness around the detected crab cluster."""
     if detection_result is None or not detection_result.get("detections"):
         return 0.0
 
@@ -2049,6 +2129,7 @@ def detection_sharpness_score(frame, detection_result):
 
 
 def build_video_sample_quality(frame, detection_result, max_reasonable_count=12):
+    """Build the quality payload used to compare sampled video frames."""
     max_reasonable_count = max(1, int(max_reasonable_count))
     if detection_result is None:
         return {
@@ -2105,6 +2186,7 @@ def build_video_sample_quality(frame, detection_result, max_reasonable_count=12)
 
 
 def choose_temporal_vote_sample(samples):
+    """Pick the best video sample after species-count temporal voting."""
     valid_samples = [
         sample
         for sample in samples
@@ -2203,6 +2285,7 @@ def choose_temporal_vote_sample(samples):
 
 
 def video_sample_is_reliable(sample, min_quality=28.0):
+    """Return whether a sampled frame is good enough to report."""
     if sample is None or sample.get("detection_result") is None:
         return False
 
@@ -2231,6 +2314,7 @@ def detect_crabs_in_video(
     force_square=True,
     unwrap_size=DEFAULT_UNWRAP_SIZE,
 ):
+    """Sample a video and return the most reliable crab-detection result."""
     capture = cv2.VideoCapture(str(video_path))
     if not capture.isOpened():
         raise FileNotFoundError(f"Could not open video at {video_path}")
@@ -2307,6 +2391,7 @@ def detect_crabs_in_video(
 
 
 def draw_board_outline(image_path):
+    """Open an image and display the detected board outline."""
     image = cv2.imread(image_path)
     if image is None:
         print(f"Error: Could not read image at {image_path}")
@@ -2326,6 +2411,7 @@ def draw_board_outline(image_path):
 
 
 def show_board_outline_and_unwrap(image_path, force_square=True):
+    """Display the detected board outline alongside its perspective unwrap."""
     image = cv2.imread(image_path)
     if image is None:
         print(f"Error: Could not read image at {image_path}")
@@ -2351,6 +2437,7 @@ def show_board_outline_and_unwrap(image_path, force_square=True):
 
 
 def show_crab_detections(image_path, force_square=True, unwrap_size=DEFAULT_UNWRAP_SIZE):
+    """Run detection on one image and show the generated debug views."""
     image = cv2.imread(image_path)
     if image is None:
         print(f"Error: Could not read image at {image_path}")
@@ -2378,12 +2465,14 @@ def show_crab_detections(image_path, force_square=True, unwrap_size=DEFAULT_UNWR
 
 
 def natural_case_sort_key(path):
+    """Return a stable natural-sort key for practice and sample cases."""
     parts = re.split(r"(\d+)", path.stem.lower())
     parsed_parts = [int(part) if part.isdigit() else part for part in parts]
     return (path.parent.name.lower(), parsed_parts, path.suffix.lower())
 
 
 def iter_case_paths():
+    """Yield available practice and sample images in deterministic order."""
     image_paths = []
     for folder_path in (
         ANALYSIS_DIR / "practice",
@@ -2399,11 +2488,13 @@ def iter_case_paths():
 
 
 def make_case_slug(image_path):
+    """Return a filesystem-safe slug for a practice or sample image."""
     raw_slug = f"{image_path.parent.name}_{image_path.stem}"
     return re.sub(r"[^A-Za-z0-9_-]+", "_", raw_slug).strip("_")
 
 
 def save_case_outputs(image, image_path, detection_result, output_root):
+    """Write annotated images and masks for one detection case."""
     case_dir = output_root / make_case_slug(image_path)
     case_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2421,6 +2512,7 @@ def run_all_cases(
     force_square=True,
     unwrap_size=DEFAULT_UNWRAP_SIZE,
 ):
+    """Run crab detection over all bundled practice/sample images."""
     output_root = Path(output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
 

@@ -1,3 +1,5 @@
+"""Shared Qt palette and stylesheet for TritonAnalysis applets."""
+
 from __future__ import annotations
 
 from PyQt6.QtGui import QColor, QPalette
@@ -113,4 +115,3 @@ def apply_modern_style(app: QApplication) -> None:
         app.setStyleSheet(qss)
     except Exception:
         pass
-
