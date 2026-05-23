@@ -127,7 +127,7 @@ Stereo calibration from TritonPilot capture sessions:
 
 ```powershell
 python -m main_stereo_calibration_gui path\to\manifest.json
-python -m main_stereo_calibration path\to\manifest.json --checkerboard --columns 9 --rows 6 --square-size 2.5
+python -m main_stereo_calibration path\to\manifest.json --charuco
 ```
 
 Underwater color correction and frame export:

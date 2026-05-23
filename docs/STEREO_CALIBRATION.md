@@ -30,6 +30,8 @@ python -m main_stereo_calibration_gui path\to\manifest.json
 The window lets you inspect the manifest, preview left/right image pairs,
 choose checkerboard or ChArUco board settings, set minimum accepted pairs, run
 calibration, review rejected observations, and write the calibration artifact.
+The default board settings match Triton's shipped ChArUco board:
+17 rows by 24 columns, 30 mm square width, and 22 mm marker width.
 
 ## Checkerboard Calibration
 
@@ -49,17 +51,25 @@ python -m main_stereo_calibration path\to\manifest.json `
 
 ## ChArUco Calibration
 
-For a ChArUco board, `--squares-x` and `--squares-y` are full square counts:
+For a ChArUco board, `--squares-x` and `--squares-y` are full square counts.
+The defaults match Triton's board, so the normal command is:
+
+```powershell
+python -m main_stereo_calibration path\to\manifest.json `
+  --charuco
+```
+
+Equivalent explicit values:
 
 ```powershell
 python -m main_stereo_calibration path\to\manifest.json `
   --charuco `
-  --squares-x 7 `
-  --squares-y 5 `
-  --square-size 2.5 `
-  --marker-size 1.8 `
+  --squares-x 24 `
+  --squares-y 17 `
+  --square-size 30 `
+  --marker-size 22 `
   --dictionary DICT_4X4_50 `
-  --units cm
+  --units mm
 ```
 
 ChArUco is preferred when the board is partially visible or when the fisheye

@@ -30,11 +30,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--columns", type=int, default=9, help="Checkerboard inner columns.")
     parser.add_argument("--rows", type=int, default=6, help="Checkerboard inner rows.")
-    parser.add_argument("--square-size", type=float, required=True, help="Square size in board units.")
-    parser.add_argument("--units", default="cm", help="Board units, for artifact metadata.")
-    parser.add_argument("--squares-x", type=int, default=7, help="ChArUco board squares in X.")
-    parser.add_argument("--squares-y", type=int, default=5, help="ChArUco board squares in Y.")
-    parser.add_argument("--marker-size", type=float, default=0.0, help="ChArUco marker size in board units.")
+    parser.add_argument("--square-size", type=float, default=30.0, help="Square size in board units.")
+    parser.add_argument("--units", default="mm", help="Board units, for artifact metadata.")
+    parser.add_argument("--squares-x", type=int, default=24, help="ChArUco board squares in X / columns.")
+    parser.add_argument("--squares-y", type=int, default=17, help="ChArUco board squares in Y / rows.")
+    parser.add_argument("--marker-size", type=float, default=22.0, help="ChArUco marker size in board units.")
     parser.add_argument("--dictionary", default="DICT_4X4_50", help="OpenCV aruco predefined dictionary name.")
     return parser
 

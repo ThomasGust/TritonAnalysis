@@ -174,7 +174,7 @@ Launch:
 
 ```powershell
 python -m main_stereo_calibration_gui [manifest.json]
-python -m main_stereo_calibration path\to\manifest.json --checkerboard --columns 9 --rows 6 --square-size 2.5
+python -m main_stereo_calibration path\to\manifest.json --charuco
 ```
 
 Purpose:
@@ -193,7 +193,8 @@ Primary modules:
 Inputs:
 
 - TritonPilot stereo `manifest.json`
-- Checkerboard or ChArUco board dimensions
+- Checkerboard or ChArUco board dimensions; defaults match Triton's ChArUco
+  board: 24 columns, 17 rows, 30 mm squares, 22 mm markers
 - Minimum accepted pair/corner thresholds
 
 Outputs:
