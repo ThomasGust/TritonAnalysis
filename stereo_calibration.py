@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -46,10 +46,41 @@ class StereoObservations:
     right_image_points: list[np.ndarray]
     image_size: tuple[int, int]
     rejected: list[dict]
+    accepted: list[dict] = field(default_factory=list)
 
 
 def _as_list(array: np.ndarray) -> list:
     return np.asarray(array, dtype=np.float64).tolist()
+
+
+def _finite_or_none(value: float | int | np.floating) -> float | None:
+    number = float(value)
+    return number if np.isfinite(number) else None
+
+
+def _error_summary(values: Iterable[float], *, unit_suffix: str = "") -> dict:
+    errors = np.asarray([float(value) for value in values if np.isfinite(value)], dtype=np.float64)
+    metric_names = {
+        "mean": f"mean{unit_suffix}",
+        "median": f"median{unit_suffix}",
+        "rms": f"rms{unit_suffix}",
+        "max": f"max{unit_suffix}",
+    }
+    if errors.size == 0:
+        return {
+            "point_count": 0,
+            metric_names["mean"]: None,
+            metric_names["median"]: None,
+            metric_names["rms"]: None,
+            metric_names["max"]: None,
+        }
+    return {
+        "point_count": int(errors.size),
+        metric_names["mean"]: float(np.mean(errors)),
+        metric_names["median"]: float(np.median(errors)),
+        metric_names["rms"]: float(np.sqrt(np.mean(np.square(errors)))),
+        metric_names["max"]: float(np.max(errors)),
+    }
 
 
 def _coerce_observation_points(
@@ -117,6 +148,7 @@ def collect_checkerboard_observations(
     left_points: list[np.ndarray] = []
     right_points: list[np.ndarray] = []
     rejected: list[dict] = []
+    accepted: list[dict] = []
     image_size: tuple[int, int] | None = None
 
     for index, (left_path, right_path) in enumerate(image_pairs, start=1):
@@ -146,12 +178,21 @@ def collect_checkerboard_observations(
         object_points.append(obj_template.copy())
         left_points.append(left_corners)
         right_points.append(right_corners)
+        accepted.append(
+            {
+                "index": int(index),
+                "detector": "checkerboard",
+                "point_count": int(len(obj_template)),
+                "left_path": str(left_path),
+                "right_path": str(right_path),
+            }
+        )
 
     if image_size is None:
         raise ValueError("No readable stereo image pairs were accepted")
     if len(object_points) < int(min_pairs):
         raise ValueError(f"Only {len(object_points)} valid stereo pairs found; need at least {int(min_pairs)}")
-    return StereoObservations(object_points, left_points, right_points, image_size, rejected)
+    return StereoObservations(object_points, left_points, right_points, image_size, rejected, accepted)
 
 
 def _aruco_dictionary(name: str):
@@ -189,6 +230,7 @@ def collect_charuco_observations(
     left_points: list[np.ndarray] = []
     right_points: list[np.ndarray] = []
     rejected: list[dict] = []
+    accepted: list[dict] = []
     image_size: tuple[int, int] | None = None
 
     for index, (left_path, right_path) in enumerate(image_pairs, start=1):
@@ -220,12 +262,166 @@ def collect_charuco_observations(
         object_points.append(np.asarray([board_points[cid] for cid in common_ids], dtype=np.float32))
         left_points.append(np.asarray([left_by_id[cid] for cid in common_ids], dtype=np.float32))
         right_points.append(np.asarray([right_by_id[cid] for cid in common_ids], dtype=np.float32))
+        accepted.append(
+            {
+                "index": int(index),
+                "detector": "charuco",
+                "point_count": int(len(common_ids)),
+                "left_path": str(left_path),
+                "right_path": str(right_path),
+            }
+        )
 
     if image_size is None:
         raise ValueError("No readable stereo image pairs were accepted")
     if len(object_points) < int(min_pairs):
         raise ValueError(f"Only {len(object_points)} valid stereo pairs found; need at least {int(min_pairs)}")
-    return StereoObservations(object_points, left_points, right_points, image_size, rejected)
+    return StereoObservations(object_points, left_points, right_points, image_size, rejected, accepted)
+
+
+def _reprojection_quality(
+    object_points: Sequence[np.ndarray],
+    image_points: Sequence[np.ndarray],
+    camera_matrix: np.ndarray,
+    dist_coeffs: np.ndarray,
+) -> dict:
+    """Solve each board pose and report per-camera reprojection residuals."""
+
+    all_errors: list[float] = []
+    views: list[dict] = []
+    for index, (obj, points) in enumerate(zip(object_points, image_points), start=1):
+        obj_arr = np.asarray(obj, dtype=np.float32).reshape(-1, 3)
+        points_arr = np.asarray(points, dtype=np.float32).reshape(-1, 2)
+        ok, rvec, tvec = cv2.solvePnP(obj_arr, points_arr, camera_matrix, dist_coeffs)
+        if not ok:
+            views.append({"index": index, "point_count": int(len(points_arr)), "rms_px": None, "max_px": None})
+            continue
+
+        projected, _jacobian = cv2.projectPoints(obj_arr, rvec, tvec, camera_matrix, dist_coeffs)
+        residuals = np.linalg.norm(projected.reshape(-1, 2) - points_arr, axis=1)
+        view_summary = _error_summary(residuals, unit_suffix="_px")
+        view_summary["index"] = index
+        views.append(view_summary)
+        all_errors.extend(float(value) for value in residuals)
+
+    summary = _error_summary(all_errors, unit_suffix="_px")
+    summary["view_count"] = int(len(views))
+    summary["views"] = views
+    return summary
+
+
+def _epipolar_quality(
+    left_points: Sequence[np.ndarray],
+    right_points: Sequence[np.ndarray],
+    fundamental: np.ndarray,
+) -> dict:
+    """Report symmetric point-to-epipolar-line error for accepted matches."""
+
+    fundamental = np.asarray(fundamental, dtype=np.float64).reshape(3, 3)
+    all_errors: list[float] = []
+    views: list[dict] = []
+    for index, (left, right) in enumerate(zip(left_points, right_points), start=1):
+        left_arr = np.asarray(left, dtype=np.float64).reshape(-1, 2)
+        right_arr = np.asarray(right, dtype=np.float64).reshape(-1, 2)
+        left_h = np.column_stack((left_arr, np.ones(len(left_arr), dtype=np.float64)))
+        right_h = np.column_stack((right_arr, np.ones(len(right_arr), dtype=np.float64)))
+
+        right_lines = (fundamental @ left_h.T).T
+        left_lines = (fundamental.T @ right_h.T).T
+        right_den = np.linalg.norm(right_lines[:, :2], axis=1)
+        left_den = np.linalg.norm(left_lines[:, :2], axis=1)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            right_error = np.abs(np.sum(right_h * right_lines, axis=1)) / right_den
+            left_error = np.abs(np.sum(left_h * left_lines, axis=1)) / left_den
+        symmetric = 0.5 * (left_error + right_error)
+
+        view_summary = _error_summary(symmetric, unit_suffix="_px")
+        view_summary["index"] = index
+        views.append(view_summary)
+        all_errors.extend(float(value) for value in symmetric if np.isfinite(value))
+
+    summary = _error_summary(all_errors, unit_suffix="_px")
+    summary["view_count"] = int(len(views))
+    summary["views"] = views
+    return summary
+
+
+def _coverage_quality(image_points: Sequence[np.ndarray], image_size: tuple[int, int]) -> dict:
+    """Measure whether accepted points cover the image instead of only the center."""
+
+    width, height = int(image_size[0]), int(image_size[1])
+    if width <= 0 or height <= 0:
+        raise ValueError("image_size must contain positive width and height")
+    if not image_points:
+        return {
+            "point_count": 0,
+            "x_min_px": None,
+            "x_max_px": None,
+            "y_min_px": None,
+            "y_max_px": None,
+            "width_fraction": None,
+            "height_fraction": None,
+            "area_fraction": None,
+            "grid_4x4_fraction": None,
+        }
+
+    points = np.concatenate([np.asarray(item, dtype=np.float64).reshape(-1, 2) for item in image_points], axis=0)
+    x_min = float(np.min(points[:, 0]))
+    x_max = float(np.max(points[:, 0]))
+    y_min = float(np.min(points[:, 1]))
+    y_max = float(np.max(points[:, 1]))
+    clipped_x_min = max(0.0, min(float(width), x_min))
+    clipped_x_max = max(0.0, min(float(width), x_max))
+    clipped_y_min = max(0.0, min(float(height), y_min))
+    clipped_y_max = max(0.0, min(float(height), y_max))
+    width_fraction = max(0.0, clipped_x_max - clipped_x_min) / float(width)
+    height_fraction = max(0.0, clipped_y_max - clipped_y_min) / float(height)
+
+    grid = 4
+    grid_x = np.clip(np.floor(points[:, 0] / float(width) * grid).astype(int), 0, grid - 1)
+    grid_y = np.clip(np.floor(points[:, 1] / float(height) * grid).astype(int), 0, grid - 1)
+    occupied = set(zip(grid_x.tolist(), grid_y.tolist()))
+
+    return {
+        "point_count": int(len(points)),
+        "x_min_px": _finite_or_none(x_min),
+        "x_max_px": _finite_or_none(x_max),
+        "y_min_px": _finite_or_none(y_min),
+        "y_max_px": _finite_or_none(y_max),
+        "width_fraction": _finite_or_none(width_fraction),
+        "height_fraction": _finite_or_none(height_fraction),
+        "area_fraction": _finite_or_none(width_fraction * height_fraction),
+        "grid_4x4_fraction": float(len(occupied) / float(grid * grid)),
+    }
+
+
+def _build_quality_warnings(artifact: dict, quality: dict) -> list[str]:
+    warnings: list[str] = []
+    observation_count = int(artifact.get("observation_count") or 0)
+    stereo_rms = (artifact.get("rms") or {}).get("stereo")
+    epipolar_rms = (quality.get("epipolar") or {}).get("rms_px")
+    left_coverage = (quality.get("left_coverage") or {}).get("area_fraction")
+    right_coverage = (quality.get("right_coverage") or {}).get("area_fraction")
+    left_grid = (quality.get("left_coverage") or {}).get("grid_4x4_fraction")
+    right_grid = (quality.get("right_coverage") or {}).get("grid_4x4_fraction")
+
+    if observation_count < 20:
+        warnings.append("Accepted fewer than 20 stereo pairs; capture more board poses before trusting measurement.")
+    elif observation_count < 30:
+        warnings.append("Accepted fewer than 30 stereo pairs; usable, but more varied poses will usually improve stability.")
+    if stereo_rms is not None and float(stereo_rms) > 1.0:
+        warnings.append("Stereo RMS is above 1 px; inspect blur, lighting, frame sync, and board coverage.")
+    if epipolar_rms is not None and float(epipolar_rms) > 1.0:
+        warnings.append("Epipolar RMS is above 1 px; rectified left/right features may not align well.")
+    if left_coverage is not None and float(left_coverage) < 0.35:
+        warnings.append("Left image corner coverage is narrow; include board poses near the edges and corners.")
+    if right_coverage is not None and float(right_coverage) < 0.35:
+        warnings.append("Right image corner coverage is narrow; include board poses near the edges and corners.")
+    if left_grid is not None and float(left_grid) < 0.50:
+        warnings.append("Left image points occupy less than half of the 4x4 coverage grid.")
+    if right_grid is not None and float(right_grid) < 0.50:
+        warnings.append("Right image points occupy less than half of the 4x4 coverage grid.")
+    return warnings
 
 
 def calibrate_stereo_from_observations(
@@ -310,6 +506,15 @@ def calibrate_stereo_from_observations(
         flags=cv2.CALIB_ZERO_DISPARITY,
     )
 
+    quality = {
+        "accepted_observations": list(observations.accepted),
+        "left_reprojection": _reprojection_quality(obj, left, camera_matrix_left, dist_coeffs_left),
+        "right_reprojection": _reprojection_quality(obj, right, camera_matrix_right, dist_coeffs_right),
+        "epipolar": _epipolar_quality(left, right, fundamental),
+        "left_coverage": _coverage_quality(left, image_size),
+        "right_coverage": _coverage_quality(right, image_size),
+        "warnings": [],
+    }
     artifact = {
         "schema": "tritonanalysis.stereo_calibration",
         "schema_version": 1,
@@ -350,7 +555,9 @@ def calibrate_stereo_from_observations(
             "roi1": [int(v) for v in roi1],
             "roi2": [int(v) for v in roi2],
         },
+        "quality": quality,
     }
+    quality["warnings"] = _build_quality_warnings(artifact, quality)
     return artifact
 
 

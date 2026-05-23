@@ -32,6 +32,7 @@ choose checkerboard or ChArUco board settings, set minimum accepted pairs, run
 calibration, review rejected observations, and write the calibration artifact.
 The default board settings match Triton's shipped ChArUco board:
 17 rows by 24 columns, 30 mm square width, and 22 mm marker width.
+Checkerboard-only fields are hidden when ChArUco mode is selected.
 
 ## Checkerboard Calibration
 
@@ -85,6 +86,8 @@ The default output is `stereo_calibration.json` next to the manifest. It stores:
 - Rectification matrices and the `Q` reprojection matrix.
 - RMS error, accepted observation count, rejected pair notes, rig id, pair
   name, image size, board metadata, and units.
+- Quality diagnostics: per-camera reprojection RMS, symmetric epipolar RMS,
+  left/right image coverage, accepted pair metadata, and warning messages.
 
 The artifact is the handoff point for future rectification, disparity, 3D
 measurement, and coral-garden modeling tools.
@@ -97,3 +100,30 @@ measurement, and coral-garden modeling tools.
 - Accept many poses across the entire image, not only centered board shots.
 - Re-run calibration whenever the stereo mount moves.
 - Review rejected observations and RMS error before trusting any measurement.
+
+## Pool-Test Acceptance Checks
+
+The GUI and CLI now report enough calibration quality information to make a
+pool-side decision before disparity or depth tools exist:
+
+- Accepted pairs: 20 is the minimum practical target; 30 to 60 varied accepted
+  pairs is better.
+- Stereo RMS: aim below 1 px. Values above 1 px are a reason to inspect frame
+  sync, motion blur, lighting, board flatness, and board coverage.
+- Epipolar RMS: aim below 1 px. This is the most direct check that matching
+  left/right points agree with the stereo geometry.
+- Reprojection RMS: each camera should stay low and similar. One bad side often
+  points to focus, exposure, blur, or board detection problems on that camera.
+- Coverage: get ChArUco corners into the center, all four sides, and all four
+  corners of both images. Center-only captures can produce a deceptively clean
+  RMS while still giving poor measurements away from the center.
+- Baseline: compare the artifact baseline against the measured physical camera
+  spacing in the same units as the board. A large mismatch usually means board
+  dimensions, units, or camera ordering are wrong.
+- Rejections: a few rejected frames are normal. Many rejections usually mean
+  glare, blur, too much partial occlusion, or a pose where one camera sees too
+  little of the board.
+
+For Sunday's pool test, save several capture sessions rather than overwriting
+one. Calibrate each candidate, keep the artifact with the lowest errors and
+best coverage, and preserve the raw session folder that produced it.

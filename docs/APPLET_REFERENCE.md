@@ -180,8 +180,8 @@ python -m main_stereo_calibration path\to\manifest.json --charuco
 Purpose:
 
 - Calibrate a stereo rig from TritonPilot left/right capture sessions.
-- Preview saved image pairs, choose board settings, run calibration, and export
-  an OpenCV calibration artifact.
+- Preview saved image pairs, choose board settings, run calibration, review
+  quality diagnostics, and export an OpenCV calibration artifact.
 
 Primary modules:
 
@@ -200,7 +200,7 @@ Inputs:
 Outputs:
 
 - Stereo calibration JSON artifact
-- RMS and baseline summary
+- RMS, epipolar error, coverage, and baseline summary
 - Rejected observation notes
 
 ## Coral Garden Model

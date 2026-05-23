@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QFrame,
     QGridLayout,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -122,6 +123,8 @@ class StereoCalibrationWindow(QMainWindow):
         self.manifest: dict = {}
         self.image_pairs: list[tuple[Path, Path]] = []
         self._worker: _CalibrationWorker | None = None
+        self._checker_rows: list[tuple[QLabel, QWidget]] = []
+        self._charuco_rows: list[tuple[QLabel, QWidget]] = []
 
         self._build_ui()
         if manifest_path:
@@ -212,14 +215,22 @@ class StereoCalibrationWindow(QMainWindow):
         self.units_edit = QLineEdit("mm")
         self.dictionary_combo = QComboBox()
         self.dictionary_combo.addItems(["DICT_4X4_50", "DICT_4X4_100", "DICT_5X5_100", "DICT_6X6_250"])
-        board_form.addRow("Checker Columns", self.columns_spin)
-        board_form.addRow("Checker Rows", self.rows_spin)
-        board_form.addRow("ChArUco Squares X", self.squares_x_spin)
-        board_form.addRow("ChArUco Squares Y", self.squares_y_spin)
-        board_form.addRow("Square Size", self.square_size_spin)
-        board_form.addRow("Marker Size", self.marker_size_spin)
-        board_form.addRow("Units", self.units_edit)
-        board_form.addRow("Dictionary", self.dictionary_combo)
+        self._checker_rows.extend(
+            [
+                self._add_form_row(board_form, "Checker Columns", self.columns_spin),
+                self._add_form_row(board_form, "Checker Rows", self.rows_spin),
+            ]
+        )
+        self._charuco_rows.extend(
+            [
+                self._add_form_row(board_form, "ChArUco Squares X", self.squares_x_spin),
+                self._add_form_row(board_form, "ChArUco Squares Y", self.squares_y_spin),
+            ]
+        )
+        self._add_form_row(board_form, "Square Size", self.square_size_spin)
+        self._charuco_rows.append(self._add_form_row(board_form, "Marker Size", self.marker_size_spin))
+        self._add_form_row(board_form, "Units", self.units_edit)
+        self._charuco_rows.append(self._add_form_row(board_form, "Dictionary", self.dictionary_combo))
         board_card.body.addLayout(board_form)
         controls_layout.addWidget(board_card)
 
@@ -234,8 +245,8 @@ class StereoCalibrationWindow(QMainWindow):
         output_row = QHBoxLayout()
         output_row.addWidget(self.output_edit, 1)
         output_row.addWidget(self.output_btn, 0)
-        run_form.addRow("Min Pairs", self.min_pairs_spin)
-        run_form.addRow("Min ChArUco Corners", self.min_corners_spin)
+        self._add_form_row(run_form, "Min Pairs", self.min_pairs_spin)
+        self._charuco_rows.append(self._add_form_row(run_form, "Min ChArUco Corners", self.min_corners_spin))
         run_form.addRow("Output", output_row)
         run_card.body.addLayout(run_form)
         self.calibrate_btn = QPushButton("Run Calibration")
@@ -249,6 +260,14 @@ class StereoCalibrationWindow(QMainWindow):
         self.result_lbl.setObjectName("summaryHint")
         self.result_lbl.setWordWrap(True)
         result_card.body.addWidget(self.result_lbl)
+        self.quality_table = QTableWidget(0, 2)
+        self.quality_table.setHorizontalHeaderLabels(["Metric", "Value"])
+        self.quality_table.verticalHeader().hide()
+        self.quality_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.quality_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.quality_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.quality_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        result_card.body.addWidget(self.quality_table)
         self.rejected_table = QTableWidget(0, 2)
         self.rejected_table.setHorizontalHeaderLabels(["Pair", "Reason"])
         self.rejected_table.verticalHeader().hide()
@@ -281,12 +300,21 @@ class StereoCalibrationWindow(QMainWindow):
         spin.setValue(value)
         return spin
 
+    def _add_form_row(self, form: QFormLayout, label_text: str, field: QWidget) -> tuple[QLabel, QWidget]:
+        label = QLabel(label_text)
+        form.addRow(label, field)
+        return label, field
+
+    def _set_form_rows_visible(self, rows: list[tuple[QLabel, QWidget]], visible: bool) -> None:
+        for label, field in rows:
+            label.setVisible(visible)
+            field.setVisible(visible)
+            field.setEnabled(visible)
+
     def _refresh_board_mode(self) -> None:
         charuco = self.board_type_combo.currentText().lower().startswith("ch")
-        for widget in (self.squares_x_spin, self.squares_y_spin, self.marker_size_spin, self.dictionary_combo, self.min_corners_spin):
-            widget.setEnabled(charuco)
-        for widget in (self.columns_spin, self.rows_spin):
-            widget.setEnabled(not charuco)
+        self._set_form_rows_visible(self._charuco_rows, charuco)
+        self._set_form_rows_visible(self._checker_rows, not charuco)
 
     def _choose_manifest(self) -> None:
         path, _filter = QFileDialog.getOpenFileName(
@@ -415,22 +443,86 @@ class StereoCalibrationWindow(QMainWindow):
         rms = artifact.get("rms") or {}
         stereo = artifact.get("stereo") or {}
         board = artifact.get("board") or {}
+        warnings = (artifact.get("quality") or {}).get("warnings") or []
         units = board.get("units") or ""
+        warning_text = f"\nWarnings: {len(warnings)} item(s) to review" if warnings else ""
         self.result_lbl.setText(
-            "Accepted: {accepted} | Stereo RMS: {rms:.4f} | Baseline: {baseline:.4f} {units}\n{path}".format(
+            "Accepted: {accepted} | Stereo RMS: {rms:.4f} px | Baseline: {baseline:.4f} {units}{warnings}\n{path}".format(
                 accepted=artifact.get("observation_count", 0),
                 rms=float(rms.get("stereo", 0.0)),
                 baseline=float(stereo.get("baseline", 0.0)),
                 units=units,
+                warnings=warning_text,
                 path=output_path,
             )
         )
+        self._populate_quality_table(artifact)
         self._populate_rejections(artifact.get("rejected_observations") or [])
         self.statusBar().showMessage(f"Calibration saved: {output_path}", 7000)
 
     def _on_calibration_failed(self, error: str) -> None:
         self.result_lbl.setText(f"Calibration failed: {error}")
+        self.quality_table.setRowCount(0)
         self.statusBar().showMessage(f"Calibration failed: {error}", 7000)
+
+    def _format_float(self, value, decimals: int = 3, suffix: str = "") -> str:
+        if value is None:
+            return "-"
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return "-"
+        return f"{number:.{decimals}f}{suffix}"
+
+    def _format_percent(self, value) -> str:
+        if value is None:
+            return "-"
+        try:
+            return f"{float(value) * 100.0:.0f}%"
+        except (TypeError, ValueError):
+            return "-"
+
+    def _coverage_text(self, coverage: dict) -> str:
+        return "{area} bbox, {grid} grid".format(
+            area=self._format_percent((coverage or {}).get("area_fraction")),
+            grid=self._format_percent((coverage or {}).get("grid_4x4_fraction")),
+        )
+
+    def _populate_quality_table(self, artifact: dict) -> None:
+        quality = artifact.get("quality") or {}
+        rms = artifact.get("rms") or {}
+        stereo = artifact.get("stereo") or {}
+        board = artifact.get("board") or {}
+        units = board.get("units") or ""
+        left_reproj = quality.get("left_reprojection") or {}
+        right_reproj = quality.get("right_reprojection") or {}
+        epipolar = quality.get("epipolar") or {}
+        left_coverage = quality.get("left_coverage") or {}
+        right_coverage = quality.get("right_coverage") or {}
+        warnings = quality.get("warnings") or []
+
+        rows = [
+            ("Accepted Pairs", str(artifact.get("observation_count", 0))),
+            ("Stereo RMS", self._format_float(rms.get("stereo"), suffix=" px")),
+            ("Left Reprojection", self._format_float(left_reproj.get("rms_px"), suffix=" px RMS")),
+            ("Right Reprojection", self._format_float(right_reproj.get("rms_px"), suffix=" px RMS")),
+            ("Epipolar Error", self._format_float(epipolar.get("rms_px"), suffix=" px RMS")),
+            ("Left Coverage", self._coverage_text(left_coverage)),
+            ("Right Coverage", self._coverage_text(right_coverage)),
+            ("Baseline", f"{self._format_float(stereo.get('baseline'), suffix='')} {units}".strip()),
+            ("Rejected Pairs", str(len(artifact.get("rejected_observations") or []))),
+        ]
+        if warnings:
+            rows.extend((f"Warning {index}", warning) for index, warning in enumerate(warnings, start=1))
+        else:
+            rows.append(("Warnings", "None"))
+
+        self.quality_table.setRowCount(0)
+        for row, (metric, value) in enumerate(rows):
+            self.quality_table.insertRow(row)
+            self.quality_table.setItem(row, 0, QTableWidgetItem(metric))
+            self.quality_table.setItem(row, 1, QTableWidgetItem(str(value)))
+        self.quality_table.resizeRowsToContents()
 
     def _populate_rejections(self, rejected: list[dict]) -> None:
         self.rejected_table.setRowCount(0)

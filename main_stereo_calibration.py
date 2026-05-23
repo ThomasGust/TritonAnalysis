@@ -75,9 +75,22 @@ def main(argv: list[str] | None = None) -> int:
     )
     out_path = Path(args.output) if args.output else manifest_path.parent / "stereo_calibration.json"
     write_calibration_artifact(artifact, out_path)
+    quality = artifact.get("quality") or {}
+    epipolar = quality.get("epipolar") or {}
+    left_coverage = quality.get("left_coverage") or {}
+    right_coverage = quality.get("right_coverage") or {}
     print(f"Accepted pairs: {artifact['observation_count']}")
-    print(f"Stereo RMS: {artifact['rms']['stereo']:.4f}")
+    print(f"Stereo RMS: {artifact['rms']['stereo']:.4f} px")
+    print(f"Epipolar RMS: {float(epipolar.get('rms_px') or 0.0):.4f} px")
+    print(
+        "Coverage: left {left:.0%}, right {right:.0%}".format(
+            left=float(left_coverage.get("area_fraction") or 0.0),
+            right=float(right_coverage.get("area_fraction") or 0.0),
+        )
+    )
     print(f"Baseline ({args.units}): {artifact['stereo']['baseline']:.4f}")
+    for warning in quality.get("warnings") or []:
+        print(f"Warning: {warning}")
     print(f"Calibration: {out_path}")
     return 0
 

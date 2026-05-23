@@ -101,6 +101,11 @@ def test_stereo_calibration_recovers_fixed_intrinsic_baseline(tmp_path: Path):
     assert artifact["stereo"]["baseline"] == pytest.approx(8.0, abs=1.0e-3)
     assert artifact["stereo"]["translation"][0] == pytest.approx(-8.0, abs=1.0e-3)
     assert artifact["rms"]["stereo"] < 1.0e-3
+    assert artifact["quality"]["left_reprojection"]["rms_px"] < 1.0e-3
+    assert artifact["quality"]["right_reprojection"]["rms_px"] < 1.0e-3
+    assert artifact["quality"]["epipolar"]["rms_px"] < 1.0e-3
+    assert artifact["quality"]["left_coverage"]["area_fraction"] > 0.0
+    assert artifact["quality"]["warnings"]
 
     out_path = write_calibration_artifact(artifact, tmp_path / "calibration.json")
     loaded = read_calibration_artifact(out_path)
