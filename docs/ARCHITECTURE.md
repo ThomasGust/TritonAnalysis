@@ -57,6 +57,8 @@ classes:
   or CSV text.
 - `color_corr.py` contains both GUI and image-processing classes for video
   correction and frame export.
+- `stereo_calibration.py` calibrates stereo rigs from saved TritonPilot
+  left/right image-pair manifests and writes OpenCV calibration artifacts.
 
 Tests should target these modules directly when possible.
 

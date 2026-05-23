@@ -21,6 +21,8 @@ competition analysis applets.
 - [Subsystem Reference](SUBSYSTEMS.md) - Repository package/module ownership.
 - [Data And Inputs](DATA_AND_INPUTS.md) - Supported file types, bundled
   reference data, output locations, and handoff conventions.
+- [Stereo Calibration](STEREO_CALIBRATION.md) - Calibrating stereo rigs from
+  TritonPilot stereo capture sessions and writing calibration artifacts.
 - [Testing And Troubleshooting](TESTING_AND_TROUBLESHOOTING.md) - Test
   commands, optional vision-test behavior, and common setup/runtime problems.
 

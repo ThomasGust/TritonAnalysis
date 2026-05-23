@@ -42,6 +42,7 @@ crab_detector_cv.py                    Crab computer-vision pipeline
 iceberg_tracking.py                    Coordinate/threat-assessment logic
 iceberg_measurement.py                 2D/3D measurement algorithms
 planar_measurement.py                  Planar homography measurement algorithms
+stereo_calibration.py                  Stereo calibration artifact generation
 coral_garden_model.py                  Prism model and OBJ export
 edna_analysis.py                       eDNA frequency calculations and reports
 gui/                                   PyQt windows and responsive helpers
@@ -120,6 +121,12 @@ Measurement applets:
 python -m main_iceberg_measurement [image-or-video ...]
 python -m main_planar_height_measurement [image-or-video ...]
 python -m main_multi_rect_length_measurement [image-or-video ...]
+```
+
+Stereo calibration from TritonPilot capture sessions:
+
+```powershell
+python -m main_stereo_calibration path\to\manifest.json --checkerboard --columns 9 --rows 6 --square-size 2.5
 ```
 
 Underwater color correction and frame export:
