@@ -15,7 +15,9 @@ stereo_sessions/
     manifest.json
 ```
 
-The manifest supplies the left/right image paths and timing metadata. Board
+The manifest supplies the left/right image paths and timing metadata. The GUI
+can also load multiple `manifest.json` files or scan a folder of stereo
+sessions, as long as they all belong to the same stereo pair and mount. Board
 dimensions still come from the operator because they must match the physical
 calibration board used in the pool.
 
@@ -27,9 +29,10 @@ Launch the stereo calibration applet:
 python -m main_stereo_calibration_gui path\to\manifest.json
 ```
 
-The window lets you inspect the manifest, preview left/right image pairs,
-choose checkerboard or ChArUco board settings, set minimum accepted pairs, run
-calibration, review rejected observations, and write the calibration artifact.
+The window lets you inspect one manifest or a combined set of manifests,
+preview left/right image pairs, choose checkerboard or ChArUco board settings,
+set minimum accepted pairs, run calibration, review rejected observations, and
+write the calibration artifact.
 The default board settings match Triton's shipped ChArUco board:
 17 rows by 24 columns, 30 mm square width, and 22 mm marker width.
 Checkerboard-only fields are hidden when ChArUco mode is selected.
@@ -60,6 +63,13 @@ python -m main_stereo_calibration path\to\manifest.json `
   --charuco
 ```
 
+You can also pass several manifests or a parent folder:
+
+```powershell
+python -m main_stereo_calibration path\to\stereo_sessions --charuco
+python -m main_stereo_calibration path\to\session1\manifest.json path\to\session2\manifest.json --charuco
+```
+
 Equivalent explicit values:
 
 ```powershell
@@ -78,7 +88,8 @@ field of view makes full checkerboard detection unreliable.
 
 ## Output Artifact
 
-The default output is `stereo_calibration.json` next to the manifest. It stores:
+The default output is `stereo_calibration.json` next to the manifest, or next
+to the first selected source when several manifests are loaded. It stores:
 
 - Left and right intrinsic matrices and distortion coefficients.
 - Stereo rotation and translation.

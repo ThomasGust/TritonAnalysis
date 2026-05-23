@@ -11,14 +11,14 @@ from stereo_calibration import (
     calibrate_stereo_from_observations,
     collect_charuco_observations,
     collect_checkerboard_observations,
-    manifest_image_pairs,
+    load_manifest_collection,
     write_calibration_artifact,
 )
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Calibrate a stereo rig from a TritonPilot stereo manifest.")
-    parser.add_argument("manifest", help="Path to TritonPilot stereo manifest.json.")
+    parser.add_argument("sources", nargs="+", help="TritonPilot stereo manifest file(s) or session folder(s).")
     parser.add_argument("--output", default="", help="Output calibration JSON path.")
     parser.add_argument("--rig-id", default="", help="Rig id to store in the artifact.")
     parser.add_argument("--pair-name", default="", help="Stereo pair name to store in the artifact.")
@@ -42,10 +42,9 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
-    manifest_path = Path(args.manifest)
-    image_pairs = manifest_image_pairs(manifest_path)
+    manifest, image_pairs = load_manifest_collection([Path(source) for source in args.sources])
     if not image_pairs:
-        raise SystemExit(f"No image pairs found in manifest: {manifest_path}")
+        raise SystemExit("No image pairs found in stereo manifest source(s)")
 
     if args.checkerboard:
         board = CheckerboardSpec(
@@ -69,11 +68,13 @@ def main(argv: list[str] | None = None) -> int:
 
     artifact = calibrate_stereo_from_observations(
         observations,
-        rig_id=args.rig_id or "stereo_rig",
-        pair_name=args.pair_name or "stereo_pair",
+        rig_id=args.rig_id or str((manifest.get("pair") or {}).get("rig_id") or "stereo_rig"),
+        pair_name=args.pair_name or str((manifest.get("pair") or {}).get("name") or "stereo_pair"),
         board_spec=board,
     )
-    out_path = Path(args.output) if args.output else manifest_path.parent / "stereo_calibration.json"
+    first_source = Path(args.sources[0])
+    default_parent = first_source if first_source.is_dir() else first_source.parent
+    out_path = Path(args.output) if args.output else default_parent / "stereo_calibration.json"
     write_calibration_artifact(artifact, out_path)
     quality = artifact.get("quality") or {}
     epipolar = quality.get("epipolar") or {}

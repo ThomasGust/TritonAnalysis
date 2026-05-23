@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import cv2
@@ -37,7 +36,7 @@ from stereo_calibration import (
     calibrate_stereo_from_observations,
     collect_charuco_observations,
     collect_checkerboard_observations,
-    manifest_image_pairs,
+    load_manifest_collection,
     write_calibration_artifact,
 )
 
@@ -65,7 +64,7 @@ class _CalibrationWorker(QThread):
     def __init__(
         self,
         *,
-        manifest_path: Path,
+        manifest_paths: list[Path],
         output_path: Path,
         board,
         board_kind: str,
@@ -76,7 +75,7 @@ class _CalibrationWorker(QThread):
         parent=None,
     ):
         super().__init__(parent)
-        self.manifest_path = Path(manifest_path)
+        self.manifest_paths = [Path(path) for path in manifest_paths]
         self.output_path = Path(output_path)
         self.board = board
         self.board_kind = str(board_kind)
@@ -87,7 +86,7 @@ class _CalibrationWorker(QThread):
 
     def run(self) -> None:
         try:
-            image_pairs = manifest_image_pairs(self.manifest_path)
+            _manifest, image_pairs = load_manifest_collection(self.manifest_paths)
             if self.board_kind == "charuco":
                 observations = collect_charuco_observations(
                     image_pairs,
@@ -119,7 +118,7 @@ class StereoCalibrationWindow(QMainWindow):
     def __init__(self, manifest_path: str | None = None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Stereo Calibration")
-        self.manifest_path: Path | None = None
+        self.manifest_paths: list[Path] = []
         self.manifest: dict = {}
         self.image_pairs: list[tuple[Path, Path]] = []
         self._worker: _CalibrationWorker | None = None
@@ -141,12 +140,15 @@ class StereoCalibrationWindow(QMainWindow):
         top = QHBoxLayout()
         top.setSpacing(8)
         self.manifest_edit = QLineEdit()
-        self.manifest_edit.setPlaceholderText("Open TritonPilot stereo manifest.json")
+        self.manifest_edit.setPlaceholderText("Open TritonPilot stereo manifest(s) or a session folder")
         self.manifest_edit.setReadOnly(True)
-        self.open_manifest_btn = QPushButton("Open Manifest")
+        self.open_manifest_btn = QPushButton("Open Manifest(s)")
         self.open_manifest_btn.clicked.connect(self._choose_manifest)
+        self.open_folder_btn = QPushButton("Open Folder")
+        self.open_folder_btn.clicked.connect(self._choose_manifest_folder)
         top.addWidget(self.manifest_edit, 1)
         top.addWidget(self.open_manifest_btn, 0)
+        top.addWidget(self.open_folder_btn, 0)
         root.addLayout(top)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -165,8 +167,8 @@ class StereoCalibrationWindow(QMainWindow):
         preview_row.addWidget(self.right_preview)
         left_layout.addWidget(preview_row, 2)
 
-        self.pairs_table = QTableWidget(0, 5)
-        self.pairs_table.setHorizontalHeaderLabels(["#", "Delta", "Left Seq", "Right Seq", "Stem"])
+        self.pairs_table = QTableWidget(0, 6)
+        self.pairs_table.setHorizontalHeaderLabels(["#", "Delta", "Left Seq", "Right Seq", "Stem", "Source"])
         self.pairs_table.verticalHeader().hide()
         self.pairs_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.pairs_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -317,14 +319,23 @@ class StereoCalibrationWindow(QMainWindow):
         self._set_form_rows_visible(self._checker_rows, not charuco)
 
     def _choose_manifest(self) -> None:
-        path, _filter = QFileDialog.getOpenFileName(
+        paths, _filter = QFileDialog.getOpenFileNames(
             self,
-            "Open TritonPilot stereo manifest",
+            "Open TritonPilot stereo manifest(s)",
             str(Path.cwd()),
             "Stereo manifest (manifest.json);;JSON files (*.json);;All files (*)",
         )
+        if paths:
+            self.load_manifests([Path(path) for path in paths])
+
+    def _choose_manifest_folder(self) -> None:
+        path = QFileDialog.getExistingDirectory(
+            self,
+            "Open TritonPilot stereo session folder",
+            str(Path.cwd()),
+        )
         if path:
-            self.load_manifest(Path(path))
+            self.load_manifests([Path(path)])
 
     def _choose_output(self) -> None:
         start = self._default_output_path()
@@ -338,15 +349,23 @@ class StereoCalibrationWindow(QMainWindow):
             self.output_edit.setText(str(Path(path)))
 
     def _default_output_path(self) -> Path:
-        if self.manifest_path is not None:
-            return self.manifest_path.parent / "stereo_calibration.json"
+        if self.manifest_paths:
+            first = self.manifest_paths[0]
+            return first.parent / "stereo_calibration.json"
         return Path.cwd() / "stereo_calibration.json"
 
     def load_manifest(self, path: Path) -> None:
-        self.manifest_path = Path(path)
-        self.manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
-        self.image_pairs = manifest_image_pairs(self.manifest_path)
-        self.manifest_edit.setText(str(self.manifest_path))
+        self.load_manifests([path])
+
+    def load_manifests(self, paths: list[Path]) -> None:
+        self.manifest, self.image_pairs = load_manifest_collection(paths)
+        self.manifest_paths = [Path(source["path"]) for source in self.manifest.get("sources", [])]
+        source_count = len(self.manifest_paths)
+        if source_count == 1:
+            self.manifest_edit.setText(str(self.manifest_paths[0]))
+        else:
+            first_parent = self.manifest_paths[0].parent if self.manifest_paths else Path.cwd()
+            self.manifest_edit.setText(f"{source_count} manifests | {first_parent}")
         if not self.output_edit.text().strip():
             self.output_edit.setText(str(self._default_output_path()))
         self._populate_session()
@@ -355,7 +374,10 @@ class StereoCalibrationWindow(QMainWindow):
         if self.image_pairs:
             self.pairs_table.selectRow(0)
             self._show_pair(0)
-        self.statusBar().showMessage(f"Loaded {len(self.image_pairs)} stereo pair(s)", 4000)
+        self.statusBar().showMessage(
+            f"Loaded {len(self.image_pairs)} stereo pair(s) from {source_count} manifest(s)",
+            4000,
+        )
 
     def _populate_session(self) -> None:
         pair = self.manifest.get("pair") or {}
@@ -381,6 +403,7 @@ class StereoCalibrationWindow(QMainWindow):
                 str((frame.get("left") or {}).get("seq", "-")),
                 str((frame.get("right") or {}).get("seq", "-")),
                 str(frame.get("stem", "")),
+                str(frame.get("source_session", "")),
             ]
             for col, value in enumerate(values):
                 item = QTableWidgetItem(value)
@@ -416,12 +439,12 @@ class StereoCalibrationWindow(QMainWindow):
         )
 
     def _run_calibration(self) -> None:
-        if self.manifest_path is None:
+        if not self.manifest_paths:
             return
         board_kind, board = self._board_spec()
         pair = self.manifest.get("pair") or {}
         self._worker = _CalibrationWorker(
-            manifest_path=self.manifest_path,
+            manifest_paths=list(self.manifest_paths),
             output_path=Path(self.output_edit.text().strip() or self._default_output_path()),
             board=board,
             board_kind=board_kind,

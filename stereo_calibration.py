@@ -576,6 +576,101 @@ def manifest_image_pairs(manifest_path: str | Path) -> list[tuple[Path, Path]]:
     return pairs
 
 
+def discover_stereo_manifests(sources: Iterable[str | Path]) -> list[Path]:
+    """Resolve manifest files from explicit manifest paths or session folders."""
+
+    manifests: list[Path] = []
+    seen: set[Path] = set()
+    for source in sources:
+        path = Path(source)
+        candidates: list[Path]
+        if path.is_dir():
+            direct = path / "manifest.json"
+            candidates = [direct] if direct.exists() else sorted(path.rglob("manifest.json"))
+        else:
+            candidates = [path]
+        for candidate in candidates:
+            resolved = candidate.resolve()
+            if resolved not in seen:
+                manifests.append(candidate)
+                seen.add(resolved)
+    return manifests
+
+
+def _same_stereo_pair(left: dict, right: dict) -> bool:
+    for key in ("name", "left", "right", "rig_id"):
+        if str(left.get(key, "")) != str(right.get(key, "")):
+            return False
+    return True
+
+
+def load_manifest_collection(sources: Iterable[str | Path]) -> tuple[dict, list[tuple[Path, Path]]]:
+    """Load one or more TritonPilot stereo manifests as one calibration dataset."""
+
+    manifest_paths = discover_stereo_manifests(sources)
+    if not manifest_paths:
+        raise ValueError("No stereo manifest files found")
+
+    combined_frames: list[dict] = []
+    image_pairs: list[tuple[Path, Path]] = []
+    source_records: list[dict] = []
+    pair_ref: dict | None = None
+    first_manifest: dict | None = None
+
+    for manifest_path in manifest_paths:
+        path = Path(manifest_path)
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        if first_manifest is None:
+            first_manifest = manifest
+        pair = dict(manifest.get("pair") or {})
+        if pair_ref is None:
+            pair_ref = pair
+        elif not _same_stereo_pair(pair_ref, pair):
+            raise ValueError(f"Manifest uses a different stereo pair and cannot be mixed: {path}")
+
+        root = path.parent
+        frames = list(manifest.get("frames") or [])
+        source_records.append(
+            {
+                "path": str(path),
+                "session_name": str(manifest.get("session_name") or path.parent.name),
+                "frames": len(frames),
+            }
+        )
+        for frame in frames:
+            left = frame.get("left_path")
+            right = frame.get("right_path")
+            if not left or not right:
+                continue
+            left_path = root / left
+            right_path = root / right
+            image_pairs.append((left_path, right_path))
+            combined = dict(frame)
+            combined["index"] = len(combined_frames) + 1
+            combined["source_manifest"] = str(path)
+            combined["source_session"] = str(manifest.get("session_name") or path.parent.name)
+            combined["source_index"] = frame.get("index", len(combined_frames) + 1)
+            combined_frames.append(combined)
+
+    if first_manifest is None:
+        first_manifest = {}
+    collection = {
+        "schema": "tritonanalysis.stereo_manifest_collection",
+        "schema_version": 1,
+        "sources": source_records,
+        "source_count": len(source_records),
+        "session_name": (
+            str(first_manifest.get("session_name") or Path(manifest_paths[0]).parent.name)
+            if len(source_records) == 1
+            else f"{len(source_records)} stereo sessions"
+        ),
+        "pair": pair_ref or {},
+        "streams": first_manifest.get("streams") or {},
+        "frames": combined_frames,
+    }
+    return collection, image_pairs
+
+
 def write_calibration_artifact(artifact: dict, path: str | Path) -> Path:
     """Write a stereo calibration artifact to JSON."""
 

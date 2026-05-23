@@ -174,14 +174,15 @@ Launch:
 
 ```powershell
 python -m main_stereo_calibration_gui [manifest.json]
-python -m main_stereo_calibration path\to\manifest.json --charuco
+python -m main_stereo_calibration path\to\manifest.json [more-manifests-or-folders ...] --charuco
 ```
 
 Purpose:
 
 - Calibrate a stereo rig from TritonPilot left/right capture sessions.
-- Preview saved image pairs, choose board settings, run calibration, review
-  quality diagnostics, and export an OpenCV calibration artifact.
+- Preview saved image pairs from one or more manifests, choose board settings,
+  run calibration, review quality diagnostics, and export an OpenCV calibration
+  artifact.
 
 Primary modules:
 
@@ -192,7 +193,7 @@ Primary modules:
 
 Inputs:
 
-- TritonPilot stereo `manifest.json`
+- TritonPilot stereo `manifest.json` files or stereo session folders
 - Checkerboard or ChArUco board dimensions; defaults match Triton's ChArUco
   board: 24 columns, 17 rows, 30 mm squares, 22 mm markers
 - Minimum accepted pair/corner thresholds

@@ -10,6 +10,7 @@ from stereo_calibration import (
     StereoObservations,
     calibrate_stereo_from_observations,
     checkerboard_object_points,
+    load_manifest_collection,
     manifest_image_pairs,
     read_calibration_artifact,
     write_calibration_artifact,
@@ -43,6 +44,59 @@ def test_manifest_image_pairs_resolves_relative_paths(tmp_path: Path):
             tmp_path / "right" / "pair_000001_right.png",
         )
     ]
+
+
+def test_manifest_collection_combines_multiple_sessions(tmp_path: Path):
+    pair = {"name": "Forward Stereo", "left": "Left", "right": "Right", "rig_id": "rig-a"}
+    for idx in range(2):
+        session = tmp_path / f"session-{idx + 1}"
+        session.mkdir()
+        (session / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "session_name": session.name,
+                    "pair": pair,
+                    "frames": [
+                        {
+                            "index": 1,
+                            "stem": "pair_000001",
+                            "left_path": "left/pair_000001_left.png",
+                            "right_path": "right/pair_000001_right.png",
+                            "pair_delta_ms": 10.0 + idx,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    manifest, pairs = load_manifest_collection([tmp_path])
+
+    assert manifest["source_count"] == 2
+    assert manifest["pair"]["rig_id"] == "rig-a"
+    assert len(manifest["frames"]) == 2
+    assert manifest["frames"][1]["index"] == 2
+    assert manifest["frames"][1]["source_session"] == "session-2"
+    assert pairs[0][0] == tmp_path / "session-1" / "left" / "pair_000001_left.png"
+    assert pairs[1][1] == tmp_path / "session-2" / "right" / "pair_000001_right.png"
+
+
+def test_manifest_collection_rejects_mixed_stereo_pairs(tmp_path: Path):
+    for idx, rig_id in enumerate(["rig-a", "rig-b"], start=1):
+        session = tmp_path / f"session-{idx}"
+        session.mkdir()
+        (session / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "pair": {"name": "Forward Stereo", "left": "Left", "right": "Right", "rig_id": rig_id},
+                    "frames": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    with pytest.raises(ValueError, match="different stereo pair"):
+        load_manifest_collection([tmp_path])
 
 
 def test_stereo_calibration_recovers_fixed_intrinsic_baseline(tmp_path: Path):
