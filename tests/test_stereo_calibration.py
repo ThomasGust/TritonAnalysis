@@ -6,10 +6,14 @@ import numpy as np
 import pytest
 
 from stereo_calibration import (
+    DEFAULT_CHARUCO_DICTIONARY,
+    CharucoBoardSpec,
     CheckerboardSpec,
     StereoObservations,
+    annotate_board_detection,
     calibrate_stereo_from_observations,
     checkerboard_object_points,
+    detect_stereo_board,
     load_manifest_collection,
     manifest_image_pairs,
     read_calibration_artifact,
@@ -25,6 +29,26 @@ def test_checkerboard_object_points_use_inner_corner_grid():
     assert points.shape == (6, 3)
     assert points[0].tolist() == [0.0, 0.0, 0.0]
     assert points[-1].tolist() == [5.0, 2.5, 0.0]
+
+
+def test_charuco_defaults_use_calibio_dictionary():
+    board = CharucoBoardSpec(squares_x=24, squares_y=17, square_size=30.0, marker_size=22.0)
+
+    assert board.dictionary == DEFAULT_CHARUCO_DICTIONARY == "DICT_5X5_1000"
+
+
+def test_blank_stereo_detection_returns_preview_summary():
+    board = CharucoBoardSpec(squares_x=24, squares_y=17, square_size=30.0, marker_size=22.0)
+    left = np.zeros((80, 120, 3), dtype=np.uint8)
+    right = np.zeros((80, 120, 3), dtype=np.uint8)
+
+    detection = detect_stereo_board(left, right, board, min_corners=8)
+    annotated = annotate_board_detection(left, detection["left"], matched_ids=detection["matched_ids"])
+
+    assert detection["kind"] == "charuco"
+    assert detection["matched_count"] == 0
+    assert detection["accepted"] is False
+    assert annotated.shape == left.shape
 
 
 def test_manifest_image_pairs_resolves_relative_paths(tmp_path: Path):

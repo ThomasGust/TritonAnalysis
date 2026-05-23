@@ -31,11 +31,15 @@ from PyQt6.QtWidgets import (
 from gui.crab_result_dialog import ImagePreviewPanel
 from gui.responsive import resize_to_available_screen, vertical_scroll_area
 from stereo_calibration import (
+    CHARUCO_DICTIONARIES,
+    DEFAULT_CHARUCO_DICTIONARY,
     CharucoBoardSpec,
     CheckerboardSpec,
+    annotate_board_detection,
     calibrate_stereo_from_observations,
     collect_charuco_observations,
     collect_checkerboard_observations,
+    detect_stereo_board,
     load_manifest_collection,
     write_calibration_artifact,
 )
@@ -167,8 +171,14 @@ class StereoCalibrationWindow(QMainWindow):
         preview_row.addWidget(self.right_preview)
         left_layout.addWidget(preview_row, 2)
 
-        self.pairs_table = QTableWidget(0, 6)
-        self.pairs_table.setHorizontalHeaderLabels(["#", "Delta", "Left Seq", "Right Seq", "Stem", "Source"])
+        self.detection_lbl = QLabel("Open a manifest to inspect board detections.")
+        self.detection_lbl.setObjectName("summaryHint")
+        self.detection_lbl.setWordWrap(True)
+        self.detection_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        left_layout.addWidget(self.detection_lbl, 0)
+
+        self.pairs_table = QTableWidget(0, 8)
+        self.pairs_table.setHorizontalHeaderLabels(["#", "Delta", "Left Seq", "Right Seq", "Matched", "Status", "Stem", "Source"])
         self.pairs_table.verticalHeader().hide()
         self.pairs_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.pairs_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -216,7 +226,8 @@ class StereoCalibrationWindow(QMainWindow):
         self.marker_size_spin = self._float_spin(0.001, 1000.0, 22.0, 3)
         self.units_edit = QLineEdit("mm")
         self.dictionary_combo = QComboBox()
-        self.dictionary_combo.addItems(["DICT_4X4_50", "DICT_4X4_100", "DICT_5X5_100", "DICT_6X6_250"])
+        self.dictionary_combo.addItems(CHARUCO_DICTIONARIES)
+        self.dictionary_combo.setCurrentText(DEFAULT_CHARUCO_DICTIONARY)
         self._checker_rows.extend(
             [
                 self._add_form_row(board_form, "Checker Columns", self.columns_spin),
@@ -280,6 +291,7 @@ class StereoCalibrationWindow(QMainWindow):
         controls_layout.addStretch(1)
 
         splitter.setSizes([900, 420])
+        self._connect_detection_controls()
         self._refresh_board_mode()
 
     def _value_label(self) -> QLabel:
@@ -317,6 +329,20 @@ class StereoCalibrationWindow(QMainWindow):
         charuco = self.board_type_combo.currentText().lower().startswith("ch")
         self._set_form_rows_visible(self._charuco_rows, charuco)
         self._set_form_rows_visible(self._checker_rows, not charuco)
+        self._refresh_current_pair_detection()
+
+    def _connect_detection_controls(self) -> None:
+        for spin in (
+            self.columns_spin,
+            self.rows_spin,
+            self.squares_x_spin,
+            self.squares_y_spin,
+            self.square_size_spin,
+            self.marker_size_spin,
+            self.min_corners_spin,
+        ):
+            spin.valueChanged.connect(lambda _value: self._refresh_current_pair_detection())
+        self.dictionary_combo.currentTextChanged.connect(lambda _text: self._refresh_current_pair_detection())
 
     def _choose_manifest(self) -> None:
         paths, _filter = QFileDialog.getOpenFileNames(
@@ -402,6 +428,8 @@ class StereoCalibrationWindow(QMainWindow):
                 f"{float(frame.get('pair_delta_ms', 0.0)):.1f} ms",
                 str((frame.get("left") or {}).get("seq", "-")),
                 str((frame.get("right") or {}).get("seq", "-")),
+                "-",
+                "-",
                 str(frame.get("stem", "")),
                 str(frame.get("source_session", "")),
             ]
@@ -415,10 +443,88 @@ class StereoCalibrationWindow(QMainWindow):
         if row < 0 or row >= len(self.image_pairs):
             self.left_preview.clear("No pair selected")
             self.right_preview.clear("No pair selected")
+            self.detection_lbl.setText("No pair selected.")
             return
         left_path, right_path = self.image_pairs[row]
-        self.left_preview.set_frame(cv2.imread(str(left_path)), placeholder_text="Left image missing")
-        self.right_preview.set_frame(cv2.imread(str(right_path)), placeholder_text="Right image missing")
+        left_image = cv2.imread(str(left_path))
+        right_image = cv2.imread(str(right_path))
+        if left_image is None or right_image is None:
+            self.left_preview.set_frame(left_image, placeholder_text="Left image missing")
+            self.right_preview.set_frame(right_image, placeholder_text="Right image missing")
+            self.detection_lbl.setText("Detection unavailable: one or both images could not be read.")
+            self._set_pair_detection_cells(row, matched="-", status="missing image")
+            return
+
+        try:
+            _kind, board = self._board_spec()
+            detection = detect_stereo_board(
+                left_image,
+                right_image,
+                board,
+                min_corners=self.min_corners_spin.value(),
+            )
+            matched_ids = detection.get("matched_ids") or []
+            self.left_preview.set_frame(
+                annotate_board_detection(left_image, detection["left"], matched_ids=matched_ids),
+                placeholder_text="Left image missing",
+            )
+            self.right_preview.set_frame(
+                annotate_board_detection(right_image, detection["right"], matched_ids=matched_ids),
+                placeholder_text="Right image missing",
+            )
+            self.detection_lbl.setText(self._detection_summary_text(detection))
+            self._set_pair_detection_cells(
+                row,
+                matched=str(detection.get("matched_count", 0)),
+                status="ok" if detection.get("accepted") else "review",
+            )
+        except Exception as exc:
+            self.left_preview.set_frame(left_image, placeholder_text="Left image missing")
+            self.right_preview.set_frame(right_image, placeholder_text="Right image missing")
+            self.detection_lbl.setText(f"Detection failed: {exc}")
+            self._set_pair_detection_cells(row, matched="-", status="failed")
+
+    def _refresh_current_pair_detection(self) -> None:
+        if not hasattr(self, "pairs_table"):
+            return
+        row = self.pairs_table.currentRow()
+        if 0 <= row < len(self.image_pairs):
+            self._show_pair(row)
+
+    def _set_pair_detection_cells(self, row: int, *, matched: str, status: str) -> None:
+        if row < 0 or row >= self.pairs_table.rowCount():
+            return
+        for col, value in ((4, matched), (5, status)):
+            item = QTableWidgetItem(str(value))
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.pairs_table.setItem(row, col, item)
+        self.pairs_table.resizeColumnsToContents()
+
+    def _detection_summary_text(self, detection: dict) -> str:
+        left = detection.get("left") or {}
+        right = detection.get("right") or {}
+        status = "accepted" if detection.get("accepted") else str(detection.get("reason") or "review")
+        if detection.get("kind") == "charuco":
+            return (
+                "Detection: {status} | matched {matched} | "
+                "left {left_corners} corners / {left_markers} markers | "
+                "right {right_corners} corners / {right_markers} markers"
+            ).format(
+                status=status,
+                matched=detection.get("matched_count", 0),
+                left_corners=left.get("corner_count", 0),
+                left_markers=left.get("marker_count", 0),
+                right_corners=right.get("corner_count", 0),
+                right_markers=right.get("marker_count", 0),
+            )
+        return (
+            "Detection: {status} | matched {matched} | left {left_corners} corners | right {right_corners} corners"
+        ).format(
+            status=status,
+            matched=detection.get("matched_count", 0),
+            left_corners=left.get("corner_count", 0),
+            right_corners=right.get("corner_count", 0),
+        )
 
     def _board_spec(self):
         units = self.units_edit.text().strip() or "cm"

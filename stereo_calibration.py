@@ -13,6 +13,16 @@ import numpy as np
 
 
 PointPairs = Sequence[tuple[str | Path, str | Path]]
+DEFAULT_CHARUCO_DICTIONARY = "DICT_5X5_1000"
+CHARUCO_DICTIONARIES = [
+    "DICT_4X4_50",
+    "DICT_4X4_100",
+    "DICT_5X5_100",
+    "DICT_5X5_250",
+    "DICT_5X5_1000",
+    "DICT_6X6_250",
+    "DICT_6X6_1000",
+]
 
 
 @dataclass(frozen=True)
@@ -33,7 +43,7 @@ class CharucoBoardSpec:
     squares_y: int
     square_size: float
     marker_size: float
-    dictionary: str = "DICT_4X4_50"
+    dictionary: str = DEFAULT_CHARUCO_DICTIONARY
     units: str = "cm"
 
 
@@ -212,6 +222,133 @@ def _charuco_board(board: CharucoBoardSpec):
         float(board.marker_size),
         dictionary,
     )
+
+
+def detect_board_in_image(image_bgr: np.ndarray, board: CheckerboardSpec | CharucoBoardSpec) -> dict:
+    """Detect calibration-board image points for preview and diagnostics."""
+
+    if isinstance(board, CharucoBoardSpec):
+        cv_board = _charuco_board(board)
+        detector = cv2.aruco.CharucoDetector(cv_board)
+        corners, ids, marker_corners, marker_ids = detector.detectBoard(image_bgr)
+        ids_flat = [] if ids is None else [int(value) for value in ids.reshape(-1)]
+        return {
+            "kind": "charuco",
+            "detected": bool(ids_flat),
+            "corner_count": int(len(ids_flat)),
+            "marker_count": 0 if marker_ids is None else int(len(marker_ids)),
+            "ids": ids_flat,
+            "corners": corners,
+            "marker_corners": marker_corners,
+            "marker_ids": marker_ids,
+        }
+
+    corners = find_checkerboard_corners(image_bgr, board)
+    return {
+        "kind": "checkerboard",
+        "detected": corners is not None,
+        "corner_count": 0 if corners is None else int(len(corners)),
+        "ids": [],
+        "corners": None if corners is None else corners.reshape(-1, 1, 2),
+        "pattern_size": (int(board.columns), int(board.rows)),
+    }
+
+
+def detect_stereo_board(
+    left_image_bgr: np.ndarray,
+    right_image_bgr: np.ndarray,
+    board: CheckerboardSpec | CharucoBoardSpec,
+    *,
+    min_corners: int = 8,
+) -> dict:
+    """Detect and summarize one left/right board observation for preview."""
+
+    left = detect_board_in_image(left_image_bgr, board)
+    right = detect_board_in_image(right_image_bgr, board)
+    if isinstance(board, CharucoBoardSpec):
+        matched_ids = sorted(set(left["ids"]) & set(right["ids"]))
+        matched_count = int(len(matched_ids))
+        accepted = matched_count >= int(min_corners)
+        if accepted:
+            reason = "ok"
+        elif not left["detected"] or not right["detected"]:
+            reason = "board not found in both images"
+        else:
+            reason = f"only {matched_count} matched ChArUco corners"
+        return {
+            "kind": "charuco",
+            "left": left,
+            "right": right,
+            "matched_ids": matched_ids,
+            "matched_count": matched_count,
+            "accepted": bool(accepted),
+            "reason": reason,
+        }
+
+    matched_count = (
+        min(int(left["corner_count"]), int(right["corner_count"]))
+        if left["detected"] and right["detected"]
+        else 0
+    )
+    accepted = bool(left["detected"] and right["detected"])
+    return {
+        "kind": "checkerboard",
+        "left": left,
+        "right": right,
+        "matched_ids": [],
+        "matched_count": int(matched_count),
+        "accepted": accepted,
+        "reason": "ok" if accepted else "checkerboard not found in both images",
+    }
+
+
+def annotate_board_detection(
+    image_bgr: np.ndarray,
+    detection: dict,
+    *,
+    matched_ids: Iterable[int] | None = None,
+) -> np.ndarray:
+    """Draw detected board markers/corners for visual calibration review."""
+
+    annotated = np.ascontiguousarray(image_bgr.copy())
+    matched = {int(value) for value in (matched_ids or [])}
+    if detection.get("kind") == "charuco":
+        marker_corners = detection.get("marker_corners")
+        marker_ids = detection.get("marker_ids")
+        if marker_corners is not None and marker_ids is not None:
+            cv2.aruco.drawDetectedMarkers(annotated, marker_corners, marker_ids, (0, 180, 255))
+
+        corners = detection.get("corners")
+        ids = detection.get("ids") or []
+        if corners is not None and ids:
+            ids_array = np.asarray(ids, dtype=np.int32).reshape(-1, 1)
+            cv2.aruco.drawDetectedCornersCharuco(annotated, corners, ids_array, (40, 255, 40))
+            for cid, corner in zip(ids, np.asarray(corners, dtype=np.float32).reshape(-1, 2)):
+                color = (60, 255, 60) if int(cid) in matched else (0, 180, 255)
+                center = (int(round(float(corner[0]))), int(round(float(corner[1]))))
+                cv2.circle(annotated, center, 6, color, 2)
+                if int(cid) in matched:
+                    cv2.putText(
+                        annotated,
+                        str(int(cid)),
+                        (center[0] + 6, center[1] - 6),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.42,
+                        color,
+                        1,
+                        cv2.LINE_AA,
+                    )
+        return annotated
+
+    corners = detection.get("corners")
+    if corners is not None:
+        cv2.drawChessboardCorners(
+            annotated,
+            tuple(detection.get("pattern_size") or (0, 0)),
+            corners,
+            bool(detection.get("detected")),
+        )
+    return annotated
 
 
 def collect_charuco_observations(

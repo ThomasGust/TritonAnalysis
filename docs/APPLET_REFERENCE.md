@@ -195,7 +195,8 @@ Inputs:
 
 - TritonPilot stereo `manifest.json` files or stereo session folders
 - Checkerboard or ChArUco board dimensions; defaults match Triton's ChArUco
-  board: 24 columns, 17 rows, 30 mm squares, 22 mm markers
+  board: 24 columns, 17 rows, 30 mm squares, 22 mm markers,
+  `DICT_5X5_1000`
 - Minimum accepted pair/corner thresholds
 
 Outputs:

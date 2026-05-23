@@ -34,8 +34,11 @@ preview left/right image pairs, choose checkerboard or ChArUco board settings,
 set minimum accepted pairs, run calibration, review rejected observations, and
 write the calibration artifact.
 The default board settings match Triton's shipped ChArUco board:
-17 rows by 24 columns, 30 mm square width, and 22 mm marker width.
+17 rows by 24 columns, 30 mm square width, 22 mm marker width, and the
+calib.io default `DICT_5X5_1000` dictionary.
 Checkerboard-only fields are hidden when ChArUco mode is selected.
+Selecting a pair overlays detected board markers/corners on both previews and
+shows left, right, and matched detection counts for quick pool-side review.
 
 ## Checkerboard Calibration
 
@@ -79,7 +82,7 @@ python -m main_stereo_calibration path\to\manifest.json `
   --squares-y 17 `
   --square-size 30 `
   --marker-size 22 `
-  --dictionary DICT_4X4_50 `
+  --dictionary DICT_5X5_1000 `
   --units mm
 ```
 

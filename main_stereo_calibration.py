@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 
 from stereo_calibration import (
+    DEFAULT_CHARUCO_DICTIONARY,
     CharucoBoardSpec,
     CheckerboardSpec,
     calibrate_stereo_from_observations,
@@ -35,7 +36,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--squares-x", type=int, default=24, help="ChArUco board squares in X / columns.")
     parser.add_argument("--squares-y", type=int, default=17, help="ChArUco board squares in Y / rows.")
     parser.add_argument("--marker-size", type=float, default=22.0, help="ChArUco marker size in board units.")
-    parser.add_argument("--dictionary", default="DICT_4X4_50", help="OpenCV aruco predefined dictionary name.")
+    parser.add_argument("--dictionary", default=DEFAULT_CHARUCO_DICTIONARY, help="OpenCV aruco predefined dictionary name.")
     return parser
 
 
