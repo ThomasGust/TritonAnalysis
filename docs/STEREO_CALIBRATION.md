@@ -19,9 +19,22 @@ The manifest supplies the left/right image paths and timing metadata. Board
 dimensions still come from the operator because they must match the physical
 calibration board used in the pool.
 
+## GUI Workflow
+
+Launch the stereo calibration applet:
+
+```powershell
+python -m main_stereo_calibration_gui path\to\manifest.json
+```
+
+The window lets you inspect the manifest, preview left/right image pairs,
+choose checkerboard or ChArUco board settings, set minimum accepted pairs, run
+calibration, review rejected observations, and write the calibration artifact.
+
 ## Checkerboard Calibration
 
-For a checkerboard, `--columns` and `--rows` are inner-corner counts:
+The command-line path is still useful for repeatable batch runs. For a
+checkerboard, `--columns` and `--rows` are inner-corner counts:
 
 ```powershell
 python -m main_stereo_calibration path\to\manifest.json `

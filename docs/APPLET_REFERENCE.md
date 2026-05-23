@@ -168,6 +168,40 @@ Outputs:
 - Segment lengths in centimeters
 - Per-segment visual overlays and fit information
 
+## Stereo Calibration
+
+Launch:
+
+```powershell
+python -m main_stereo_calibration_gui [manifest.json]
+python -m main_stereo_calibration path\to\manifest.json --checkerboard --columns 9 --rows 6 --square-size 2.5
+```
+
+Purpose:
+
+- Calibrate a stereo rig from TritonPilot left/right capture sessions.
+- Preview saved image pairs, choose board settings, run calibration, and export
+  an OpenCV calibration artifact.
+
+Primary modules:
+
+- `main_stereo_calibration_gui.py`
+- `main_stereo_calibration.py`
+- `gui/stereo_calibration_window.py`
+- `stereo_calibration.py`
+
+Inputs:
+
+- TritonPilot stereo `manifest.json`
+- Checkerboard or ChArUco board dimensions
+- Minimum accepted pair/corner thresholds
+
+Outputs:
+
+- Stereo calibration JSON artifact
+- RMS and baseline summary
+- Rejected observation notes
+
 ## Coral Garden Model
 
 Launch:

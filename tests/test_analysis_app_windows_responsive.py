@@ -29,6 +29,7 @@ def _app() -> QApplication:
         ("gui.iceberg_measurement_window.IcebergMeasurementWindow", 2),
         ("gui.planar_height_measurement_window.PlanarHeightMeasurementWindow", 2),
         ("gui.multi_rect_length_measurement_window.MultiRectLengthMeasurementWindow", 2),
+        ("gui.stereo_calibration_window.StereoCalibrationWindow", 1),
         ("color_corr.MainWindow", 3),
     ],
 )

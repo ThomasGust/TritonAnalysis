@@ -126,6 +126,7 @@ python -m main_multi_rect_length_measurement [image-or-video ...]
 Stereo calibration from TritonPilot capture sessions:
 
 ```powershell
+python -m main_stereo_calibration_gui path\to\manifest.json
 python -m main_stereo_calibration path\to\manifest.json --checkerboard --columns 9 --rows 6 --square-size 2.5
 ```
 

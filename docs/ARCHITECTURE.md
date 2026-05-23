@@ -71,6 +71,7 @@ and call the core modules for calculations.
 Most GUI windows support one or more of these interaction patterns:
 
 - Load image or video media.
+- Load stereo session manifests.
 - Select a representative frame.
 - Click calibration or measurement points.
 - Enter reference lengths or task values.

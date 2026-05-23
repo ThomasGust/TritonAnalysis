@@ -74,6 +74,11 @@ def apply_modern_style(app: QApplication) -> None:
         color: #b6bac8;
         padding: 2px 4px 6px 4px;
     }
+    QFrame#stereoCard {
+        background: #202028;
+        border: 1px solid #2f2f3a;
+        border-radius: 10px;
+    }
     QWidget#crabVideoControls {
         background: #202028;
         border: 1px solid #2f2f3a;
