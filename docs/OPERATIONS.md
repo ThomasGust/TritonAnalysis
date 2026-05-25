@@ -54,6 +54,14 @@ Iceberg measurement:
 python -m main_iceberg_measurement path\to\image_or_video
 ```
 
+Stereo segment measurement:
+
+```powershell
+python -m main_stereo_segment_measurement path\to\stereo_session
+python -m main_stereo_segment_measurement path\to\stereo_session --preset coral
+python -m main_stereo_iceberg_measurement path\to\stereo_session
+```
+
 Planar height measurement:
 
 ```powershell
@@ -103,6 +111,14 @@ The batch helper saves a best frame, annotated frame, mask, and CSV summary.
 The measurement applets load images or videos, let the operator choose a frame,
 and collect clicked geometry. The pure measurement modules validate the clicked
 points and raise clear errors when the geometry cannot support the calculation.
+For the stereo segment applet, load the TritonPilot stereo session and matching
+`stereo_calibration.json`, choose a clear frame, select the Generic Segment,
+Iceberg Keel, or Coral Rig Length preset, click both endpoints in both
+rectified views, and add several results so the reported median is less
+sensitive to one shaky click. For horizontal segments, make sure the same
+physical endpoint is first in both views; the app auto-corrects obvious right
+endpoint reversals and also provides `Swap Right` when the pair order is
+ambiguous.
 
 For repeatability:
 

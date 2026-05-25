@@ -80,6 +80,13 @@ Iceberg and planar measurements:
 - Clicked calibration/measurement points
 - Known reference lengths
 
+Stereo measurements:
+
+- TritonPilot stereo session folder or `manifest.json`
+- Matching `stereo_calibration.json`
+- Generic, Iceberg Keel, or Coral Rig Length preset
+- Rectified left/right endpoint clicks
+
 Coral garden:
 
 - Length, height, and optional width

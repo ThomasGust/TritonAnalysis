@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -14,6 +15,10 @@ import numpy as np
 
 PointPairs = Sequence[tuple[str | Path, str | Path]]
 DEFAULT_CHARUCO_DICTIONARY = "DICT_5X5_1000"
+DEFAULT_CHARUCO_SQUARES_X = 12
+DEFAULT_CHARUCO_SQUARES_Y = 9
+DEFAULT_CHARUCO_SQUARE_SIZE = 60.0
+DEFAULT_CHARUCO_MARKER_SIZE = 45.0
 CHARUCO_DICTIONARIES = [
     "DICT_4X4_50",
     "DICT_4X4_100",
@@ -91,6 +96,14 @@ def _error_summary(values: Iterable[float], *, unit_suffix: str = "") -> dict:
         metric_names["rms"]: float(np.sqrt(np.mean(np.square(errors)))),
         metric_names["max"]: float(np.max(errors)),
     }
+
+
+def _rejection_summary(rejected: Sequence[dict], *, limit: int = 3) -> str:
+    if not rejected:
+        return ""
+    counts = Counter(str(item.get("reason") or "unknown") for item in rejected)
+    parts = [f"{count}x {reason}" for reason, count in counts.most_common(limit)]
+    return " Rejections: " + "; ".join(parts)
 
 
 def _coerce_observation_points(
@@ -199,9 +212,12 @@ def collect_checkerboard_observations(
         )
 
     if image_size is None:
-        raise ValueError("No readable stereo image pairs were accepted")
+        raise ValueError("No readable stereo image pairs were accepted" + _rejection_summary(rejected))
     if len(object_points) < int(min_pairs):
-        raise ValueError(f"Only {len(object_points)} valid stereo pairs found; need at least {int(min_pairs)}")
+        raise ValueError(
+            f"Only {len(object_points)} valid stereo pairs found; need at least {int(min_pairs)}"
+            + _rejection_summary(rejected)
+        )
     return StereoObservations(object_points, left_points, right_points, image_size, rejected, accepted)
 
 
@@ -224,24 +240,51 @@ def _charuco_board(board: CharucoBoardSpec):
     )
 
 
+def _detect_charuco_board(image_bgr: np.ndarray, detector) -> dict:
+    corners, ids, marker_corners, marker_ids = detector.detectBoard(image_bgr)
+    ids_flat = [] if ids is None else [int(value) for value in ids.reshape(-1)]
+    marker_ids_flat = [] if marker_ids is None else [int(value) for value in marker_ids.reshape(-1)]
+    return {
+        "kind": "charuco",
+        "detected": bool(ids_flat),
+        "corner_count": int(len(ids_flat)),
+        "marker_count": int(len(marker_ids_flat)),
+        "ids": ids_flat,
+        "marker_ids_flat": marker_ids_flat,
+        "corners": corners,
+        "marker_corners": marker_corners,
+        "marker_ids": marker_ids,
+    }
+
+
+def _charuco_missing_reason(left: dict, right: dict) -> str:
+    if int(left.get("marker_count") or 0) or int(right.get("marker_count") or 0):
+        return (
+            "ChArUco markers found but no ChArUco corners were interpolated; "
+            "check ChArUco board dimensions, layout, and dictionary"
+        )
+    return "charuco board not found in both images"
+
+
+def _charuco_detection_metrics(left: dict, right: dict, expected_marker_count: int) -> dict:
+    marker_ids = list(left.get("marker_ids_flat") or []) + list(right.get("marker_ids_flat") or [])
+    return {
+        "left_charuco_corners": int(left.get("corner_count") or 0),
+        "right_charuco_corners": int(right.get("corner_count") or 0),
+        "left_markers": int(left.get("marker_count") or 0),
+        "right_markers": int(right.get("marker_count") or 0),
+        "configured_marker_count": int(expected_marker_count),
+        "max_detected_marker_id": None if not marker_ids else int(max(marker_ids)),
+    }
+
+
 def detect_board_in_image(image_bgr: np.ndarray, board: CheckerboardSpec | CharucoBoardSpec) -> dict:
     """Detect calibration-board image points for preview and diagnostics."""
 
     if isinstance(board, CharucoBoardSpec):
         cv_board = _charuco_board(board)
         detector = cv2.aruco.CharucoDetector(cv_board)
-        corners, ids, marker_corners, marker_ids = detector.detectBoard(image_bgr)
-        ids_flat = [] if ids is None else [int(value) for value in ids.reshape(-1)]
-        return {
-            "kind": "charuco",
-            "detected": bool(ids_flat),
-            "corner_count": int(len(ids_flat)),
-            "marker_count": 0 if marker_ids is None else int(len(marker_ids)),
-            "ids": ids_flat,
-            "corners": corners,
-            "marker_corners": marker_corners,
-            "marker_ids": marker_ids,
-        }
+        return _detect_charuco_board(image_bgr, detector)
 
     corners = find_checkerboard_corners(image_bgr, board)
     return {
@@ -272,7 +315,7 @@ def detect_stereo_board(
         if accepted:
             reason = "ok"
         elif not left["detected"] or not right["detected"]:
-            reason = "board not found in both images"
+            reason = _charuco_missing_reason(left, right)
         else:
             reason = f"only {matched_count} matched ChArUco corners"
         return {
@@ -363,6 +406,7 @@ def collect_charuco_observations(
     cv_board = _charuco_board(board)
     detector = cv2.aruco.CharucoDetector(cv_board)
     board_points = cv_board.getChessboardCorners().astype(np.float32)
+    expected_marker_count = int(len(cv_board.getIds()))
     object_points: list[np.ndarray] = []
     left_points: list[np.ndarray] = []
     right_points: list[np.ndarray] = []
@@ -383,17 +427,33 @@ def collect_charuco_observations(
             rejected.append({"index": index, "reason": "image size differs from first accepted pair"})
             continue
 
-        left_corners, left_ids, _left_marker_corners, _left_marker_ids = detector.detectBoard(left_image)
-        right_corners, right_ids, _right_marker_corners, _right_marker_ids = detector.detectBoard(right_image)
-        if left_corners is None or right_corners is None or left_ids is None or right_ids is None:
-            rejected.append({"index": index, "reason": "charuco board not found in both images"})
+        left_detection = _detect_charuco_board(left_image, detector)
+        right_detection = _detect_charuco_board(right_image, detector)
+        left_corners = left_detection["corners"]
+        right_corners = right_detection["corners"]
+        left_ids = left_detection["ids"]
+        right_ids = right_detection["ids"]
+        if left_corners is None or right_corners is None or not left_ids or not right_ids:
+            rejected.append(
+                {
+                    "index": index,
+                    "reason": _charuco_missing_reason(left_detection, right_detection),
+                    **_charuco_detection_metrics(left_detection, right_detection, expected_marker_count),
+                }
+            )
             continue
 
-        left_by_id = {int(cid): corner.reshape(2) for cid, corner in zip(left_ids.reshape(-1), left_corners)}
-        right_by_id = {int(cid): corner.reshape(2) for cid, corner in zip(right_ids.reshape(-1), right_corners)}
+        left_by_id = {int(cid): corner.reshape(2) for cid, corner in zip(left_ids, left_corners)}
+        right_by_id = {int(cid): corner.reshape(2) for cid, corner in zip(right_ids, right_corners)}
         common_ids = sorted(set(left_by_id) & set(right_by_id))
         if len(common_ids) < int(min_corners):
-            rejected.append({"index": index, "reason": f"only {len(common_ids)} matched charuco corners"})
+            rejected.append(
+                {
+                    "index": index,
+                    "reason": f"only {len(common_ids)} matched charuco corners",
+                    **_charuco_detection_metrics(left_detection, right_detection, expected_marker_count),
+                }
+            )
             continue
 
         object_points.append(np.asarray([board_points[cid] for cid in common_ids], dtype=np.float32))
@@ -410,9 +470,12 @@ def collect_charuco_observations(
         )
 
     if image_size is None:
-        raise ValueError("No readable stereo image pairs were accepted")
+        raise ValueError("No readable stereo image pairs were accepted" + _rejection_summary(rejected))
     if len(object_points) < int(min_pairs):
-        raise ValueError(f"Only {len(object_points)} valid stereo pairs found; need at least {int(min_pairs)}")
+        raise ValueError(
+            f"Only {len(object_points)} valid stereo pairs found; need at least {int(min_pairs)}"
+            + _rejection_summary(rejected)
+        )
     return StereoObservations(object_points, left_points, right_points, image_size, rejected, accepted)
 
 
@@ -452,7 +515,11 @@ def _epipolar_quality(
     right_points: Sequence[np.ndarray],
     fundamental: np.ndarray,
 ) -> dict:
-    """Report symmetric point-to-epipolar-line error for accepted matches."""
+    """Report raw distorted-pixel point-to-epipolar-line error.
+
+    This is useful as a diagnostic, but it is not the operator-facing
+    rectification quality metric for lenses with meaningful distortion.
+    """
 
     fundamental = np.asarray(fundamental, dtype=np.float64).reshape(3, 3)
     all_errors: list[float] = []
@@ -480,6 +547,81 @@ def _epipolar_quality(
     summary = _error_summary(all_errors, unit_suffix="_px")
     summary["view_count"] = int(len(views))
     summary["views"] = views
+    summary["space"] = "distorted_pixels"
+    summary["metric"] = "symmetric_fundamental_point_to_line"
+    return summary
+
+
+def _rectified_epipolar_quality(
+    left_points: Sequence[np.ndarray],
+    right_points: Sequence[np.ndarray],
+    camera_matrix_left: np.ndarray,
+    dist_coeffs_left: np.ndarray,
+    camera_matrix_right: np.ndarray,
+    dist_coeffs_right: np.ndarray,
+    r1: np.ndarray,
+    r2: np.ndarray,
+    p1: np.ndarray,
+    p2: np.ndarray,
+) -> dict:
+    """Report vertical residuals after undistortion and stereo rectification."""
+
+    camera_matrix_left = np.asarray(camera_matrix_left, dtype=np.float64).reshape(3, 3)
+    camera_matrix_right = np.asarray(camera_matrix_right, dtype=np.float64).reshape(3, 3)
+    dist_coeffs_left = np.asarray(dist_coeffs_left, dtype=np.float64).reshape(-1, 1)
+    dist_coeffs_right = np.asarray(dist_coeffs_right, dtype=np.float64).reshape(-1, 1)
+    r1 = np.asarray(r1, dtype=np.float64).reshape(3, 3)
+    r2 = np.asarray(r2, dtype=np.float64).reshape(3, 3)
+    p1 = np.asarray(p1, dtype=np.float64).reshape(3, 4)
+    p2 = np.asarray(p2, dtype=np.float64).reshape(3, 4)
+
+    all_errors: list[float] = []
+    all_disparities: list[float] = []
+    views: list[dict] = []
+    for index, (left, right) in enumerate(zip(left_points, right_points), start=1):
+        left_arr = np.asarray(left, dtype=np.float32).reshape(-1, 1, 2)
+        right_arr = np.asarray(right, dtype=np.float32).reshape(-1, 1, 2)
+        left_rect = cv2.undistortPoints(
+            left_arr,
+            camera_matrix_left,
+            dist_coeffs_left,
+            R=r1,
+            P=p1,
+        ).reshape(-1, 2)
+        right_rect = cv2.undistortPoints(
+            right_arr,
+            camera_matrix_right,
+            dist_coeffs_right,
+            R=r2,
+            P=p2,
+        ).reshape(-1, 2)
+
+        vertical_error = left_rect[:, 1] - right_rect[:, 1]
+        abs_vertical_error = np.abs(vertical_error)
+        disparity = left_rect[:, 0] - right_rect[:, 0]
+        view_summary = _error_summary(abs_vertical_error, unit_suffix="_px")
+        view_summary["index"] = index
+        view_summary["disparity_min_px"] = _finite_or_none(np.min(disparity))
+        view_summary["disparity_median_px"] = _finite_or_none(np.median(disparity))
+        view_summary["disparity_max_px"] = _finite_or_none(np.max(disparity))
+        views.append(view_summary)
+        all_errors.extend(float(value) for value in abs_vertical_error if np.isfinite(value))
+        all_disparities.extend(float(value) for value in disparity if np.isfinite(value))
+
+    summary = _error_summary(all_errors, unit_suffix="_px")
+    summary["view_count"] = int(len(views))
+    summary["views"] = views
+    summary["space"] = "rectified_pixels"
+    summary["metric"] = "vertical_disparity"
+    if all_disparities:
+        disparities = np.asarray(all_disparities, dtype=np.float64)
+        summary["disparity_min_px"] = _finite_or_none(np.min(disparities))
+        summary["disparity_median_px"] = _finite_or_none(np.median(disparities))
+        summary["disparity_max_px"] = _finite_or_none(np.max(disparities))
+    else:
+        summary["disparity_min_px"] = None
+        summary["disparity_median_px"] = None
+        summary["disparity_max_px"] = None
     return summary
 
 
@@ -647,7 +789,19 @@ def calibrate_stereo_from_observations(
         "accepted_observations": list(observations.accepted),
         "left_reprojection": _reprojection_quality(obj, left, camera_matrix_left, dist_coeffs_left),
         "right_reprojection": _reprojection_quality(obj, right, camera_matrix_right, dist_coeffs_right),
-        "epipolar": _epipolar_quality(left, right, fundamental),
+        "epipolar": _rectified_epipolar_quality(
+            left,
+            right,
+            camera_matrix_left,
+            dist_coeffs_left,
+            camera_matrix_right,
+            dist_coeffs_right,
+            r1,
+            r2,
+            p1,
+            p2,
+        ),
+        "raw_distorted_epipolar": _epipolar_quality(left, right, fundamental),
         "left_coverage": _coverage_quality(left, image_size),
         "right_coverage": _coverage_quality(right, image_size),
         "warnings": [],

@@ -195,7 +195,7 @@ Inputs:
 
 - TritonPilot stereo `manifest.json` files or stereo session folders
 - Checkerboard or ChArUco board dimensions; defaults match Triton's ChArUco
-  board: 24 columns, 17 rows, 30 mm squares, 22 mm markers,
+  board: 12 columns, 9 rows, 60 mm squares, 45 mm markers,
   `DICT_5X5_1000`
 - Minimum accepted pair/corner thresholds
 
@@ -204,6 +204,94 @@ Outputs:
 - Stereo calibration JSON artifact
 - RMS, epipolar error, coverage, and baseline summary
 - Rejected observation notes
+
+## Stereo Depth
+
+Launch:
+
+```powershell
+python -m main_stereo_depth path\to\manifest.json
+python -m main_stereo_depth path\to\manifest.json --calibration path\to\stereo_calibration.json
+```
+
+Purpose:
+
+- Apply a stereo calibration artifact to saved TritonPilot image pairs.
+- Preview rectified left/right images, compute disparity and depth maps, and
+  make quick 3D point-to-point length checks.
+- Measure low-texture PVC or body-part spans by clicking corresponding
+  endpoints in both rectified previews for direct triangulation.
+- Tune block matching parameters enough to diagnose whether calibration,
+  exposure, sync, or texture is limiting depth quality.
+
+Primary modules:
+
+- `main_stereo_depth.py`
+- `gui/stereo_depth_window.py`
+- `stereo_depth.py`
+- `stereo_calibration.py`
+
+Inputs:
+
+- TritonPilot stereo `manifest.json` file or session folder
+- `stereo_calibration.json` artifact, auto-loaded from the session folder when
+  present
+- Optional disparity/depth filter parameters
+
+Outputs:
+
+- Rectified left/right previews
+- Disparity and depth heatmaps
+- Valid-depth coverage and median-depth summary
+- Dense-depth or manual-correspondence 3D sample coordinates and two-point
+  distance in calibration units
+
+## Stereo Segment Measurement
+
+Launch:
+
+```powershell
+python -m main_stereo_segment_measurement path\to\manifest.json
+python -m main_stereo_segment_measurement path\to\manifest.json --preset coral
+python -m main_stereo_iceberg_measurement path\to\manifest.json
+python -m main_stereo_iceberg_measurement path\to\manifest.json --calibration path\to\stereo_calibration.json
+```
+
+Purpose:
+
+- Measure straight-line 3D segments from a calibrated stereo pair.
+- Provide presets for Generic Segment, Iceberg Keel, and Coral Rig Length
+  labels/report wording.
+- Use direct endpoint correspondences in rectified left/right
+  previews instead of relying on dense disparity over low-texture PVC.
+- Record repeated frame measurements and report median/spread diagnostics.
+- Auto-correct reversed endpoint order on the right image, with a manual
+  `Swap Right` control for ambiguous horizontal segments.
+
+Primary modules:
+
+- `main_stereo_segment_measurement.py`
+- `main_stereo_iceberg_measurement.py`
+- `gui/stereo_segment_measurement_window.py`
+- `gui/stereo_iceberg_measurement_window.py`
+- `stereo_segment_measurement.py`
+- `stereo_iceberg_measurement.py`
+- `stereo_depth.py`
+
+Inputs:
+
+- TritonPilot stereo `manifest.json` file or session folder
+- `stereo_calibration.json` artifact, auto-loaded from the session folder when
+  present
+- Selected measurement preset
+- Clicked segment endpoints in both rectified previews
+
+Outputs:
+
+- Segment length in calibration units, centimeters, and meters when units are
+  known
+- Per-endpoint vertical rectification error and disparity diagnostics
+- Repeated-measurement median and spread for judge-facing confidence
 
 ## Coral Garden Model
 

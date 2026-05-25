@@ -59,6 +59,12 @@ classes:
   correction and frame export.
 - `stereo_calibration.py` calibrates stereo rigs from saved TritonPilot
   left/right image-pair manifests and writes OpenCV calibration artifacts.
+- `stereo_depth.py` applies stereo calibration artifacts for rectification,
+  disparity, depth reprojection, and 3D point sampling.
+- `stereo_segment_measurement.py` measures straight 3D segments from endpoint
+  correspondences clicked in rectified stereo views.
+- `stereo_iceberg_measurement.py` keeps backward-compatible wrappers for the
+  iceberg keel workflow.
 
 Tests should target these modules directly when possible.
 

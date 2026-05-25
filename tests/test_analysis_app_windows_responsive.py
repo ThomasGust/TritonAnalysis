@@ -30,6 +30,9 @@ def _app() -> QApplication:
         ("gui.planar_height_measurement_window.PlanarHeightMeasurementWindow", 2),
         ("gui.multi_rect_length_measurement_window.MultiRectLengthMeasurementWindow", 2),
         ("gui.stereo_calibration_window.StereoCalibrationWindow", 1),
+        ("gui.stereo_depth_window.StereoDepthWindow", 1),
+        ("gui.stereo_segment_measurement_window.StereoSegmentMeasurementWindow", 1),
+        ("gui.stereo_iceberg_measurement_window.StereoIcebergMeasurementWindow", 1),
         ("color_corr.MainWindow", 3),
     ],
 )

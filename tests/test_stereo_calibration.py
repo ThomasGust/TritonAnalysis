@@ -7,12 +7,17 @@ import pytest
 
 from stereo_calibration import (
     DEFAULT_CHARUCO_DICTIONARY,
+    DEFAULT_CHARUCO_MARKER_SIZE,
+    DEFAULT_CHARUCO_SQUARES_X,
+    DEFAULT_CHARUCO_SQUARES_Y,
+    DEFAULT_CHARUCO_SQUARE_SIZE,
     CharucoBoardSpec,
     CheckerboardSpec,
     StereoObservations,
     annotate_board_detection,
     calibrate_stereo_from_observations,
     checkerboard_object_points,
+    collect_charuco_observations,
     detect_stereo_board,
     load_manifest_collection,
     manifest_image_pairs,
@@ -32,13 +37,25 @@ def test_checkerboard_object_points_use_inner_corner_grid():
 
 
 def test_charuco_defaults_use_calibio_dictionary():
-    board = CharucoBoardSpec(squares_x=24, squares_y=17, square_size=30.0, marker_size=22.0)
+    board = CharucoBoardSpec(
+        squares_x=DEFAULT_CHARUCO_SQUARES_X,
+        squares_y=DEFAULT_CHARUCO_SQUARES_Y,
+        square_size=DEFAULT_CHARUCO_SQUARE_SIZE,
+        marker_size=DEFAULT_CHARUCO_MARKER_SIZE,
+    )
 
     assert board.dictionary == DEFAULT_CHARUCO_DICTIONARY == "DICT_5X5_1000"
+    assert (board.squares_x, board.squares_y) == (12, 9)
+    assert (board.square_size, board.marker_size) == (60.0, 45.0)
 
 
 def test_blank_stereo_detection_returns_preview_summary():
-    board = CharucoBoardSpec(squares_x=24, squares_y=17, square_size=30.0, marker_size=22.0)
+    board = CharucoBoardSpec(
+        squares_x=DEFAULT_CHARUCO_SQUARES_X,
+        squares_y=DEFAULT_CHARUCO_SQUARES_Y,
+        square_size=DEFAULT_CHARUCO_SQUARE_SIZE,
+        marker_size=DEFAULT_CHARUCO_MARKER_SIZE,
+    )
     left = np.zeros((80, 120, 3), dtype=np.uint8)
     right = np.zeros((80, 120, 3), dtype=np.uint8)
 
@@ -49,6 +66,24 @@ def test_blank_stereo_detection_returns_preview_summary():
     assert detection["matched_count"] == 0
     assert detection["accepted"] is False
     assert annotated.shape == left.shape
+
+
+def test_charuco_marker_only_failure_points_to_board_dimensions(tmp_path: Path):
+    actual_board = cv2.aruco.CharucoBoard(
+        (DEFAULT_CHARUCO_SQUARES_X, DEFAULT_CHARUCO_SQUARES_Y),
+        DEFAULT_CHARUCO_SQUARE_SIZE,
+        DEFAULT_CHARUCO_MARKER_SIZE,
+        cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_5X5_1000),
+    )
+    board_image = actual_board.generateImage((1200, 900))
+    left_path = tmp_path / "left.png"
+    right_path = tmp_path / "right.png"
+    assert cv2.imwrite(str(left_path), board_image)
+    assert cv2.imwrite(str(right_path), board_image)
+    wrong_board = CharucoBoardSpec(squares_x=24, squares_y=17, square_size=30.0, marker_size=22.0)
+
+    with pytest.raises(ValueError, match="markers found but no ChArUco corners"):
+        collect_charuco_observations([(left_path, right_path)], wrong_board, min_pairs=1)
 
 
 def test_manifest_image_pairs_resolves_relative_paths(tmp_path: Path):
@@ -182,6 +217,8 @@ def test_stereo_calibration_recovers_fixed_intrinsic_baseline(tmp_path: Path):
     assert artifact["quality"]["left_reprojection"]["rms_px"] < 1.0e-3
     assert artifact["quality"]["right_reprojection"]["rms_px"] < 1.0e-3
     assert artifact["quality"]["epipolar"]["rms_px"] < 1.0e-3
+    assert artifact["quality"]["epipolar"]["space"] == "rectified_pixels"
+    assert artifact["quality"]["raw_distorted_epipolar"]["space"] == "distorted_pixels"
     assert artifact["quality"]["left_coverage"]["area_fraction"] > 0.0
     assert artifact["quality"]["warnings"]
 
@@ -189,3 +226,67 @@ def test_stereo_calibration_recovers_fixed_intrinsic_baseline(tmp_path: Path):
     loaded = read_calibration_artifact(out_path)
     assert loaded["rig_id"] == "synthetic"
     assert loaded["rectification"]["q"]
+
+
+def test_rectified_epipolar_quality_undistorts_points_before_scoring():
+    board = CheckerboardSpec(columns=8, rows=6, square_size=35.0)
+    object_template = checkerboard_object_points(board)
+    image_size = (1920, 1080)
+    camera_matrix = np.array(
+        [
+            [1150.0, 0.0, 960.0],
+            [0.0, 1160.0, 540.0],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=np.float64,
+    )
+    dist = np.array([-0.35, 0.16, 0.0015, -0.002, -0.03], dtype=np.float64).reshape(-1, 1)
+    rig_rotation = np.eye(3, dtype=np.float64)
+    rig_translation = np.array([-200.0, 2.0, 6.0], dtype=np.float64)
+
+    object_points = []
+    left_points = []
+    right_points = []
+    for idx in range(12):
+        rvec = np.array(
+            [0.02 * ((idx % 4) - 1.5), -0.08 + 0.025 * idx, 0.04 * ((idx % 3) - 1)],
+            dtype=np.float64,
+        )
+        tvec = np.array(
+            [-260.0 + 55.0 * (idx % 4), -140.0 + 70.0 * (idx // 4), 900.0 + 45.0 * idx],
+            dtype=np.float64,
+        )
+        left, _ = cv2.projectPoints(object_template, rvec, tvec, camera_matrix, dist)
+
+        board_rotation, _ = cv2.Rodrigues(rvec)
+        right_rotation = rig_rotation @ board_rotation
+        right_rvec, _ = cv2.Rodrigues(right_rotation)
+        right_tvec = (rig_rotation @ tvec.reshape(3, 1) + rig_translation.reshape(3, 1)).reshape(3)
+        right, _ = cv2.projectPoints(object_template, right_rvec, right_tvec, camera_matrix, dist)
+
+        object_points.append(object_template.copy())
+        left_points.append(left.reshape(-1, 2).astype(np.float32))
+        right_points.append(right.reshape(-1, 2).astype(np.float32))
+
+    observations = StereoObservations(
+        object_points=object_points,
+        left_image_points=left_points,
+        right_image_points=right_points,
+        image_size=image_size,
+        rejected=[],
+    )
+
+    artifact = calibrate_stereo_from_observations(
+        observations,
+        rig_id="distorted",
+        pair_name="Distorted Pair",
+        board_spec=board,
+        camera_matrix_left=camera_matrix,
+        dist_coeffs_left=dist,
+        camera_matrix_right=camera_matrix,
+        dist_coeffs_right=dist,
+    )
+
+    assert artifact["rms"]["stereo"] < 1.0e-3
+    assert artifact["quality"]["epipolar"]["rms_px"] < 1.0e-3
+    assert artifact["quality"]["raw_distorted_epipolar"]["rms_px"] > 1.0

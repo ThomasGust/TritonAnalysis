@@ -19,6 +19,10 @@ GUI class.
   assessment, survey validation, and report formatting.
 - `iceberg_measurement.py` owns iceberg variable-segment measurement algorithms
   and validation errors.
+- `stereo_segment_measurement.py` owns stereo endpoint triangulation,
+  measurement presets, and repeated-measurement summaries.
+- `stereo_iceberg_measurement.py` provides compatibility wrappers for the
+  iceberg keel preset.
 - `planar_measurement.py` owns homography-based planar height and segment
   measurement.
 - `coral_garden_model.py` owns prism construction, model bounds, formatting,
@@ -42,6 +46,8 @@ shared styling:
 - `iceberg_measurement_window.py`
 - `planar_height_measurement_window.py`
 - `multi_rect_length_measurement_window.py`
+- `stereo_segment_measurement_window.py`
+- `stereo_iceberg_measurement_window.py`
 - `coral_garden_model_window.py`
 - `edna_analysis_window.py`
 - `responsive.py`

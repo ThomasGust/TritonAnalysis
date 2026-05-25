@@ -22,6 +22,8 @@ The repository is organized as top-level applets and shared analysis modules:
 - Coral garden manual CAD model generation
 - eDNA frequency analysis
 - Underwater color correction and frame export
+- Stereo rectification, disparity, depth, and length checks
+- Stereo segment measurement presets for generic, iceberg, and coral lengths
 - Batch crab-video detection helper
 
 Each applet can be launched directly with `python -m ...` from the repository
@@ -37,12 +39,18 @@ main_planar_height_measurement.py      Planar height measurement GUI
 main_multi_rect_length_measurement.py  Multi-rectangle length GUI
 main_coral_garden_model.py             Coral garden CAD-model GUI
 main_edna_analysis.py                  eDNA frequency GUI
+main_stereo_depth.py                   Stereo depth/length-check GUI
+main_stereo_segment_measurement.py     Stereo segment measurement GUI
+main_stereo_iceberg_measurement.py     Iceberg preset shortcut
 color_corr.py                          Underwater correction/frame-export GUI
 crab_detector_cv.py                    Crab computer-vision pipeline
 iceberg_tracking.py                    Coordinate/threat-assessment logic
 iceberg_measurement.py                 2D/3D measurement algorithms
 planar_measurement.py                  Planar homography measurement algorithms
 stereo_calibration.py                  Stereo calibration artifact generation
+stereo_depth.py                        Stereo rectification/disparity helpers
+stereo_segment_measurement.py          Stereo segment endpoint measurement helpers
+stereo_iceberg_measurement.py          Iceberg measurement compatibility wrappers
 coral_garden_model.py                  Prism model and OBJ export
 edna_analysis.py                       eDNA frequency calculations and reports
 gui/                                   PyQt windows and responsive helpers
@@ -129,6 +137,24 @@ Stereo calibration from TritonPilot capture sessions:
 python -m main_stereo_calibration_gui path\to\manifest.json
 python -m main_stereo_calibration path\to\manifest.json [more-manifests-or-folders ...] --charuco
 ```
+
+Stereo depth and 3D length checks:
+
+```powershell
+python -m main_stereo_depth path\to\manifest.json
+python -m main_stereo_depth path\to\manifest.json --calibration path\to\stereo_calibration.json
+python -m main_stereo_segment_measurement path\to\manifest.json
+python -m main_stereo_segment_measurement path\to\manifest.json --preset coral
+python -m main_stereo_iceberg_measurement path\to\manifest.json
+python -m main_stereo_iceberg_measurement path\to\manifest.json --calibration path\to\stereo_calibration.json
+```
+
+For low-texture PVC structures, use the stereo depth applet's rectified
+left/right endpoint clicks for direct triangulation; dense disparity is still
+best treated as a diagnostic unless the object has visible texture.
+For task-focused straight-line measurements, use the stereo segment applet and
+choose the Generic Segment, Iceberg Keel, or Coral Rig Length preset. The older
+stereo iceberg command still opens the same applet in Iceberg Keel mode.
 
 Underwater color correction and frame export:
 

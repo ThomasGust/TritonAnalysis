@@ -7,6 +7,10 @@ from pathlib import Path
 
 from stereo_calibration import (
     DEFAULT_CHARUCO_DICTIONARY,
+    DEFAULT_CHARUCO_MARKER_SIZE,
+    DEFAULT_CHARUCO_SQUARES_X,
+    DEFAULT_CHARUCO_SQUARES_Y,
+    DEFAULT_CHARUCO_SQUARE_SIZE,
     CharucoBoardSpec,
     CheckerboardSpec,
     calibrate_stereo_from_observations,
@@ -24,6 +28,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rig-id", default="", help="Rig id to store in the artifact.")
     parser.add_argument("--pair-name", default="", help="Stereo pair name to store in the artifact.")
     parser.add_argument("--min-pairs", type=int, default=8, help="Minimum accepted stereo pairs required.")
+    parser.add_argument("--min-corners", type=int, default=24, help="Minimum matched ChArUco corners per stereo pair.")
 
     board = parser.add_mutually_exclusive_group(required=True)
     board.add_argument("--checkerboard", action="store_true", help="Use checkerboard inner-corner detection.")
@@ -31,11 +36,31 @@ def _build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--columns", type=int, default=9, help="Checkerboard inner columns.")
     parser.add_argument("--rows", type=int, default=6, help="Checkerboard inner rows.")
-    parser.add_argument("--square-size", type=float, default=30.0, help="Square size in board units.")
+    parser.add_argument(
+        "--square-size",
+        type=float,
+        default=DEFAULT_CHARUCO_SQUARE_SIZE,
+        help="Square size in board units.",
+    )
     parser.add_argument("--units", default="mm", help="Board units, for artifact metadata.")
-    parser.add_argument("--squares-x", type=int, default=24, help="ChArUco board squares in X / columns.")
-    parser.add_argument("--squares-y", type=int, default=17, help="ChArUco board squares in Y / rows.")
-    parser.add_argument("--marker-size", type=float, default=22.0, help="ChArUco marker size in board units.")
+    parser.add_argument(
+        "--squares-x",
+        type=int,
+        default=DEFAULT_CHARUCO_SQUARES_X,
+        help="ChArUco board squares in X / columns.",
+    )
+    parser.add_argument(
+        "--squares-y",
+        type=int,
+        default=DEFAULT_CHARUCO_SQUARES_Y,
+        help="ChArUco board squares in Y / rows.",
+    )
+    parser.add_argument(
+        "--marker-size",
+        type=float,
+        default=DEFAULT_CHARUCO_MARKER_SIZE,
+        help="ChArUco marker size in board units.",
+    )
     parser.add_argument("--dictionary", default=DEFAULT_CHARUCO_DICTIONARY, help="OpenCV aruco predefined dictionary name.")
     return parser
 
@@ -65,7 +90,12 @@ def main(argv: list[str] | None = None) -> int:
             dictionary=args.dictionary,
             units=args.units,
         )
-        observations = collect_charuco_observations(image_pairs, board, min_pairs=args.min_pairs)
+        observations = collect_charuco_observations(
+            image_pairs,
+            board,
+            min_corners=args.min_corners,
+            min_pairs=args.min_pairs,
+        )
 
     artifact = calibrate_stereo_from_observations(
         observations,
@@ -83,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
     right_coverage = quality.get("right_coverage") or {}
     print(f"Accepted pairs: {artifact['observation_count']}")
     print(f"Stereo RMS: {artifact['rms']['stereo']:.4f} px")
-    print(f"Epipolar RMS: {float(epipolar.get('rms_px') or 0.0):.4f} px")
+    print(f"Rectified epipolar RMS: {float(epipolar.get('rms_px') or 0.0):.4f} px")
     print(
         "Coverage: left {left:.0%}, right {right:.0%}".format(
             left=float(left_coverage.get("area_fraction") or 0.0),

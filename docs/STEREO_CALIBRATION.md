@@ -33,8 +33,8 @@ The window lets you inspect one manifest or a combined set of manifests,
 preview left/right image pairs, choose checkerboard or ChArUco board settings,
 set minimum accepted pairs, run calibration, review rejected observations, and
 write the calibration artifact.
-The default board settings match Triton's shipped ChArUco board:
-17 rows by 24 columns, 30 mm square width, 22 mm marker width, and the
+The default board settings match Triton's pool ChArUco board:
+9 rows by 12 columns, 60 mm square width, 45 mm marker width, and the
 calib.io default `DICT_5X5_1000` dictionary.
 Checkerboard-only fields are hidden when ChArUco mode is selected.
 Selecting a pair overlays detected board markers/corners on both previews and
@@ -66,6 +66,10 @@ python -m main_stereo_calibration path\to\manifest.json `
   --charuco
 ```
 
+The CLI and GUI default to at least 24 matched ChArUco corners per stereo pair.
+That keeps tiny edge-only detections out of the final solve while still
+accepting useful partial-board views.
+
 You can also pass several manifests or a parent folder:
 
 ```powershell
@@ -78,10 +82,10 @@ Equivalent explicit values:
 ```powershell
 python -m main_stereo_calibration path\to\manifest.json `
   --charuco `
-  --squares-x 24 `
-  --squares-y 17 `
-  --square-size 30 `
-  --marker-size 22 `
+  --squares-x 12 `
+  --squares-y 9 `
+  --square-size 60 `
+  --marker-size 45 `
   --dictionary DICT_5X5_1000 `
   --units mm
 ```
@@ -100,11 +104,30 @@ to the first selected source when several manifests are loaded. It stores:
 - Rectification matrices and the `Q` reprojection matrix.
 - RMS error, accepted observation count, rejected pair notes, rig id, pair
   name, image size, board metadata, and units.
-- Quality diagnostics: per-camera reprojection RMS, symmetric epipolar RMS,
-  left/right image coverage, accepted pair metadata, and warning messages.
+- Quality diagnostics: per-camera reprojection RMS, rectified vertical
+  epipolar RMS, raw distorted-pixel fundamental-matrix residuals, left/right
+  image coverage, accepted pair metadata, and warning messages.
 
-The artifact is the handoff point for future rectification, disparity, 3D
-measurement, and coral-garden modeling tools.
+The artifact is the handoff point for the stereo depth applet:
+
+```powershell
+python -m main_stereo_depth path\to\manifest.json
+python -m main_stereo_segment_measurement path\to\manifest.json
+python -m main_stereo_iceberg_measurement path\to\manifest.json
+```
+
+If `stereo_calibration.json` lives next to the manifest, the depth applet loads
+it automatically. Otherwise pass it explicitly with `--calibration`.
+For pool-scale work, keep the maximum depth cap and left/right consistency
+check enabled in the depth applet; they prevent low-texture, near-zero-disparity
+speckles from turning into hundreds-of-meters depth samples. For PVC endpoints,
+arm spans, and other low-texture objects, prefer clicking the same endpoint in
+both rectified previews so TritonAnalysis triangulates the correspondence
+directly instead of sampling the dense disparity map. For task-focused
+straight-line measurements, use `main_stereo_segment_measurement`; it offers
+Generic Segment, Iceberg Keel, and Coral Rig Length presets plus
+repeated-measurement median/spread output. `main_stereo_iceberg_measurement`
+remains as a shortcut that opens the same tool in Iceberg Keel mode.
 
 ## Quality Targets
 
@@ -117,15 +140,15 @@ measurement, and coral-garden modeling tools.
 
 ## Pool-Test Acceptance Checks
 
-The GUI and CLI now report enough calibration quality information to make a
-pool-side decision before disparity or depth tools exist:
+The GUI, CLI, and stereo depth applet report enough calibration quality
+information to make a pool-side decision:
 
 - Accepted pairs: 20 is the minimum practical target; 30 to 60 varied accepted
   pairs is better.
 - Stereo RMS: aim below 1 px. Values above 1 px are a reason to inspect frame
   sync, motion blur, lighting, board flatness, and board coverage.
-- Epipolar RMS: aim below 1 px. This is the most direct check that matching
-  left/right points agree with the stereo geometry.
+- Rectified epipolar RMS: aim below 1 px. This checks that matched left/right
+  points land on the same scanline after undistortion and rectification.
 - Reprojection RMS: each camera should stay low and similar. One bad side often
   points to focus, exposure, blur, or board detection problems on that camera.
 - Coverage: get ChArUco corners into the center, all four sides, and all four

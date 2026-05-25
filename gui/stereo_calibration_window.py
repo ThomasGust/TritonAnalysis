@@ -33,6 +33,10 @@ from gui.responsive import resize_to_available_screen, vertical_scroll_area
 from stereo_calibration import (
     CHARUCO_DICTIONARIES,
     DEFAULT_CHARUCO_DICTIONARY,
+    DEFAULT_CHARUCO_MARKER_SIZE,
+    DEFAULT_CHARUCO_SQUARES_X,
+    DEFAULT_CHARUCO_SQUARES_Y,
+    DEFAULT_CHARUCO_SQUARE_SIZE,
     CharucoBoardSpec,
     CheckerboardSpec,
     annotate_board_detection,
@@ -220,10 +224,20 @@ class StereoCalibrationWindow(QMainWindow):
         board_form = QFormLayout()
         self.columns_spin = self._int_spin(2, 80, 9)
         self.rows_spin = self._int_spin(2, 80, 6)
-        self.squares_x_spin = self._int_spin(2, 80, 24)
-        self.squares_y_spin = self._int_spin(2, 80, 17)
-        self.square_size_spin = self._float_spin(0.001, 1000.0, 30.0, 3)
-        self.marker_size_spin = self._float_spin(0.001, 1000.0, 22.0, 3)
+        self.squares_x_spin = self._int_spin(2, 80, DEFAULT_CHARUCO_SQUARES_X)
+        self.squares_y_spin = self._int_spin(2, 80, DEFAULT_CHARUCO_SQUARES_Y)
+        self.square_size_spin = self._float_spin(
+            0.001,
+            1000.0,
+            DEFAULT_CHARUCO_SQUARE_SIZE,
+            3,
+        )
+        self.marker_size_spin = self._float_spin(
+            0.001,
+            1000.0,
+            DEFAULT_CHARUCO_MARKER_SIZE,
+            3,
+        )
         self.units_edit = QLineEdit("mm")
         self.dictionary_combo = QComboBox()
         self.dictionary_combo.addItems(CHARUCO_DICTIONARIES)
@@ -250,7 +264,7 @@ class StereoCalibrationWindow(QMainWindow):
         run_card = _SectionCard("Calibration")
         run_form = QFormLayout()
         self.min_pairs_spin = self._int_spin(1, 500, 8)
-        self.min_corners_spin = self._int_spin(4, 500, 8)
+        self.min_corners_spin = self._int_spin(4, 500, 24)
         self.output_edit = QLineEdit()
         self.output_edit.setPlaceholderText("auto: stereo_calibration.json next to manifest")
         self.output_btn = QPushButton("Choose Output")
@@ -629,13 +643,16 @@ class StereoCalibrationWindow(QMainWindow):
         left_coverage = quality.get("left_coverage") or {}
         right_coverage = quality.get("right_coverage") or {}
         warnings = quality.get("warnings") or []
+        epipolar_label = (
+            "Rectified Epipolar" if epipolar.get("space") == "rectified_pixels" else "Epipolar Error"
+        )
 
         rows = [
             ("Accepted Pairs", str(artifact.get("observation_count", 0))),
             ("Stereo RMS", self._format_float(rms.get("stereo"), suffix=" px")),
             ("Left Reprojection", self._format_float(left_reproj.get("rms_px"), suffix=" px RMS")),
             ("Right Reprojection", self._format_float(right_reproj.get("rms_px"), suffix=" px RMS")),
-            ("Epipolar Error", self._format_float(epipolar.get("rms_px"), suffix=" px RMS")),
+            (epipolar_label, self._format_float(epipolar.get("rms_px"), suffix=" px RMS")),
             ("Left Coverage", self._coverage_text(left_coverage)),
             ("Right Coverage", self._coverage_text(right_coverage)),
             ("Baseline", f"{self._format_float(stereo.get('baseline'), suffix='')} {units}".strip()),
