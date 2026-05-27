@@ -24,6 +24,8 @@ The repository is organized as top-level applets and shared analysis modules:
 - Underwater color correction and frame export
 - Stereo rectification, disparity, depth, and length checks
 - Stereo segment measurement presets for generic, iceberg, and coral lengths
+- RealityScan stereo photogrammetry reconstruction wrapper
+- Three.js OBJ viewport and distance measurement for reconstructed models
 - Batch crab-video detection helper
 
 Each applet can be launched directly with `python -m ...` from the repository
@@ -42,6 +44,8 @@ main_edna_analysis.py                  eDNA frequency GUI
 main_stereo_depth.py                   Stereo depth/length-check GUI
 main_stereo_segment_measurement.py     Stereo segment measurement GUI
 main_stereo_iceberg_measurement.py     Iceberg preset shortcut
+main_realityscan_reconstruction.py     Stereo RealityScan reconstruction GUI
+main_realityscan_model_viewer.py       Three.js OBJ measurement viewer
 color_corr.py                          Underwater correction/frame-export GUI
 crab_detector_cv.py                    Crab computer-vision pipeline
 iceberg_tracking.py                    Coordinate/threat-assessment logic
@@ -155,6 +159,16 @@ best treated as a diagnostic unless the object has visible texture.
 For task-focused straight-line measurements, use the stereo segment applet and
 choose the Generic Segment, Iceberg Keel, or Coral Rig Length preset. The older
 stereo iceberg command still opens the same applet in Iceberg Keel mode.
+
+RealityScan stereo reconstruction and model viewing:
+
+```powershell
+python -m main_realityscan_reconstruction path\to\stereo_session --calibration path\to\stereo_calibration.json
+python -m main_realityscan_model_viewer path\to\underwater_model_metric.obj
+```
+
+The reconstruction GUI includes a Model Viewer tab that embeds the Three.js
+viewport when `PyQt6-WebEngine` is installed, with a browser fallback.
 
 Underwater color correction and frame export:
 

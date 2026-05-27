@@ -39,6 +39,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_UNWRAP_SIZE,
         help=f"Output size for the board unwrap. Default: {DEFAULT_UNWRAP_SIZE[0]} {DEFAULT_UNWRAP_SIZE[1]}.",
     )
+    parser.add_argument(
+        "--stereo-calibration",
+        default="",
+        help="Optional stereo_calibration.json used when opening a TritonPilot stereo session.",
+    )
     return parser
 
 
@@ -54,6 +59,7 @@ def main(argv: list[str] | None = None) -> int:
         image_paths=args.paths,
         force_square=not args.no_force_square,
         unwrap_size=args.unwrap_size,
+        stereo_calibration_path=args.stereo_calibration or None,
     )
     window.show()
     return app.exec()

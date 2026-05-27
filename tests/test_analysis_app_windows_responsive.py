@@ -33,6 +33,8 @@ def _app() -> QApplication:
         ("gui.stereo_depth_window.StereoDepthWindow", 1),
         ("gui.stereo_segment_measurement_window.StereoSegmentMeasurementWindow", 1),
         ("gui.stereo_iceberg_measurement_window.StereoIcebergMeasurementWindow", 1),
+        ("gui.realityscan_reconstruction_window.RealityScanReconstructionWindow", 1),
+        ("gui.realityscan_model_viewer_window.RealityScanModelViewerWindow", 1),
         ("color_corr.MainWindow", 3),
     ],
 )

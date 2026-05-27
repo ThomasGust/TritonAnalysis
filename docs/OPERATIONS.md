@@ -62,6 +62,13 @@ python -m main_stereo_segment_measurement path\to\stereo_session --preset coral
 python -m main_stereo_iceberg_measurement path\to\stereo_session
 ```
 
+RealityScan stereo reconstruction:
+
+```powershell
+python -m main_realityscan_reconstruction path\to\stereo_session --calibration path\to\stereo_calibration.json
+python -m main_realityscan_model_viewer path\to\underwater_model_metric.obj
+```
+
 Planar height measurement:
 
 ```powershell
@@ -127,6 +134,61 @@ For repeatability:
 - Save screenshots or exported reports when the result will be used in a
   judge-facing answer.
 - Record the reference lengths used for each measurement.
+
+## RealityScan Reconstruction Workflow
+
+Use the RealityScan reconstruction applet for long-running stereo
+photogrammetry jobs after the stereo session has been copied off the pilot
+station.
+
+1. Select the `Pipeline Root` that contains the current
+   `tools/realityscan_underwater_pipeline.py`; the applet auto-detects a
+   sibling `TritonPilot` checkout when present.
+2. Select the stereo session folder or its `manifest.json`.
+3. Select the matching `stereo_calibration.json`; `Find Recent` searches recent
+   TritonPilot stereo sessions.
+4. Choose `max-detail` for final models, or a lighter preset for trial runs.
+5. Keep metric stereo scaling enabled when the output will be measured.
+6. Run the job and watch the live log/progress indicators.
+7. Open the metric OBJ, contact sheet, report, or `metric_scale.json` from the
+   output panel.
+
+The default output workspace is under `TritonAnalysis/results/realityscan`.
+That keeps photogrammetry artifacts with the analysis evidence trail instead of
+inside the live pilot UI.
+
+Use the `Model Viewer` tab in the reconstruction applet, the `View Metric
+Model` output button, or launch `main_realityscan_model_viewer` directly to
+inspect the OBJ. The viewer starts a localhost server for the model directory
+so Three.js can load the OBJ, MTL, and texture files together. With
+`PyQt6-WebEngine` installed, the Three.js viewport is embedded in the Qt app;
+otherwise the same viewer URL opens in the system browser. The viewport opens
+with damped full-tumble orbit controls so tilted or inverted reconstructions can
+be rotated fully around the target. `Set Floor` lets you pick three mesh points
+and level that plane against the 3D reference grid. After the third point, the
+camera snaps to a top-down `Floor View` and squares the screen direction to the
+model footprint. `Level` removes camera roll from the current view, and `Reset
+Floor` undoes the alignment. Use `Roll -` / `Roll +` and the roll-step selector
+for manual camera roll when a model needs a custom viewing angle. The viewer
+also includes `Fit`, `Reset`, preset camera views, a toggleable 3D grid, and
+optional measurement labels.
+Select `Measure`, click pairs of points on the mesh, and choose meters,
+centimeters, or millimeters for the readout. Each completed line gets a small
+in-viewport distance tag near its midpoint. Existing endpoints can be selected
+and dragged while Measure is active; `Delete` removes the selected endpoint, or
+the active measurement when no endpoint is selected. `Set Center` moves the
+visible 3D cursor and orbit pivot to the next clicked mesh point. `Pick Assist`
+is enabled by default in picking modes; it draws a bright marker on the exact
+mesh hit and shows a magnified cursor loupe so light objects like PVC pipe ends
+are easier to distinguish from the pool floor. Use `Edges` when extra cyan
+surface boundary lines help separate objects from the background.
+
+For post-submission ground truth, select the completed measurement that was used
+as the guess, enter the true length and units in the ground-truth controls, and
+click `Apply Scale`. The viewer applies a uniform scale factor to the model,
+measurements, markers, grid, camera target, and saved view so follow-up
+measurements use the corrected scale. Keep `underwater_model_metric.obj` as the
+preferred input when you need real-world distances.
 
 ## Manual Data Workflows
 
