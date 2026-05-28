@@ -53,11 +53,12 @@ Measurement, and Backup Iceberg Measurement tabs in one window. RealityScan
 reconstruction runs in a `QProcess` and stereo calibration runs in a worker
 thread, so those jobs do not block the other tabs.
 
-The status bar also shows `Pilot Sync`. When auto sync is enabled, the app
-periodically pulls new saved TritonPilot files into
-`Workspace\incoming\pilot` without blocking the analysis tabs. Use the
-`Workspace` menu to change the root folder and the `Pilot Sync` menu to change
-the URL, destination folder, or trigger a manual sync.
+The top `Pilot Sync` panel shows the Pilot URL, exact receiving folder, last
+sync time, and live file-transfer state. When auto sync is enabled, the app
+periodically pulls new saved TritonPilot files into `Workspace\incoming\pilot`
+without blocking the analysis tabs. Use the `Workspace` menu to change the root
+folder and the `Pilot Sync` menu to change the URL, destination folder, or
+trigger a manual sync.
 
 ## Backup Applets
 

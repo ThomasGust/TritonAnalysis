@@ -38,7 +38,8 @@ Keep the normal ROV tether on its existing `192.168.1.x` network.
 
 On the pilot computer, start the read-only transfer server from the
 TritonPilot app. The pilot status bar shows `Analysis Share` with the served
-folder, URL, file count, and last Analysis pull time. The backup CLI command is:
+folder, URL, file count, active file sends, and the last Analysis pull time.
+The backup CLI command is:
 
 ```powershell
 python -m tools.analysis_transfer_server --root recordings --host 0.0.0.0 --port 8765
@@ -48,9 +49,9 @@ If Windows Firewall prompts on the pilot computer, allow Python on private
 networks for the dedicated analysis link.
 
 On the analysis computer, the unified TritonAnalysis app pulls saved files into
-`Workspace\incoming\pilot` automatically. Its status bar shows `Pilot Sync`
-with the URL, connection state, and destination folder. The backup CLI command
-is:
+`Workspace\incoming\pilot` automatically. Its top `Pilot Sync` panel shows the
+URL, connection state, exact destination folder, and whether it is checking,
+receiving, or done receiving files. The backup CLI command is:
 
 ```powershell
 python -m tools.pilot_transfer_sync http://10.77.0.1:8765 --output ".\Workspace\incoming\pilot"
@@ -64,6 +65,11 @@ python -m tools.pilot_transfer_sync http://10.77.0.1:8765 --output ".\Workspace\
 
 The sync preserves the folder layout advertised by TritonPilot. Files that
 already match by size and modification time are skipped.
+
+If you delete files from `incoming\pilot`, the next manual or automatic sync
+should receive those missing files again. If they do not appear where expected,
+check the `Receiving to:` line in the `Pilot Sync` panel first; the app may be
+using a different workspace root or custom sync folder than the one you cleared.
 
 Inside the unified TritonAnalysis app, use the `Workspace` menu to choose the
 workspace root, and the `Pilot Sync` menu to toggle auto sync, sync now, set a

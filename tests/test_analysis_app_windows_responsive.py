@@ -174,6 +174,8 @@ def test_unified_analysis_window_shows_pilot_sync_destination(tmp_path: Path):
         assert "Pilot Sync: OFF" in window._pilot_sync_label.text()
         assert "http://127.0.0.1:8765" in window._pilot_sync_label.text()
         assert str(destination) in window._pilot_sync_label.text()
+        assert "Automatic sync is off" in window._pilot_sync_progress_label.text()
+        assert str(destination) in window._pilot_sync_destination_label.text()
     finally:
         window.close()
         window.deleteLater()
@@ -208,6 +210,7 @@ def test_unified_analysis_window_uses_workspace_relative_sync_label(tmp_path: Pa
         assert str(Path("Workspace") / "incoming" / "pilot") in window._pilot_sync_label.text()
         assert (new_workspace / "results").exists()
         assert (new_workspace / "calibrations").exists()
+        assert str(Path("Workspace") / "incoming" / "pilot") in window._pilot_sync_destination_label.text()
     finally:
         window.close()
         window.deleteLater()
@@ -232,6 +235,60 @@ def test_unified_analysis_window_ignores_pytest_saved_workspace(tmp_path: Path):
 
         assert window._workspace.root == REPO_ROOT / "Workspace"
         assert window._pilot_sync_output == REPO_ROOT / "Workspace" / "incoming" / "pilot"
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_unified_analysis_window_shows_pilot_sync_transfer_progress(tmp_path: Path):
+    app = _app()
+    from gui.triton_analysis_window import TritonAnalysisWindow
+
+    window = TritonAnalysisWindow(
+        pilot_transfer_auto_sync=False,
+        pilot_transfer_url="http://127.0.0.1:8765",
+        pilot_transfer_output=tmp_path / "incoming",
+    )
+    try:
+        window.show()
+        app.processEvents()
+
+        window._handle_pilot_sync_progress(
+            {
+                "event": "copy_start",
+                "path": "run_01/stereo_sessions/left_frame.png",
+                "size": 4096,
+                "index": 2,
+                "total_files": 8,
+            }
+        )
+        assert "Receiving 2/8" in window._pilot_sync_progress_label.text()
+        assert "left_frame.png" in window._pilot_sync_progress_label.text()
+
+        window._handle_pilot_sync_progress(
+            {
+                "event": "copy_progress",
+                "path": "run_01/stereo_sessions/left_frame.png",
+                "size": 4096,
+                "file_bytes_copied": 2048,
+                "index": 2,
+                "total_files": 8,
+            }
+        )
+        assert "50%" in window._pilot_sync_progress_label.text()
+
+        window._handle_pilot_sync_progress(
+            {
+                "event": "complete",
+                "scanned": 8,
+                "copied": 2,
+                "skipped": 6,
+                "bytes_copied": 8192,
+            }
+        )
+        assert "Sync complete" in window._pilot_sync_progress_label.text()
+        assert "received 2" in window._pilot_sync_progress_label.text()
     finally:
         window.close()
         window.deleteLater()

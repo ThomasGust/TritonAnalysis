@@ -8,7 +8,20 @@ from pathlib import Path
 
 from PyQt6.QtCore import QSettings, Qt, QThread, QTimer, QUrl
 from PyQt6.QtGui import QAction, QDesktopServices
-from PyQt6.QtWidgets import QFileDialog, QInputDialog, QLabel, QMainWindow, QTabWidget
+from PyQt6.QtWidgets import (
+    QFileDialog,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QMainWindow,
+    QPushButton,
+    QSizePolicy,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from analysis_workspace import AnalysisWorkspace, set_active_workspace_root, workspace_paths
 from crab_detector_cv import DEFAULT_UNWRAP_SIZE
@@ -129,11 +142,20 @@ class TritonAnalysisWindow(QMainWindow):
         self._pilot_sync_last_error = ""
         self._pilot_sync_auto_act: QAction | None = None
 
+        central = QWidget()
+        central_layout = QVBoxLayout(central)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(6)
+
+        self._pilot_sync_panel = self._build_pilot_sync_panel()
+        central_layout.addWidget(self._pilot_sync_panel, 0)
+
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(False)
         self.tabs.setMovable(True)
         self.tabs.setUsesScrollButtons(True)
-        self.setCentralWidget(self.tabs)
+        central_layout.addWidget(self.tabs, 1)
+        self.setCentralWidget(central)
 
         calibration_text = str(stereo_calibration_path) if stereo_calibration_path else None
         manifest_text = str(stereo_manifest_path) if stereo_manifest_path else None
@@ -218,7 +240,7 @@ class TritonAnalysisWindow(QMainWindow):
 
         self._pilot_sync_label = QLabel()
         self._pilot_sync_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self._pilot_sync_label.setMinimumWidth(560)
+        self._pilot_sync_label.setMinimumWidth(0)
         self.statusBar().addPermanentWidget(self._pilot_sync_label, 1)
 
         self._pilot_sync_timer = QTimer(self)
@@ -244,6 +266,96 @@ class TritonAnalysisWindow(QMainWindow):
         if text in {"1", "true", "yes", "on"}:
             return True
         return bool(default)
+
+    @staticmethod
+    def _format_bytes(value: int | float) -> str:
+        amount = float(value or 0)
+        units = ("B", "KB", "MB", "GB", "TB")
+        for unit in units:
+            if abs(amount) < 1024.0 or unit == units[-1]:
+                if unit == "B":
+                    return f"{int(amount)} {unit}"
+                return f"{amount:.1f} {unit}"
+            amount /= 1024.0
+        return f"{amount:.1f} TB"
+
+    def _build_pilot_sync_panel(self) -> QFrame:
+        panel = QFrame()
+        panel.setObjectName("pilotSyncPanel")
+        panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        panel.setStyleSheet(
+            """
+            QFrame#pilotSyncPanel {
+                background: #202028;
+                border-bottom: 1px solid #343442;
+            }
+            QLabel#pilotSyncState {
+                font-weight: 700;
+                padding: 2px 4px;
+            }
+            QLabel#pilotSyncState[tone="ok"] { color: #9be7b0; }
+            QLabel#pilotSyncState[tone="warn"] { color: #f4cf7a; }
+            QLabel#pilotSyncState[tone="alert"] { color: #ffaaa5; }
+            QLabel#pilotSyncProgress {
+                color: #ffffff;
+                padding: 2px 4px;
+            }
+            QLabel#pilotSyncMeta {
+                color: #c7cad7;
+                padding: 1px 4px;
+            }
+            """
+        )
+
+        layout = QGridLayout(panel)
+        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setHorizontalSpacing(10)
+        layout.setVerticalSpacing(2)
+
+        self._pilot_sync_state_panel_label = QLabel("Pilot Sync: ready")
+        self._pilot_sync_state_panel_label.setObjectName("pilotSyncState")
+        self._pilot_sync_progress_label = QLabel("No transfer running.")
+        self._pilot_sync_progress_label.setObjectName("pilotSyncProgress")
+        self._pilot_sync_source_label = QLabel()
+        self._pilot_sync_source_label.setObjectName("pilotSyncMeta")
+        self._pilot_sync_destination_label = QLabel()
+        self._pilot_sync_destination_label.setObjectName("pilotSyncMeta")
+        self._pilot_sync_last_label = QLabel("Last sync: never")
+        self._pilot_sync_last_label.setObjectName("pilotSyncMeta")
+
+        for label in (
+            self._pilot_sync_state_panel_label,
+            self._pilot_sync_progress_label,
+            self._pilot_sync_source_label,
+            self._pilot_sync_destination_label,
+            self._pilot_sync_last_label,
+        ):
+            label.setWordWrap(True)
+            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            label.setMinimumWidth(0)
+
+        button_row = QHBoxLayout()
+        button_row.setContentsMargins(0, 0, 0, 0)
+        button_row.setSpacing(6)
+        sync_now_btn = QPushButton("Sync Now")
+        sync_now_btn.setToolTip("Check TritonPilot now and receive any missing or changed files.")
+        sync_now_btn.clicked.connect(lambda _checked=False: self._start_pilot_sync(force=True))
+        open_folder_btn = QPushButton("Open Folder")
+        open_folder_btn.setToolTip("Open the folder where TritonPilot files are received.")
+        open_folder_btn.clicked.connect(self._open_pilot_sync_folder)
+        button_row.addWidget(sync_now_btn)
+        button_row.addWidget(open_folder_btn)
+
+        layout.addWidget(self._pilot_sync_state_panel_label, 0, 0)
+        layout.addWidget(self._pilot_sync_progress_label, 0, 1)
+        layout.addLayout(button_row, 0, 2)
+        layout.addWidget(self._pilot_sync_source_label, 1, 0)
+        layout.addWidget(self._pilot_sync_destination_label, 1, 1)
+        layout.addWidget(self._pilot_sync_last_label, 1, 2)
+        layout.setColumnStretch(0, 1)
+        layout.setColumnStretch(1, 2)
+        layout.setColumnStretch(2, 0)
+        return panel
 
     def _make_menu(self) -> None:
         workspace_menu = self.menuBar().addMenu("&Workspace")
@@ -277,33 +389,132 @@ class TritonAnalysisWindow(QMainWindow):
         transfer_menu.addAction(url_act)
 
     def _set_pilot_sync_label_tone(self, tone: str | None) -> None:
-        self._pilot_sync_label.setProperty("tone", tone or "")
-        self._pilot_sync_label.style().unpolish(self._pilot_sync_label)
-        self._pilot_sync_label.style().polish(self._pilot_sync_label)
-        self._pilot_sync_label.update()
+        for label in (self._pilot_sync_label, self._pilot_sync_state_panel_label):
+            label.setProperty("tone", tone or "")
+            label.style().unpolish(label)
+            label.style().polish(label)
+            label.update()
 
     def _update_pilot_sync_label(self, state: str, detail: str = "") -> None:
         destination = self._workspace.label_for(self._pilot_sync_output)
         if state == "syncing":
             text = f"Pilot Sync: SYNCING {self._pilot_sync_url} -> {destination}"
+            panel_state = "Pilot Sync: SYNCING"
+            progress = detail or "Checking TritonPilot for new recordings..."
             tone = "warn"
         elif state == "ok":
             text = f"Pilot Sync: OK {detail} -> {destination}"
+            panel_state = "Pilot Sync: OK"
+            progress = detail or "Sync complete."
             tone = "ok"
         elif state == "lost":
             text = f"Pilot Sync: LOST {detail} | {self._pilot_sync_url} -> {destination}"
+            panel_state = "Pilot Sync: LOST"
+            progress = f"Connection problem: {detail}" if detail else "Connection problem."
             tone = "alert"
         elif state == "off":
             text = f"Pilot Sync: OFF {self._pilot_sync_url} -> {destination}"
+            panel_state = "Pilot Sync: OFF"
+            progress = "Automatic sync is off. Use Sync Now to check for missing files."
             tone = "warn"
         else:
             text = f"Pilot Sync: ready {self._pilot_sync_url} -> {destination}"
+            panel_state = "Pilot Sync: ready"
+            progress = "Ready to receive recordings."
             tone = ""
         self._pilot_sync_label.setText(text)
         self._pilot_sync_label.setToolTip(
             f"{text}\nWorkspace root: {self._workspace.root}\nSync folder: {self._pilot_sync_output}"
         )
+        self._pilot_sync_state_panel_label.setText(panel_state)
+        self._pilot_sync_progress_label.setText(progress)
+        self._pilot_sync_source_label.setText(f"Source: {self._pilot_sync_url}")
+        self._pilot_sync_destination_label.setText(f"Receiving to: {destination}")
+        panel_tooltip = (
+            f"Source: {self._pilot_sync_url}\n"
+            f"Workspace root: {self._workspace.root}\n"
+            f"Sync folder: {self._pilot_sync_output}"
+        )
+        for label in (
+            self._pilot_sync_state_panel_label,
+            self._pilot_sync_progress_label,
+            self._pilot_sync_source_label,
+            self._pilot_sync_destination_label,
+            self._pilot_sync_last_label,
+        ):
+            label.setToolTip(panel_tooltip)
         self._set_pilot_sync_label_tone(tone)
+
+    @staticmethod
+    def _short_transfer_path(path_text: object, *, max_chars: int = 82) -> str:
+        text = str(path_text or "")
+        if len(text) <= max_chars:
+            return text
+        return "..." + text[-max(0, max_chars - 3) :]
+
+    def _handle_pilot_sync_progress(self, payload: object) -> None:
+        data = payload if isinstance(payload, dict) else {}
+        event = str(data.get("event") or "")
+        if not event:
+            return
+        total_files = int(data.get("total_files") or data.get("scanned") or 0)
+        index = int(data.get("index") or 0)
+        path = self._short_transfer_path(data.get("path", ""))
+
+        if event in {"sync_start", "index_start"}:
+            self._update_pilot_sync_label("syncing", "Requesting the file list from TritonPilot...")
+            return
+        if event == "index_done":
+            scanned = int(data.get("scanned") or 0)
+            total_bytes = int(data.get("total_bytes") or 0)
+            self._pilot_sync_progress_label.setText(
+                f"Pilot advertised {scanned} file(s), {self._format_bytes(total_bytes)}. Checking local folder..."
+            )
+            return
+        if event == "skipped":
+            skipped = int(data.get("skipped") or 0)
+            if index == total_files or index % 25 == 0:
+                self._pilot_sync_progress_label.setText(
+                    f"Checking local files: {index}/{total_files} already received ({skipped} current)."
+                )
+            return
+        if event == "would_copy":
+            self._pilot_sync_progress_label.setText(f"Would receive {path} ({self._format_bytes(data.get('size') or 0)}).")
+            return
+        if event == "copy_start":
+            prefix = f"{index}/{total_files}: " if total_files else ""
+            self._pilot_sync_progress_label.setText(
+                f"Receiving {prefix}{path} ({self._format_bytes(data.get('size') or 0)})..."
+            )
+            return
+        if event == "copy_progress":
+            file_size = int(data.get("size") or 0)
+            file_bytes = int(data.get("file_bytes_copied") or 0)
+            percent = (file_bytes / file_size * 100.0) if file_size > 0 else 0.0
+            prefix = f"{index}/{total_files}: " if total_files else ""
+            self._pilot_sync_progress_label.setText(
+                f"Receiving {prefix}{path} {percent:.0f}% "
+                f"({self._format_bytes(file_bytes)} / {self._format_bytes(file_size)})"
+            )
+            return
+        if event == "copy_done":
+            copied = int(data.get("copied") or 0)
+            self._pilot_sync_progress_label.setText(
+                f"Received {copied} file(s). Last received: {path} ({self._format_bytes(data.get('size') or 0)})."
+            )
+            return
+        if event == "complete":
+            copied = int(data.get("copied") or 0)
+            skipped = int(data.get("skipped") or 0)
+            scanned = int(data.get("scanned") or 0)
+            bytes_copied = int(data.get("bytes_copied") or 0)
+            self._pilot_sync_progress_label.setText(
+                f"Sync complete: received {copied}, already current {skipped}, scanned {scanned}, "
+                f"{self._format_bytes(bytes_copied)} transferred."
+            )
+            return
+        if event == "sync_error":
+            self._pilot_sync_progress_label.setText(f"Connection problem: {data.get('error') or 'transfer failed'}")
 
     def _choose_workspace_root(self) -> None:
         selected = QFileDialog.getExistingDirectory(
@@ -329,6 +540,10 @@ class TritonAnalysisWindow(QMainWindow):
     def _open_workspace_folder(self) -> None:
         self._workspace.ensure()
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._workspace.root)))
+
+    def _open_pilot_sync_folder(self) -> None:
+        self._pilot_sync_output.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._pilot_sync_output)))
 
     def _set_pilot_sync_enabled(self, enabled: bool) -> None:
         self._pilot_sync_enabled = bool(enabled)
@@ -390,6 +605,7 @@ class TritonAnalysisWindow(QMainWindow):
         thread = QThread(self)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
+        worker.progress.connect(self._handle_pilot_sync_progress)
         worker.finished.connect(self._finish_pilot_sync)
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
@@ -411,11 +627,14 @@ class TritonAnalysisWindow(QMainWindow):
             skipped = int(getattr(summary, "skipped", 0) or 0)
             scanned = int(getattr(summary, "scanned", 0) or 0)
             bytes_copied = int(getattr(summary, "bytes_copied", 0) or 0)
-            copied_mb = bytes_copied / (1024 * 1024)
             self._pilot_sync_last_ok_ts = time.time()
             self._pilot_sync_last_error = ""
-            detail = f"scanned {scanned}, copied {copied}, skipped {skipped}, {copied_mb:.1f} MB"
+            detail = (
+                f"scanned {scanned}, received {copied}, already current {skipped}, "
+                f"{self._format_bytes(bytes_copied)} transferred"
+            )
             self._update_pilot_sync_label("ok", detail)
+            self._pilot_sync_last_label.setText(time.strftime("Last sync: %H:%M:%S"))
             if copied:
                 self.statusBar().showMessage(
                     f"Pilot sync copied {copied} file(s) to {self._workspace.label_for(self._pilot_sync_output)}",
@@ -426,6 +645,7 @@ class TritonAnalysisWindow(QMainWindow):
         error = str(data.get("error") or "transfer failed")
         self._pilot_sync_last_error = error
         self._update_pilot_sync_label("lost", error)
+        self._pilot_sync_last_label.setText(time.strftime("Last attempt: %H:%M:%S"))
 
     def focus_tab(self, key: str) -> bool:
         """Select a tab by stable key."""

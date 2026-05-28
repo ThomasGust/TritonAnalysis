@@ -1,4 +1,5 @@
 import json
+import shutil
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -55,12 +56,11 @@ def _serve(files: dict[str, bytes]):
 
 
 def test_fetch_pilot_index_and_sync(tmp_path: Path):
-    server, thread, base_url = _serve(
-        {
-            "run_01/frame.txt": b"hello\n",
-            "stereo_sessions/session-a/manifest.json": b"{}\n",
-        }
-    )
+    served_files = {
+        "run_01/frame.txt": b"hello\n",
+        "stereo_sessions/session-a/manifest.json": b"{}\n",
+    }
+    server, thread, base_url = _serve(served_files)
     try:
         files = fetch_pilot_index(base_url)
         assert [item.path for item in files] == [
@@ -68,14 +68,26 @@ def test_fetch_pilot_index_and_sync(tmp_path: Path):
             "stereo_sessions/session-a/manifest.json",
         ]
 
-        summary = sync_from_pilot(base_url, tmp_path / "incoming")
+        incoming = tmp_path / "incoming"
+        events = []
+        summary = sync_from_pilot(base_url, incoming, progress_callback=events.append)
         assert summary.scanned == 2
         assert summary.copied == 2
-        assert (tmp_path / "incoming" / "run_01" / "frame.txt").read_text(encoding="utf-8") == "hello\n"
+        assert summary.bytes_scanned == sum(len(data) for data in served_files.values())
+        assert (incoming / "run_01" / "frame.txt").read_text(encoding="utf-8") == "hello\n"
+        assert any(event["event"] == "copy_start" for event in events)
+        assert any(event["event"] == "copy_progress" for event in events)
+        assert events[-1]["event"] == "complete"
 
-        second = sync_from_pilot(base_url, tmp_path / "incoming")
+        second = sync_from_pilot(base_url, incoming)
         assert second.copied == 0
         assert second.skipped == 2
+
+        shutil.rmtree(incoming)
+        third = sync_from_pilot(base_url, incoming)
+        assert third.copied == 2
+        assert third.skipped == 0
+        assert (incoming / "run_01" / "frame.txt").read_text(encoding="utf-8") == "hello\n"
     finally:
         server.shutdown()
         server.server_close()
@@ -101,11 +113,15 @@ def test_pilot_transfer_sync_worker_reports_success(tmp_path: Path):
 
     payloads = []
 
-    def _fake_sync(base_url, destination, *, overwrite=False, timeout=10.0):
+    progress_payloads = []
+
+    def _fake_sync(base_url, destination, *, overwrite=False, timeout=10.0, progress_callback=None):
         assert base_url == "http://pilot.test:8765"
         assert Path(destination) == tmp_path / "incoming"
         assert overwrite is False
         assert timeout == 1.5
+        assert progress_callback is not None
+        progress_callback({"event": "copy_start", "path": "run_01/frame.txt"})
         return PilotTransferSummary(
             base_url=base_url,
             destination=destination,
@@ -122,8 +138,10 @@ def test_pilot_transfer_sync_worker_reports_success(tmp_path: Path):
         sync_fn=_fake_sync,
     )
     worker.finished.connect(payloads.append)
+    worker.progress.connect(progress_payloads.append)
     worker.run()
 
     assert payloads
     assert payloads[0]["ok"] is True
     assert payloads[0]["summary"].copied == 1
+    assert [payload["event"] for payload in progress_payloads] == ["sync_start", "copy_start"]

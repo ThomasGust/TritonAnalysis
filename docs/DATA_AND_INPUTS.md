@@ -81,8 +81,8 @@ Workspace/
 ```
 
 The unified app shows workspace-relative paths such as
-`Workspace\incoming\pilot` in the status bar. The tooltip still contains the
-full absolute path for Windows Explorer.
+`Workspace\incoming\pilot` in the top `Pilot Sync` panel and status bar. The
+tooltip still contains the full absolute path for Windows Explorer.
 
 ## Source Media Rules
 

@@ -8,6 +8,7 @@ import time
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import Callable
 from urllib.parse import quote
 
 from analysis_workspace import workspace_paths
@@ -15,6 +16,7 @@ from analysis_workspace import workspace_paths
 
 DEFAULT_PILOT_TRANSFER_URL = os.environ.get("TRITON_PILOT_TRANSFER_URL", "http://10.77.0.1:8765")
 DEFAULT_INBOX = Path(os.environ.get("TRITON_ANALYSIS_INBOX", str(workspace_paths().pilot_incoming)))
+ProgressCallback = Callable[[dict], None]
 
 
 @dataclass(frozen=True)
@@ -35,6 +37,7 @@ class PilotTransferSummary:
     scanned: int = 0
     copied: int = 0
     skipped: int = 0
+    bytes_scanned: int = 0
     bytes_copied: int = 0
     dry_run: bool = False
     copied_paths: list[Path] | None = None
@@ -69,6 +72,14 @@ def _local_path(destination: Path, rel_path: str) -> Path:
 def _file_url(base_url: str, rel_path: str) -> str:
     rel = _safe_relative_path(rel_path)
     return f"{base_url.rstrip('/')}/files/" + "/".join(quote(part) for part in rel.parts)
+
+
+def _emit_progress(callback: ProgressCallback | None, event: str, **payload) -> None:
+    if callback is None:
+        return
+    data = {"event": event, "time": time.time()}
+    data.update(payload)
+    callback(data)
 
 
 def fetch_pilot_index(base_url: str = DEFAULT_PILOT_TRANSFER_URL, *, timeout: float = 5.0) -> list[PilotTransferFile]:
@@ -107,39 +118,95 @@ def sync_from_pilot(
     dry_run: bool = False,
     overwrite: bool = False,
     timeout: float = 10.0,
+    progress_callback: ProgressCallback | None = None,
 ) -> PilotTransferSummary:
     """Copy new or changed files from TritonPilot into *destination*."""
     destination = Path(destination).expanduser()
+    base_url = str(base_url).rstrip("/")
+    _emit_progress(progress_callback, "index_start", base_url=base_url, destination=str(destination))
     files = fetch_pilot_index(base_url, timeout=timeout)
+    total_bytes = sum(int(item.size) for item in files)
     summary = PilotTransferSummary(
-        base_url=str(base_url).rstrip("/"),
+        base_url=base_url,
         destination=destination,
         scanned=len(files),
+        bytes_scanned=total_bytes,
         dry_run=bool(dry_run),
     )
+    _emit_progress(
+        progress_callback,
+        "index_done",
+        base_url=base_url,
+        destination=str(destination),
+        scanned=len(files),
+        total_bytes=total_bytes,
+    )
 
-    for source in files:
+    for index, source in enumerate(files, start=1):
         target = _local_path(destination, source.path)
         if target.exists() and not overwrite and file_is_current(target, source):
             summary.skipped += 1
             summary.skipped_paths.append(target)
+            _emit_progress(
+                progress_callback,
+                "skipped",
+                path=source.path,
+                target=str(target),
+                size=int(source.size),
+                index=index,
+                total_files=len(files),
+                skipped=summary.skipped,
+            )
             continue
         if dry_run:
             summary.copied += 1
             summary.bytes_copied += int(source.size)
             summary.copied_paths.append(target)
+            _emit_progress(
+                progress_callback,
+                "would_copy",
+                path=source.path,
+                target=str(target),
+                size=int(source.size),
+                index=index,
+                total_files=len(files),
+                bytes_copied=summary.bytes_copied,
+            )
             continue
 
         target.parent.mkdir(parents=True, exist_ok=True)
         temp = target.with_name(target.name + ".part")
         request_url = _file_url(base_url, source.path)
+        _emit_progress(
+            progress_callback,
+            "copy_start",
+            path=source.path,
+            target=str(target),
+            size=int(source.size),
+            index=index,
+            total_files=len(files),
+            request_url=request_url,
+        )
         try:
             with urllib.request.urlopen(request_url, timeout=float(timeout)) as response, temp.open("wb") as handle:
+                file_bytes_copied = 0
                 while True:
                     chunk = response.read(1024 * 1024)
                     if not chunk:
                         break
                     handle.write(chunk)
+                    file_bytes_copied += len(chunk)
+                    _emit_progress(
+                        progress_callback,
+                        "copy_progress",
+                        path=source.path,
+                        target=str(target),
+                        size=int(source.size),
+                        index=index,
+                        total_files=len(files),
+                        file_bytes_copied=file_bytes_copied,
+                        bytes_copied=summary.bytes_copied + file_bytes_copied,
+                    )
             if temp.stat().st_size != int(source.size):
                 raise RuntimeError(f"Downloaded size mismatch for {source.path}")
             os.replace(temp, target)
@@ -154,5 +221,28 @@ def sync_from_pilot(
         summary.copied += 1
         summary.bytes_copied += int(source.size)
         summary.copied_paths.append(target)
+        _emit_progress(
+            progress_callback,
+            "copy_done",
+            path=source.path,
+            target=str(target),
+            size=int(source.size),
+            index=index,
+            total_files=len(files),
+            copied=summary.copied,
+            bytes_copied=summary.bytes_copied,
+        )
 
+    _emit_progress(
+        progress_callback,
+        "complete",
+        base_url=base_url,
+        destination=str(destination),
+        scanned=summary.scanned,
+        copied=summary.copied,
+        skipped=summary.skipped,
+        bytes_copied=summary.bytes_copied,
+        bytes_scanned=summary.bytes_scanned,
+        dry_run=summary.dry_run,
+    )
     return summary
