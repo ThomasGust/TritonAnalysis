@@ -1,15 +1,16 @@
 # TritonAnalysis Operations Guide
 
 This guide describes how to use TritonAnalysis during development, practice,
-and competition. The applets are independent tools, so operators should launch
-only the one needed for the current task.
+and competition. Competition runs should normally use the unified tabbed app so
+the analysis operator can move between tasks without relaunching tools. The
+standalone applets remain available as backups.
 
 ## Competition-Day Pattern
 
 1. TritonPilot records source media or the team writes down task values.
-2. The analysis operator copies the source media or values to the analysis
-   computer.
-3. The operator launches the relevant TritonAnalysis applet.
+2. The analysis operator copies or syncs the source media or values to the
+   analysis computer.
+3. The operator launches `main_triton_analysis` or a focused backup applet.
 4. The applet produces counts, measurements, corrected frames, CSV text, OBJ
    files, reports, or annotated images.
 5. The team preserves both source evidence and exported results.
@@ -25,16 +26,40 @@ On the analysis computer:
 - Run `python -m pytest`.
 - Open each GUI applet once.
 - Confirm sample/reference data under `data/` is present.
-- Make a folder for incoming competition media.
+- Choose a TritonAnalysis workspace root, normally
+  `%USERPROFILE%\Documents\TritonAnalysisWorkspace`.
+- Practice the USB drive or dedicated-Ethernet transfer workflow from
+  [Network And Data Handoff Guide](NETWORKING.md).
 - Practice the exact applet workflow with representative images and videos.
 
-## Launching Applets
+## Launching The Unified App
 
 From the TritonAnalysis repository root:
 
 ```powershell
 .\.venv\Scripts\activate
 ```
+
+Competition-day tabbed app:
+
+```powershell
+python -m main_triton_analysis
+python -m main_triton_analysis --stereo-manifest path\to\stereo_session --calibration path\to\stereo_calibration.json
+```
+
+The unified app includes Coral Reconstruction, Crab Detection, Stereo Iceberg
+Length, Iceberg Tracking, eDNA Analysis, Stereo Calibration, Backup Coral
+Measurement, and Backup Iceberg Measurement tabs in one window. RealityScan
+reconstruction runs in a `QProcess` and stereo calibration runs in a worker
+thread, so those jobs do not block the other tabs.
+
+The status bar also shows `Pilot Sync`. When auto sync is enabled, the app
+periodically pulls new saved TritonPilot files into
+`Workspace\incoming\pilot` without blocking the analysis tabs. Use the
+`Workspace` menu to change the root folder and the `Pilot Sync` menu to change
+the URL, destination folder, or trigger a manual sync.
+
+## Backup Applets
 
 Crab detection:
 
@@ -153,8 +178,8 @@ station.
 7. Open the metric OBJ, contact sheet, report, or `metric_scale.json` from the
    output panel.
 
-The default output workspace is under `TritonAnalysis/results/realityscan`.
-That keeps photogrammetry artifacts with the analysis evidence trail instead of
+The default output workspace is under `Workspace\results\realityscan`. That
+keeps photogrammetry artifacts with the analysis evidence trail instead of
 inside the live pilot UI.
 
 Use the `Model Viewer` tab in the reconstruction applet, the `View Metric

@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from analysis_workspace import workspace_paths
 from edna_analysis import (
     DEFAULT_SPECIES,
     SAMPLE_COUNTS,
@@ -276,7 +277,9 @@ class EDNAAnalysisWindow(QMainWindow):
         self.input_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.input_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.input_table.setAlternatingRowColors(True)
-        self.input_table.verticalHeader().setDefaultSectionSize(46)
+        self.input_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.input_table.verticalHeader().setMinimumSectionSize(26)
+        self.input_table.verticalHeader().setDefaultSectionSize(31)
         input_header = self.input_table.horizontalHeader()
         input_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         input_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
@@ -300,6 +303,7 @@ class EDNAAnalysisWindow(QMainWindow):
             self._percent_items.append(percent_item)
             self.input_table.setItem(row_index, 2, percent_item)
 
+        self._fit_input_table_height()
         layout.addWidget(self.input_table, 1)
 
         precision_row = QHBoxLayout()
@@ -332,12 +336,19 @@ class EDNAAnalysisWindow(QMainWindow):
 
         button_grid.addWidget(self.sample_btn, 0, 0)
         button_grid.addWidget(self.paste_btn, 0, 1)
-        button_grid.addWidget(self.clear_btn, 1, 0)
-        button_grid.addWidget(self.copy_btn, 1, 1)
-        button_grid.addWidget(self.save_csv_btn, 2, 0)
-        button_grid.addWidget(self.judge_btn, 2, 1)
+        button_grid.addWidget(self.clear_btn, 0, 2)
+        button_grid.addWidget(self.copy_btn, 1, 0)
+        button_grid.addWidget(self.save_csv_btn, 1, 1)
+        button_grid.addWidget(self.judge_btn, 1, 2)
         layout.addLayout(button_grid)
         return panel
+
+    def _fit_input_table_height(self) -> None:
+        height = self.input_table.horizontalHeader().sizeHint().height()
+        height += sum(self.input_table.rowHeight(row) for row in range(self.input_table.rowCount()))
+        height += self.input_table.frameWidth() * 2 + 4
+        self.input_table.setMinimumHeight(height)
+        self.input_table.setMaximumHeight(height)
 
     def _build_preview_panel(self) -> QWidget:
         panel = QFrame()
@@ -449,9 +460,9 @@ class EDNAAnalysisWindow(QMainWindow):
         self.statusBar().showMessage("eDNA judge report copied.", 4000)
 
     def _save_csv(self) -> None:
-        results_dir = Path("results")
+        results_dir = workspace_paths(create=True).reports / "edna"
         try:
-            results_dir.mkdir(exist_ok=True)
+            results_dir.mkdir(parents=True, exist_ok=True)
         except OSError:
             results_dir = Path.cwd()
 

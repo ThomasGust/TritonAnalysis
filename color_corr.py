@@ -54,6 +54,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from analysis_workspace import workspace_paths
 from gui.responsive import horizontal_scroll_area, resize_to_available_screen, vertical_scroll_area
 
 
@@ -1326,12 +1327,12 @@ class MainWindow(QMainWindow):
         if not self.video_path:
             return
 
-        base, _ = os.path.splitext(self.video_path)
-        suggested = base + "_corrected_pvc_red.mp4"
+        output_root = workspace_paths(create=True).color_correction_results
+        suggested = output_root / f"{Path(self.video_path).stem}_corrected_pvc_red.mp4"
         output_path, _ = QFileDialog.getSaveFileName(
             self,
             "Export corrected video",
-            suggested,
+            str(suggested),
             "MP4 Video (*.mp4);;All Files (*)",
         )
         if not output_path:
@@ -1360,7 +1361,7 @@ class MainWindow(QMainWindow):
         parent = QFileDialog.getExistingDirectory(
             self,
             "Choose parent folder for 0.1s frames",
-            os.path.dirname(self.video_path),
+            str(workspace_paths(create=True).color_correction_results),
         )
         if not parent:
             return
@@ -1407,7 +1408,7 @@ class MainWindow(QMainWindow):
         parent = QFileDialog.getExistingDirectory(
             self,
             "Choose parent folder for selected frames",
-            os.path.dirname(self.video_path),
+            str(workspace_paths(create=True).color_correction_results),
         )
         if not parent:
             return

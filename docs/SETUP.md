@@ -95,15 +95,15 @@ crab sample and reference images. Larger videos used by some computer-vision
 tests are intentionally not required; those tests skip themselves when the
 recordings are absent.
 
-For competition use, create a local folder outside the repo for incoming media,
-for example:
+For competition use, create a local workspace folder outside the repo for
+incoming media, reports, and generated results:
 
 ```powershell
-mkdir C:\TritonCompetitionMedia
+mkdir "$env:USERPROFILE\Documents\TritonAnalysisWorkspace"
 ```
 
 Keep original captures unchanged and write applet outputs to a separate results
-folder.
+folder inside that workspace.
 
 ## No Live ROV Dependencies
 

@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from gui.canvas_navigation import clamp_pan_to_edge_margin, moved_past_pan_threshold
 from gui.crab_result_dialog import frame_to_pixmap
 from gui.responsive import resize_to_available_screen, vertical_scroll_area
 from stereo_calibration import load_manifest_collection
@@ -85,6 +86,7 @@ class _StereoKeelCanvas(QWidget):
         self._drag_index: int | None = None
         self._panning = False
         self._last_pan_pos: tuple[float, float] | None = None
+        self._pending_point_press: tuple[float, float] | None = None
         self.setMinimumSize(240, 220)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMouseTracking(True)
@@ -127,6 +129,7 @@ class _StereoKeelCanvas(QWidget):
             self._image_height, self._image_width = frame_bgr.shape[:2]
         self._zoom = 1.0
         self._pan[:] = 0.0
+        self._pending_point_press = None
         self._points.clear()
         self._badge = ""
         self.pointsChanged.emit()
@@ -139,6 +142,7 @@ class _StereoKeelCanvas(QWidget):
         self._points.clear()
         self._badge = ""
         self._drag_index = None
+        self._pending_point_press = None
         self.pointsChanged.emit()
         self._refresh_cursor()
         self.update()
@@ -181,18 +185,7 @@ class _StereoKeelCanvas(QWidget):
             return
         contents = self.contentsRect()
         target = self._centered_target_rect()
-        if target.width() <= contents.width():
-            self._pan[0] = 0.0
-        else:
-            min_pan_x = contents.right() - target.right()
-            max_pan_x = contents.left() - target.left()
-            self._pan[0] = float(np.clip(self._pan[0], min_pan_x, max_pan_x))
-        if target.height() <= contents.height():
-            self._pan[1] = 0.0
-        else:
-            min_pan_y = contents.bottom() - target.bottom()
-            max_pan_y = contents.top() - target.top()
-            self._pan[1] = float(np.clip(self._pan[1], min_pan_y, max_pan_y))
+        clamp_pan_to_edge_margin(self._pan, contents, target)
 
     def _image_to_widget(self, point: tuple[int, int]) -> tuple[float, float] | None:
         target = self._target_rect()
@@ -237,13 +230,20 @@ class _StereoKeelCanvas(QWidget):
         else:
             self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
 
+    def _start_pan(self, x: float, y: float) -> bool:
+        if self._pixmap.isNull() or self._zoom <= 1.0:
+            return False
+        self._pending_point_press = None
+        self._panning = True
+        self._last_pan_pos = (x, y)
+        self._refresh_cursor()
+        return True
+
     def mousePressEvent(self, event) -> None:
         x = float(event.position().x())
         y = float(event.position().y())
-        if event.button() == Qt.MouseButton.MiddleButton and not self._pixmap.isNull() and self._zoom > 1.0:
-            self._panning = True
-            self._last_pan_pos = (x, y)
-            self._refresh_cursor()
+        if event.button() == Qt.MouseButton.MiddleButton:
+            self._start_pan(x, y)
             return
         if event.button() == Qt.MouseButton.RightButton:
             nearest = self._nearest_point_index(x, y)
@@ -264,16 +264,12 @@ class _StereoKeelCanvas(QWidget):
             self._refresh_cursor()
             return
         if len(self._points) >= 2:
+            self._start_pan(x, y)
             return
         point = self._widget_to_image(x, y)
         if point is None:
             return
-        self._points.append(point)
-        self._drag_index = len(self._points) - 1
-        self._badge = ""
-        self.pointsChanged.emit()
-        self._refresh_cursor()
-        self.update()
+        self._pending_point_press = (x, y)
 
     def mouseMoveEvent(self, event) -> None:
         x = float(event.position().x())
@@ -285,6 +281,15 @@ class _StereoKeelCanvas(QWidget):
             self._clamp_pan()
             self.update()
             return
+        if self._pending_point_press is not None:
+            if self._zoom > 1.0 and moved_past_pan_threshold(self._pending_point_press, x, y):
+                start_x, start_y = self._pending_point_press
+                self._start_pan(start_x, start_y)
+                self._pan += np.array([x - start_x, y - start_y], dtype=np.float64)
+                self._last_pan_pos = (x, y)
+                self._clamp_pan()
+                self.update()
+            return
         if self._drag_index is not None:
             point = self._widget_to_image(x, y)
             if point is not None:
@@ -294,10 +299,23 @@ class _StereoKeelCanvas(QWidget):
                 self.update()
 
     def mouseReleaseEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.MiddleButton and self._panning:
+        if event.button() in (Qt.MouseButton.MiddleButton, Qt.MouseButton.LeftButton) and self._panning:
             self._panning = False
             self._last_pan_pos = None
             self._refresh_cursor()
+            return
+        if event.button() == Qt.MouseButton.LeftButton and self._pending_point_press is not None:
+            self._pending_point_press = None
+            if len(self._points) >= 2:
+                return
+            point = self._widget_to_image(float(event.position().x()), float(event.position().y()))
+            if point is None:
+                return
+            self._points.append(point)
+            self._badge = ""
+            self.pointsChanged.emit()
+            self._refresh_cursor()
+            self.update()
             return
         if event.button() == Qt.MouseButton.LeftButton and self._drag_index is not None:
             self._drag_index = None

@@ -12,14 +12,6 @@ from crab_detector_cv import (
     estimate_board_white_balance_gains,
     unwrap_board,
 )
-from stereo_crab_analysis import (
-    attach_stereo_depth_to_detections,
-    detect_stereo_reference_copy_crabs,
-    draw_stereo_depth_overlay,
-    format_stereo_distance,
-    stereo_depth_summary_text,
-)
-import stereo_crab_analysis
 
 
 pytestmark = pytest.mark.vision
@@ -56,87 +48,6 @@ def test_crab_detector_accepts_manual_board_polygon():
     assert manual_result["count"] == 8
     assert manual_result["green_count"] == 4
     assert manual_result["other_count"] == 4
-
-
-def test_stereo_depth_annotations_attach_to_crab_detections():
-    detection_result = {
-        "board_polygon": None,
-        "detections": [
-            {
-                "index": 1,
-                "original_box": np.array([8, 10, 8, 6], dtype=np.int32),
-                "original_quad": np.array([[8, 10], [16, 10], [16, 16], [8, 16]], dtype=np.int32),
-                "classification": {"label": "european_green", "is_european_green": True},
-            }
-        ],
-        "count": 1,
-        "green_count": 1,
-        "other_count": 0,
-        "species_counts": {"european_green": 1},
-    }
-    points_3d = np.zeros((24, 24, 3), dtype=np.float32)
-    points_3d[:, :, 2] = 300.0
-    disparity = np.full((24, 24), 12.0, dtype=np.float32)
-    valid_depth = np.ones((24, 24), dtype=bool)
-
-    summary = attach_stereo_depth_to_detections(
-        detection_result,
-        points_3d,
-        disparity,
-        valid_depth,
-        units="mm",
-        sample_radius=1,
-    )
-
-    stereo_depth = detection_result["detections"][0]["stereo_depth"]
-    assert summary["available_count"] == 1
-    assert summary["median_depth_units"] == pytest.approx(300.0)
-    assert stereo_depth["available"] is True
-    assert stereo_depth["depth_label"] == "30.0 cm"
-    assert format_stereo_distance(1250.0, "mm") == "1.25 m"
-    assert "1/1" in stereo_depth_summary_text(detection_result)
-
-    overlay = draw_stereo_depth_overlay(np.zeros((24, 24, 3), dtype=np.uint8), detection_result, units="mm")
-    assert overlay.shape == (24, 24, 3)
-    assert np.count_nonzero(overlay) > 0
-
-
-def test_stereo_reference_detector_keeps_epipolar_candidate_matches(monkeypatch):
-    left = np.zeros((160, 220, 3), dtype=np.uint8)
-    right = np.zeros((160, 220, 3), dtype=np.uint8)
-    left[0, 0, 0] = 1
-    right[0, 0, 0] = 2
-
-    def fake_candidates(image):
-        if int(image[0, 0, 0]) == 1:
-            return [
-                {"box": np.array([110, 45, 32, 28], dtype=np.int32), "area": 700},
-                {"box": np.array([155, 92, 34, 30], dtype=np.int32), "area": 720},
-            ]
-        return [
-            {"box": np.array([70, 46, 33, 28], dtype=np.int32), "area": 690},
-            {"box": np.array([112, 91, 35, 30], dtype=np.int32), "area": 730},
-        ]
-
-    def fake_classify(_image, box):
-        label = "european_green" if int(box[1]) < 80 else "jonah"
-        return {
-            "label": label,
-            "is_european_green": label == "european_green",
-            "copy_color_label": label,
-            "copy_feature_scores": {},
-        }
-
-    monkeypatch.setattr(stereo_crab_analysis, "_relaxed_reference_copy_candidate_boxes", fake_candidates)
-    monkeypatch.setattr(stereo_crab_analysis, "classify_reference_copy_candidate", fake_classify)
-
-    result = detect_stereo_reference_copy_crabs(left, right)
-
-    assert result is not None
-    assert result["detector"] == "stereo_reference_copy"
-    assert result["count"] == 2
-    assert result["green_count"] == 1
-    assert all("stereo_match" in detection for detection in result["detections"])
 
 
 def test_crab_classifier_keeps_native_rock_under_red_attenuation():

@@ -39,6 +39,51 @@ data/crab_reference/
 These assets are appropriate to keep in the repository. Large raw videos,
 competition runs, and generated result folders should remain outside git.
 
+## Workspace Layout
+
+TritonAnalysis uses one machine-specific workspace root with stable folders
+under it. The absolute root can differ on every laptop, but the structure below
+it should stay the same.
+
+Default root:
+
+```text
+%USERPROFILE%\Documents\TritonAnalysisWorkspace
+```
+
+Override it before launch when needed:
+
+```powershell
+$env:TRITON_ANALYSIS_WORKSPACE="D:\TritonAnalysisWorkspace"
+```
+
+Recommended structure:
+
+```text
+TritonAnalysisWorkspace/
+  incoming/
+    pilot/                auto-synced TritonPilot recordings
+    usb/                  manual USB-drive drops, if used
+  sources/                curated source media copied from incoming
+    run_01/
+    run_02/
+  calibrations/           stereo_calibration.json and related artifacts
+  results/
+    crab_detection/
+    coral_garden/
+    realityscan/
+    color_correction/
+  reports/
+    edna/
+    iceberg_tracking/
+  exports/                judge-ready bundles or final copied files
+  scratch/                temporary experiments safe to delete
+```
+
+The unified app shows workspace-relative paths such as
+`Workspace\incoming\pilot` in the status bar. The tooltip still contains the
+full absolute path for Windows Explorer.
+
 ## Source Media Rules
 
 For competition and technical documentation:
@@ -49,15 +94,21 @@ For competition and technical documentation:
 - Keep manual notes with the media they describe.
 - Prefer descriptive names over screenshots with default names.
 
-Suggested layout:
+Suggested run layout under `sources/`:
 
 ```text
-TritonCompetitionMedia/
-  run_01_source/
-  run_01_results/
-  run_02_source/
-  run_02_results/
+sources/
+  run_01/
+    primary_camera/
+    arm_camera/
+    stereo_sessions/
+    notes.txt
+  run_02/
 ```
+
+When using the TritonPilot transfer link, `incoming/pilot/` is the first
+landing folder. After each pull, copy or rename the relevant files into the
+run-specific source folder you want to preserve.
 
 ## Applet Inputs
 
@@ -120,8 +171,9 @@ so a teammate can reproduce or explain the answer later.
 
 ## Results From `tools.crab_video_detect`
 
-The batch crab-video helper writes to `results/crab_video_detection` by default
-unless `--output-dir` is provided. Its typical outputs are:
+The batch crab-video helper writes to
+`Workspace/results/crab_detection` by default unless `--output-dir` is
+provided. Its typical outputs are:
 
 - `best_frame.jpg`
 - `best_annotated.jpg`

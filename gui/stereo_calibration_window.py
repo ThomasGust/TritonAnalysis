@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from analysis_workspace import workspace_paths
 from gui.crab_result_dialog import ImagePreviewPanel
 from gui.responsive import resize_to_available_screen, vertical_scroll_area
 from stereo_calibration import (
@@ -389,10 +390,12 @@ class StereoCalibrationWindow(QMainWindow):
             self.output_edit.setText(str(Path(path)))
 
     def _default_output_path(self) -> Path:
+        output_dir = workspace_paths(create=True).calibrations
         if self.manifest_paths:
             first = self.manifest_paths[0]
-            return first.parent / "stereo_calibration.json"
-        return Path.cwd() / "stereo_calibration.json"
+            session_name = first.parent.name if first.name.lower() == "manifest.json" else first.stem
+            return output_dir / f"{session_name}_stereo_calibration.json"
+        return output_dir / "stereo_calibration.json"
 
     def load_manifest(self, path: Path) -> None:
         self.load_manifests([path])

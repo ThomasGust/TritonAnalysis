@@ -118,3 +118,29 @@ def test_realityscan_gui_populates_known_workspace_outputs(tmp_path: Path):
         window.close()
         window.deleteLater()
         app.processEvents()
+
+
+def test_realityscan_model_viewer_tab_is_selected_before_loading(tmp_path: Path):
+    app = _app()
+    model = tmp_path / "underwater_model_metric.obj"
+    model.write_text("v 0 0 0\n", encoding="utf-8")
+
+    window = RealityScanReconstructionWindow()
+    calls: list[bool] = []
+
+    def fake_start_viewer() -> None:
+        calls.append(window.tabs.currentWidget() is window.model_viewer_panel)
+
+    window.model_viewer_panel._start_viewer = fake_start_viewer
+    try:
+        window._output_paths["metric_model"] = model
+        window._launch_model_viewer()
+        app.processEvents()
+
+        assert calls == [True]
+        assert window.tabs.currentWidget() is window.model_viewer_panel
+        assert window.model_viewer_panel.model_edit.text() == str(model)
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()

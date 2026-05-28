@@ -2,7 +2,9 @@
 
 TritonAnalysis does not require a live network connection to the ROV. It should
 not publish commands, subscribe to telemetry, open camera streams, or call
-TritonOS RPC services during competition.
+TritonOS RPC services during competition. When an Ethernet handoff is useful,
+TritonAnalysis should pull saved files from TritonPilot instead of becoming a
+live-control dependency.
 
 ## Runtime Network Requirements
 
@@ -17,7 +19,75 @@ The applets consume:
 
 This is deliberate. The pilot station should remain focused on vehicle control,
 and the analysis station should be able to keep working even if the tether,
-ROV, or pilot UI is unavailable.
+ROV, or pilot UI is unavailable. The optional transfer helper only copies saved
+files from TritonPilot; it does not talk to TritonOS or control the ROV.
+
+## Optional USB-Ethernet Handoff
+
+Use a dedicated USB-to-Ethernet adapter pair or a small unmanaged switch between
+the pilot and analysis laptops:
+
+```text
+Pilot analysis adapter    10.77.0.1/24
+Analysis adapter          10.77.0.2/24
+Gateway                   leave blank
+DNS                       leave blank
+```
+
+Keep the normal ROV tether on its existing `192.168.1.x` network.
+
+On the pilot computer, start the read-only transfer server from the
+TritonPilot app. The pilot status bar shows `Analysis Share` with the served
+folder, URL, file count, and last Analysis pull time. The backup CLI command is:
+
+```powershell
+python -m tools.analysis_transfer_server --root recordings --host 0.0.0.0 --port 8765
+```
+
+If Windows Firewall prompts on the pilot computer, allow Python on private
+networks for the dedicated analysis link.
+
+On the analysis computer, the unified TritonAnalysis app pulls saved files into
+`Workspace\incoming\pilot` automatically. Its status bar shows `Pilot Sync`
+with the URL, connection state, and destination folder. The backup CLI command
+is:
+
+```powershell
+python -m tools.pilot_transfer_sync http://10.77.0.1:8765 --output "$env:USERPROFILE\Documents\TritonAnalysisWorkspace\incoming\pilot"
+```
+
+Preview what would copy without writing files:
+
+```powershell
+python -m tools.pilot_transfer_sync http://10.77.0.1:8765 --output "$env:USERPROFILE\Documents\TritonAnalysisWorkspace\incoming\pilot" --dry-run
+```
+
+The sync preserves the folder layout advertised by TritonPilot. Files that
+already match by size and modification time are skipped.
+
+Inside the unified TritonAnalysis app, use the `Workspace` menu to choose the
+workspace root, and the `Pilot Sync` menu to toggle auto sync, sync now, set a
+custom destination folder, or change the Pilot URL.
+
+## One-Computer Simulation
+
+You can test the transfer without a second Windows computer by using
+`127.0.0.1`.
+
+Terminal 1, from the TritonPilot repository root:
+
+```powershell
+python -m tools.analysis_transfer_server --root recordings --host 127.0.0.1 --port 8765 --stable-seconds 0
+```
+
+Terminal 2, from the TritonAnalysis repository root:
+
+```powershell
+python -m tools.pilot_transfer_sync http://127.0.0.1:8765 --output "$env:USERPROFILE\Documents\TritonAnalysisWorkspace\incoming\pilot" --dry-run
+python -m tools.pilot_transfer_sync http://127.0.0.1:8765 --output "$env:USERPROFILE\Documents\TritonAnalysisWorkspace\incoming\pilot"
+```
+
+Stop the pilot-side server with `Ctrl+C` when the simulation is finished.
 
 ## Data Handoff From TritonPilot
 
@@ -36,16 +106,18 @@ TritonAnalysis applets load saved files or manual values
 Results are exported for the team/judges
 ```
 
-Use clear folder names such as:
+Use clear workspace folders such as:
 
 ```text
-competition_media/
-  run_01/
+TritonAnalysisWorkspace/
+  incoming/pilot/
+  sources/run_01/
     primary_camera/
     arm_camera/
     raw_sensor_logs/
     notes.txt
-  run_01_results/
+  results/
+  reports/
 ```
 
 Preserve original captures. If an applet exports corrected images, annotated
@@ -57,8 +129,8 @@ rather than overwriting source media.
 Any ordinary file-transfer method is acceptable:
 
 - USB drive
-- Shared folder
-- Local network share
+- Dedicated TritonPilot transfer link
+- Shared folder or local network share
 - Cloud sync after the run
 
 Choose the method that is least likely to interrupt the pilot computer. Avoid

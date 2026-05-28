@@ -5,6 +5,10 @@ PyQt windows, GUI classes handle operator interaction, and pure analysis modules
 perform the calculations. This keeps task logic testable without launching the
 full GUI.
 
+`main_triton_analysis.py` composes the competition-critical windows into one
+tabbed operator app. The original single-purpose entry points still launch the
+same window classes directly, which keeps them useful as field backups.
+
 ## System Boundary
 
 TritonAnalysis owns:

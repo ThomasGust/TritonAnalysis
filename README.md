@@ -12,8 +12,10 @@ live piloting station.
 
 ## What Runs On The Analysis Computer
 
-The repository is organized as top-level applets and shared analysis modules:
+The repository is organized as a unified competition app, top-level backup
+applets, and shared analysis modules:
 
+- Unified tabbed competition-day analysis window
 - Crab detection from images, folders, or video files
 - Iceberg tracking and threat assessment
 - Iceberg PVC segment measurement
@@ -35,6 +37,7 @@ root.
 
 ```text
 main_crab_detection.py                 Crab detection GUI entry point
+main_triton_analysis.py                Unified tabbed competition-day GUI
 main_iceberg_tracking.py               Iceberg threat-assessment GUI
 main_iceberg_measurement.py            Iceberg variable-segment GUI
 main_planar_height_measurement.py      Planar height measurement GUI
@@ -47,6 +50,7 @@ main_stereo_iceberg_measurement.py     Iceberg preset shortcut
 main_realityscan_reconstruction.py     Stereo RealityScan reconstruction GUI
 main_realityscan_model_viewer.py       Three.js OBJ measurement viewer
 color_corr.py                          Underwater correction/frame-export GUI
+pilot_transfer.py                      Pull-only TritonPilot media sync helper
 crab_detector_cv.py                    Crab computer-vision pipeline
 iceberg_tracking.py                    Coordinate/threat-assessment logic
 iceberg_measurement.py                 2D/3D measurement algorithms
@@ -101,6 +105,27 @@ python -m pytest
 ```
 
 ## Applets
+
+Unified competition window:
+
+```powershell
+python -m main_triton_analysis
+python -m main_triton_analysis --stereo-manifest path\to\stereo_session --calibration path\to\stereo_calibration.json
+python -m main_triton_analysis --pilot-transfer-url http://10.77.0.1:8765
+python -m main_triton_analysis --workspace D:\TritonAnalysisWorkspace
+```
+
+The unified window opens with Coral Reconstruction, then Crab Detection, Stereo
+Iceberg Length, Iceberg Tracking, eDNA Analysis, Stereo Calibration, Backup
+Coral Measurement, and Backup Iceberg Measurement. The standalone applets below
+remain available as backups.
+The status bar includes automatic TritonPilot media sync status and the active
+destination folder.
+
+By default, synced media and generated outputs live under
+`%USERPROFILE%\Documents\TritonAnalysisWorkspace`. The `Workspace` menu can
+move that root on each computer while keeping subfolders like
+`incoming\pilot`, `results`, and `reports` consistent.
 
 Crab competition analyzer:
 
@@ -180,6 +205,12 @@ Batch crab-video helper:
 
 ```powershell
 python -m tools.crab_video_detect path\to\video.mp4
+```
+
+Pilot media transfer helper:
+
+```powershell
+python -m tools.pilot_transfer_sync http://10.77.0.1:8765 --output "$env:USERPROFILE\Documents\TritonAnalysisWorkspace\incoming\pilot"
 ```
 
 ## Competition Workflow

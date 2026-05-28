@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from analysis_workspace import workspace_paths
 from gui.responsive import resize_to_available_screen, vertical_scroll_area
 
 try:  # Optional dependency. The external-browser path works without it.
@@ -39,7 +40,7 @@ except Exception:  # pragma: no cover - depends on optional local install
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_RESULTS_DIR = REPO_ROOT / "results" / "realityscan"
+DEFAULT_RESULTS_DIR = workspace_paths().realityscan_results
 
 
 class _SectionCard(QFrame):
@@ -182,6 +183,7 @@ class RealityScanModelViewerPanel(QWidget):
         super().__init__(parent)
         self._server: ModelViewerServer | None = None
         self._viewer_url = ""
+        self._current_model_path: Path | None = None
 
         self._build_ui()
         if model_path:
@@ -193,6 +195,9 @@ class RealityScanModelViewerPanel(QWidget):
         super().closeEvent(event)
 
     def shutdown(self) -> None:
+        self._stop_server()
+
+    def _stop_server(self) -> None:
         if self._server is not None:
             self._server.stop()
             self._server = None
@@ -278,6 +283,11 @@ class RealityScanModelViewerPanel(QWidget):
         use_embedded_webview = QWebEngineView is not None and os.environ.get("QT_QPA_PLATFORM", "").lower() != "offscreen"
         if use_embedded_webview:
             self.web_view = QWebEngineView()
+            self.web_view.setHtml(
+                "<!doctype html><html><body style='margin:0;background:#0d1117;color:#cbd5e1;"
+                "font-family:Segoe UI,Arial,sans-serif;display:grid;place-items:center;height:100vh'>"
+                "Select a model, then load the viewport.</body></html>"
+            )
             viewer_layout.addWidget(self.web_view, 1)
         else:
             self.web_view = None
@@ -318,8 +328,15 @@ class RealityScanModelViewerPanel(QWidget):
             QMessageBox.warning(self, "Model Viewer", f"Select an OBJ model first:\n{model}")
             return
 
-        self.shutdown()
+        resolved_model = model.resolve()
+        if self._server is not None and self._current_model_path == resolved_model and self._viewer_url:
+            self._load_embedded_view()
+            self._set_status(f"Serving {model.name} from localhost.", "ok")
+            return
+
+        self._stop_server()
         self._server = ModelViewerServer(model)
+        self._current_model_path = resolved_model
         self._viewer_url = self._server.start()
         self.url_edit.setText(self._viewer_url)
         self.browser_btn.setEnabled(True)

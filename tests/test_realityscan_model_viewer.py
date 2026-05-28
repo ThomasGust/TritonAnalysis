@@ -138,3 +138,31 @@ def test_model_viewer_window_starts_local_viewer(tmp_path: Path):
         window.close()
         window.deleteLater()
         app.processEvents()
+
+
+def test_model_viewer_reuses_existing_server_for_same_model(tmp_path: Path, monkeypatch):
+    app = _app()
+    model = _sample_obj(tmp_path)
+    window = RealityScanModelViewerWindow(model_path=str(model))
+    original_server = None
+    original_stop = None
+    try:
+        window._start_viewer()
+        original_server = window.panel._server
+        assert original_server is not None
+        original_stop = original_server.stop
+
+        def fail_stop():
+            raise AssertionError("same model should not restart the viewer server")
+
+        monkeypatch.setattr(original_server, "stop", fail_stop)
+        window._start_viewer()
+
+        assert window.panel._server is original_server
+    finally:
+        if original_server is not None and original_stop is not None:
+            original_stop()
+            window.panel._server = None
+        window.close()
+        window.deleteLater()
+        app.processEvents()

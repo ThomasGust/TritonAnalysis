@@ -3,6 +3,38 @@
 This page describes what each applet does, what it consumes, and where its
 implementation lives.
 
+## Unified Competition App
+
+Launch:
+
+```powershell
+python -m main_triton_analysis
+python -m main_triton_analysis --stereo-manifest path\to\stereo_session --calibration path\to\stereo_calibration.json
+```
+
+Purpose:
+
+- Keep the competition analysis workflows in one tabbed window.
+- Avoid relaunching applets during the 15-minute demonstration window.
+- Preserve the standalone applets as focused backups.
+
+Tabs:
+
+- Coral Reconstruction
+- Crab Detection
+- Stereo Iceberg Length
+- Iceberg Tracking
+- eDNA Analysis
+- Stereo Calibration
+- Backup Coral Measurement
+- Backup Iceberg Measurement
+
+Primary modules:
+
+- `main_triton_analysis.py`
+- `gui/triton_analysis_window.py`
+- The same window modules used by the standalone applets
+
 ## Crab Detection
 
 Launch:
@@ -328,7 +360,7 @@ Inputs:
 
 Outputs:
 
-- RealityScan workspace under `results/realityscan` by default
+- RealityScan workspace under `Workspace/results/realityscan` by default
 - Contact sheet, logs, reports, project file, and OBJ export
 - Metric-scaled OBJ and `metric_scale.json` when stereo scaling succeeds
 

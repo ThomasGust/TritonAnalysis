@@ -38,10 +38,11 @@ from PyQt6.QtWidgets import (
 
 from gui.realityscan_model_viewer_window import RealityScanModelViewerPanel
 from gui.responsive import resize_to_available_screen, vertical_scroll_area
+from analysis_workspace import workspace_paths
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_RESULTS_DIR = REPO_ROOT / "results" / "realityscan"
+DEFAULT_RESULTS_DIR = workspace_paths().realityscan_results
 PIPELINE_RELATIVE_PATH = Path("tools") / "realityscan_underwater_pipeline.py"
 PRESETS = ("balanced", "high-detail", "max-detail")
 
@@ -1029,8 +1030,8 @@ class RealityScanReconstructionWindow(QMainWindow):
             QMessageBox.information(self, "Model Viewer", "No exported OBJ model is available yet.")
             return
         self.model_viewer_panel.model_edit.setText(str(path))
-        self.model_viewer_panel._start_viewer()
         self.tabs.setCurrentWidget(self.model_viewer_panel)
+        QTimer.singleShot(0, self.model_viewer_panel._start_viewer)
 
     def _set_running(self, running: bool) -> None:
         self.run_btn.setEnabled(not running)

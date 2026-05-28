@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from gui.canvas_navigation import clamp_pan_to_edge_margin, moved_past_pan_threshold
 from gui.crab_result_dialog import frame_to_pixmap
 from planar_measurement import MeasurementError, measure_planar_height_from_plane
 from gui.responsive import horizontal_scroll_area, resize_to_available_screen
@@ -74,6 +75,7 @@ class PlanarMeasurementCanvas(QWidget):
         self._dragging_key: str | None = None
         self._panning = False
         self._last_pan_pos: tuple[float, float] | None = None
+        self._pending_point_press: tuple[float, float] | None = None
         self._zoom = 1.0
         self._pan = np.array([0.0, 0.0], dtype=np.float64)
         self.setMinimumSize(300, 240)
@@ -128,6 +130,7 @@ class PlanarMeasurementCanvas(QWidget):
         self._dragging_key = None
         self._panning = False
         self._last_pan_pos = None
+        self._pending_point_press = None
         self._set_selected_key(None)
         self._measurement_badge = ""
         self.points_changed.emit(0)
@@ -253,19 +256,7 @@ class PlanarMeasurementCanvas(QWidget):
 
         contents = self.contentsRect()
         target = self._centered_target_rect()
-        if target.width() <= contents.width():
-            self._pan[0] = 0.0
-        else:
-            min_pan_x = contents.right() - target.right()
-            max_pan_x = contents.left() - target.left()
-            self._pan[0] = float(np.clip(self._pan[0], min_pan_x, max_pan_x))
-
-        if target.height() <= contents.height():
-            self._pan[1] = 0.0
-        else:
-            min_pan_y = contents.bottom() - target.bottom()
-            max_pan_y = contents.top() - target.top()
-            self._pan[1] = float(np.clip(self._pan[1], min_pan_y, max_pan_y))
+        clamp_pan_to_edge_margin(self._pan, contents, target)
 
     def _set_zoom(self, zoom: float, anchor: tuple[float, float] | None = None) -> None:
         if self._pixmap.isNull() or self._image_width <= 0 or self._image_height <= 0:
@@ -335,16 +326,22 @@ class PlanarMeasurementCanvas(QWidget):
             return
         self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
 
+    def _start_pan(self, x: float, y: float) -> bool:
+        if self._pixmap.isNull() or self._zoom <= 1.0:
+            return False
+        self._pending_point_press = None
+        self._panning = True
+        self._last_pan_pos = (x, y)
+        self._refresh_cursor()
+        return True
+
     def mousePressEvent(self, event) -> None:
         self.setFocus(Qt.FocusReason.MouseFocusReason)
         x = event.position().x()
         y = event.position().y()
 
         if event.button() == Qt.MouseButton.MiddleButton:
-            if not self._pixmap.isNull() and self._zoom > 1.0:
-                self._panning = True
-                self._last_pan_pos = (x, y)
-                self._refresh_cursor()
+            self._start_pan(x, y)
             return
         if event.button() == Qt.MouseButton.RightButton:
             key = self._nearest_point_key(x, y)
@@ -366,18 +363,13 @@ class PlanarMeasurementCanvas(QWidget):
 
         next_spec = self._first_missing_spec()
         if next_spec is None:
+            self._start_pan(x, y)
             return
         point = self._widget_to_image(x, y)
         if point is None:
             return
 
-        self._points_by_key[next_spec.key] = point
-        self._measurement_badge = ""
-        self._set_selected_key(next_spec.key)
-        self._dragging_key = next_spec.key
-        self.points_changed.emit(len(self._points_by_key))
-        self._refresh_cursor()
-        self.update()
+        self._pending_point_press = (x, y)
 
     def mouseMoveEvent(self, event) -> None:
         x = event.position().x()
@@ -388,6 +380,16 @@ class PlanarMeasurementCanvas(QWidget):
             self._last_pan_pos = (x, y)
             self._clamp_pan()
             self.update()
+            return
+
+        if self._pending_point_press is not None:
+            if self._zoom > 1.0 and moved_past_pan_threshold(self._pending_point_press, x, y):
+                start_x, start_y = self._pending_point_press
+                self._start_pan(start_x, start_y)
+                self._pan += np.array([x - start_x, y - start_y], dtype=np.float64)
+                self._last_pan_pos = (x, y)
+                self._clamp_pan()
+                self.update()
             return
 
         if self._dragging_key is not None:
@@ -407,10 +409,25 @@ class PlanarMeasurementCanvas(QWidget):
             self.update()
 
     def mouseReleaseEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.MiddleButton and self._panning:
+        if event.button() in (Qt.MouseButton.MiddleButton, Qt.MouseButton.LeftButton) and self._panning:
             self._panning = False
             self._last_pan_pos = None
             self._refresh_cursor()
+            return
+        if event.button() == Qt.MouseButton.LeftButton and self._pending_point_press is not None:
+            self._pending_point_press = None
+            next_spec = self._first_missing_spec()
+            if next_spec is None:
+                return
+            point = self._widget_to_image(event.position().x(), event.position().y())
+            if point is None:
+                return
+            self._points_by_key[next_spec.key] = point
+            self._measurement_badge = ""
+            self._set_selected_key(next_spec.key)
+            self.points_changed.emit(len(self._points_by_key))
+            self._refresh_cursor()
+            self.update()
             return
         if event.button() == Qt.MouseButton.LeftButton and self._dragging_key is not None:
             self._dragging_key = None
@@ -419,6 +436,8 @@ class PlanarMeasurementCanvas(QWidget):
             self.update()
 
     def leaveEvent(self, event) -> None:
+        if self._dragging_key is None and not self._panning:
+            self._pending_point_press = None
         if self._dragging_key is None and self._hover_key is not None:
             self._hover_key = None
             self._refresh_cursor()

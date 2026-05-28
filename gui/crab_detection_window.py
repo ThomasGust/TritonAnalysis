@@ -37,9 +37,6 @@ from crab_detector_cv import (
 )
 from gui.crab_result_dialog import CrabDetectionResultView, frame_to_pixmap
 from gui.responsive import horizontal_scroll_area, resize_to_available_screen
-from stereo_calibration import load_manifest_collection
-from stereo_crab_analysis import analyze_stereo_crab_pair, stereo_depth_summary_text
-from stereo_depth import load_depth_calibration, rectification_maps_from_artifact, rectify_stereo_images
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
 VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".wmv"}
@@ -53,13 +50,6 @@ def is_supported_image_path(path: Path) -> bool:
 def is_supported_video_path(path: Path) -> bool:
     """Return whether ``path`` is a supported video file."""
     return path.is_file() and path.suffix.lower() in VIDEO_SUFFIXES
-
-
-def is_supported_stereo_session_path(path: Path) -> bool:
-    """Return whether ``path`` looks like a TritonPilot stereo session."""
-    if path.is_file():
-        return path.name.lower() == "manifest.json"
-    return path.is_dir() and (path / "manifest.json").is_file()
 
 
 def normalize_unwrap_size(value: int | tuple[int, int] | list[int]) -> tuple[int, int]:
@@ -304,7 +294,6 @@ class CrabDetectionWindow(QMainWindow):
         *,
         force_square: bool = True,
         unwrap_size: int = DEFAULT_UNWRAP_SIZE,
-        stereo_calibration_path: str | Path | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -324,15 +313,6 @@ class CrabDetectionWindow(QMainWindow):
         self._video_current_frame_index = 0
         self._video_current_frame: np.ndarray | None = None
         self._updating_video_controls = False
-        self._stereo_manifest: dict = {}
-        self._stereo_manifest_paths: list[Path] = []
-        self._stereo_image_pairs: list[tuple[Path, Path]] = []
-        self._stereo_current_index = -1
-        self._stereo_left_frame: np.ndarray | None = None
-        self._stereo_right_frame: np.ndarray | None = None
-        self._stereo_calibration_path: Path | None = None
-        self._stereo_calibration_artifact: dict | None = None
-        self._stereo_rectification_maps = None
         self._last_dir = str(Path.cwd())
         self._last_image: np.ndarray | None = None
         self._last_source_text = ""
@@ -345,8 +325,6 @@ class CrabDetectionWindow(QMainWindow):
 
         if image_paths:
             self.set_media_paths(image_paths)
-        if stereo_calibration_path:
-            self.load_stereo_calibration(Path(stereo_calibration_path))
 
     def _build_ui(self) -> None:
         self.open_images_btn = QPushButton("Open Photo(s)")
@@ -357,9 +335,6 @@ class CrabDetectionWindow(QMainWindow):
 
         self.open_video_btn = QPushButton("Open Video")
         self.open_video_btn.clicked.connect(self._open_video)
-
-        self.open_stereo_btn = QPushButton("Open Stereo")
-        self.open_stereo_btn.clicked.connect(self._open_stereo_session)
 
         self.previous_btn = QPushButton("Previous")
         self.previous_btn.clicked.connect(self._show_previous_image)
@@ -384,7 +359,6 @@ class CrabDetectionWindow(QMainWindow):
         controls.addWidget(self.open_images_btn)
         controls.addWidget(self.open_folder_btn)
         controls.addWidget(self.open_video_btn)
-        controls.addWidget(self.open_stereo_btn)
         controls.addSpacing(12)
         controls.addWidget(self.previous_btn)
         controls.addWidget(self.next_btn)
@@ -461,39 +435,6 @@ class CrabDetectionWindow(QMainWindow):
         video_range_row.addStretch(1)
         video_controls.addWidget(horizontal_scroll_area(video_range_row))
 
-        self.stereo_controls_container = QWidget(self)
-        self.stereo_controls_container.setObjectName("crabVideoControls")
-        self.stereo_previous_pair_btn = QPushButton("Prev Pair")
-        self.stereo_previous_pair_btn.clicked.connect(self._show_previous_stereo_pair)
-        self.stereo_next_pair_btn = QPushButton("Next Pair")
-        self.stereo_next_pair_btn.clicked.connect(self._show_next_stereo_pair)
-        self.stereo_run_pair_btn = QPushButton("Run Stereo Pair")
-        self.stereo_run_pair_btn.clicked.connect(self._run_stereo_pair_detection)
-        self.stereo_scan_session_btn = QPushButton("Scan Stereo")
-        self.stereo_scan_session_btn.clicked.connect(self._run_stereo_session_scan)
-        self.stereo_open_calibration_btn = QPushButton("Open Calibration")
-        self.stereo_open_calibration_btn.clicked.connect(self._open_stereo_calibration)
-        self.stereo_pair_label = QLabel("No stereo session loaded")
-        self.stereo_pair_label.setObjectName("summaryHint")
-        self.stereo_pair_label.setMinimumWidth(220)
-        self.stereo_calibration_label = QLabel("No calibration")
-        self.stereo_calibration_label.setObjectName("summaryHint")
-        self.stereo_calibration_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-
-        stereo_controls = QVBoxLayout(self.stereo_controls_container)
-        stereo_controls.setContentsMargins(0, 0, 0, 0)
-        stereo_controls.setSpacing(4)
-        stereo_pair_row = QHBoxLayout()
-        stereo_pair_row.addWidget(self.stereo_previous_pair_btn)
-        stereo_pair_row.addWidget(self.stereo_next_pair_btn)
-        stereo_pair_row.addWidget(self.stereo_run_pair_btn)
-        stereo_pair_row.addWidget(self.stereo_scan_session_btn)
-        stereo_pair_row.addWidget(self.stereo_pair_label)
-        stereo_pair_row.addSpacing(8)
-        stereo_pair_row.addWidget(self.stereo_open_calibration_btn)
-        stereo_pair_row.addWidget(self.stereo_calibration_label, 1)
-        stereo_controls.addWidget(horizontal_scroll_area(stereo_pair_row))
-
         self.result_view = CrabDetectionResultView(self)
 
         container = QWidget(self)
@@ -501,13 +442,11 @@ class CrabDetectionWindow(QMainWindow):
         layout.addWidget(horizontal_scroll_area(controls))
         layout.addWidget(self.path_label)
         layout.addWidget(self.video_controls_container)
-        layout.addWidget(self.stereo_controls_container)
         layout.addWidget(self.result_view, 1)
         self.setCentralWidget(container)
 
         self.video_controls_container.hide()
-        self.stereo_controls_container.hide()
-        self.statusBar().showMessage("Open an image, folder, video, or stereo session to start crab detection.")
+        self.statusBar().showMessage("Open an image, folder, or video to start crab detection.")
         self._refresh_navigation_buttons()
 
     @staticmethod
@@ -529,9 +468,6 @@ class CrabDetectionWindow(QMainWindow):
 
     def set_media_paths(self, paths: list[str | Path]) -> None:
         existing_paths = [Path(path).expanduser() for path in paths if Path(path).expanduser().exists()]
-        if len(existing_paths) == 1 and is_supported_stereo_session_path(existing_paths[0]):
-            self.set_stereo_session_path(existing_paths[0])
-            return
         if len(existing_paths) == 1 and is_supported_video_path(existing_paths[0]):
             self.set_video_path(existing_paths[0])
             return
@@ -539,13 +475,11 @@ class CrabDetectionWindow(QMainWindow):
 
     def set_image_paths(self, image_paths: list[str | Path], start_index: int = 0) -> None:
         self._close_video()
-        self._clear_stereo_session()
         resolved_paths = collect_image_paths(image_paths)
         if not resolved_paths:
             self._image_paths = []
             self._current_index = -1
             self.video_controls_container.hide()
-            self.stereo_controls_container.hide()
             self._show_error_state(
                 "No supported images were found.",
                 detail_text="Choose image files directly or point the debugger at a folder with images.",
@@ -556,18 +490,15 @@ class CrabDetectionWindow(QMainWindow):
         self._current_index = max(0, min(int(start_index), len(self._image_paths) - 1))
         self._last_dir = str(self._image_paths[self._current_index].parent)
         self.video_controls_container.hide()
-        self.stereo_controls_container.hide()
         self._refresh_navigation_buttons()
         self._load_current_path()
 
     def load_frame(self, frame_bgr: np.ndarray, *, source_label: str = "Live frame") -> str:
         self._close_video()
-        self._clear_stereo_session()
         self._image_paths = []
         self._current_index = -1
         self._manual_board_polygon = None
         self.video_controls_container.hide()
-        self.stereo_controls_container.hide()
         self._refresh_navigation_buttons()
         self._run_detection(frame_bgr.copy(), source_text=source_label)
         return self.current_summary_text
@@ -583,14 +514,6 @@ class CrabDetectionWindow(QMainWindow):
         self._video_current_frame_index = 0
         self._video_current_frame = None
 
-    def _clear_stereo_session(self) -> None:
-        self._stereo_manifest = {}
-        self._stereo_manifest_paths = []
-        self._stereo_image_pairs = []
-        self._stereo_current_index = -1
-        self._stereo_left_frame = None
-        self._stereo_right_frame = None
-
     def set_video_path(self, video_path: str | Path) -> None:
         path = Path(video_path).expanduser()
         if not is_supported_video_path(path):
@@ -602,7 +525,6 @@ class CrabDetectionWindow(QMainWindow):
             return
 
         self._close_video()
-        self._clear_stereo_session()
         capture = cv2.VideoCapture(str(path))
         if not capture.isOpened():
             self._show_error_state(
@@ -628,7 +550,6 @@ class CrabDetectionWindow(QMainWindow):
         )
         self._last_dir = str(self._video_path.parent)
         self.video_controls_container.show()
-        self.stereo_controls_container.hide()
         self._configure_video_controls()
         self._show_video_frame(0)
         self.statusBar().showMessage("Video loaded. Choose a frame or scan a range.", 5000)
@@ -894,343 +815,6 @@ class CrabDetectionWindow(QMainWindow):
             detail_prefix=scan_detail,
         )
 
-    def set_stereo_session_path(self, session_path: str | Path) -> None:
-        path = Path(session_path).expanduser()
-        if not is_supported_stereo_session_path(path):
-            self._show_error_state(
-                "That path is not a TritonPilot stereo session.",
-                source_text=str(path),
-                detail_text="Choose a stereo session folder or its manifest.json file.",
-            )
-            return
-
-        self._close_video()
-        self._clear_stereo_session()
-        try:
-            manifest, image_pairs = load_manifest_collection([path])
-        except Exception as exc:
-            self._show_error_state(
-                "Could not load the stereo session.",
-                source_text=str(path),
-                detail_text=str(exc),
-            )
-            return
-
-        if not image_pairs:
-            self._show_error_state(
-                "The stereo session has no image pairs.",
-                source_text=str(path),
-                detail_text="The manifest loaded, but no left/right frame paths were found.",
-            )
-            return
-
-        self._image_paths = []
-        self._current_index = -1
-        self._manual_board_polygon = None
-        self._stereo_manifest = manifest
-        self._stereo_image_pairs = image_pairs
-        self._stereo_manifest_paths = [Path(source["path"]) for source in manifest.get("sources", [])]
-        session_root = self._stereo_manifest_paths[0].parent if self._stereo_manifest_paths else path
-        self._last_dir = str(session_root if session_root.is_dir() else session_root.parent)
-        self.video_controls_container.hide()
-        self.stereo_controls_container.show()
-        self._refresh_stereo_calibration_label()
-
-        default_calibration = self._default_stereo_calibration_path()
-        if default_calibration and default_calibration.exists() and self._stereo_calibration_artifact is None:
-            self.load_stereo_calibration(default_calibration, refresh_pair=False)
-
-        self._show_stereo_pair(0)
-        self.statusBar().showMessage(f"Loaded {len(self._stereo_image_pairs)} stereo pair(s).", 5000)
-
-    def load_stereo_calibration(self, calibration_path: str | Path, *, refresh_pair: bool = True) -> None:
-        path = Path(calibration_path).expanduser()
-        try:
-            artifact = load_depth_calibration(path)
-            rectification_maps = rectification_maps_from_artifact(artifact)
-        except Exception as exc:
-            self._stereo_calibration_path = None
-            self._stereo_calibration_artifact = None
-            self._stereo_rectification_maps = None
-            self._refresh_stereo_calibration_label()
-            self._show_error_state(
-                "Could not load stereo calibration.",
-                source_text=str(path),
-                detail_text=str(exc),
-            )
-            return
-
-        self._stereo_calibration_path = path.resolve()
-        self._stereo_calibration_artifact = artifact
-        self._stereo_rectification_maps = rectification_maps
-        self._refresh_stereo_calibration_label()
-        if refresh_pair and self._stereo_image_pairs and self._stereo_current_index >= 0:
-            self._show_stereo_pair(self._stereo_current_index, preserve_manual=True)
-        self.statusBar().showMessage(f"Loaded stereo calibration: {path}", 5000)
-
-    def _default_stereo_calibration_path(self) -> Path | None:
-        if not self._stereo_manifest_paths:
-            return None
-        return self._stereo_manifest_paths[0].parent / "stereo_calibration.json"
-
-    def _refresh_stereo_calibration_label(self) -> None:
-        if not hasattr(self, "stereo_calibration_label"):
-            return
-        if self._stereo_calibration_path is None:
-            self.stereo_calibration_label.setText("No calibration")
-            return
-        self.stereo_calibration_label.setText(str(self._stereo_calibration_path))
-
-    def _format_stereo_source_text(self, pair_index: int) -> str:
-        session_name = str(self._stereo_manifest.get("session_name") or "")
-        if not session_name and self._stereo_manifest_paths:
-            session_name = self._stereo_manifest_paths[0].parent.name
-        if not session_name:
-            session_name = "Stereo session"
-        total_pairs = max(1, len(self._stereo_image_pairs))
-        return f"{session_name} | pair {pair_index + 1}/{total_pairs}"
-
-    def _stereo_pair_detail_text(self, pair_index: int) -> str:
-        frames = self._stereo_manifest.get("frames") or []
-        frame = frames[pair_index] if 0 <= pair_index < len(frames) else {}
-        details = [
-            f"pair_delta={float(frame.get('pair_delta_ms', 0.0)):.1f}ms",
-            f"calibration={self._stereo_calibration_path or '-'}",
-        ]
-        return " | ".join(details)
-
-    def _show_stereo_pair(self, pair_index: int, *, preserve_manual: bool = False) -> None:
-        if pair_index < 0 or pair_index >= len(self._stereo_image_pairs):
-            return
-        if not preserve_manual:
-            self._manual_board_polygon = None
-
-        left_path, right_path = self._stereo_image_pairs[pair_index]
-        left_image = cv2.imread(str(left_path), cv2.IMREAD_COLOR)
-        right_image = cv2.imread(str(right_path), cv2.IMREAD_COLOR)
-        if left_image is None or right_image is None:
-            self._show_error_state(
-                "One or both stereo images could not be read.",
-                source_text=self._format_stereo_source_text(pair_index),
-                detail_text=f"left={left_path} | right={right_path}",
-            )
-            return
-
-        self._stereo_current_index = int(pair_index)
-        self._stereo_left_frame = left_image.copy()
-        self._stereo_right_frame = right_image.copy()
-        source_text = self._format_stereo_source_text(pair_index)
-        detail_text = self._stereo_pair_detail_text(pair_index)
-
-        left_view = left_image
-        right_view = right_image
-        if self._stereo_rectification_maps is not None:
-            try:
-                left_view, right_view = rectify_stereo_images(
-                    left_image,
-                    right_image,
-                    self._stereo_rectification_maps,
-                )
-            except Exception as exc:
-                self._show_error_state(
-                    "Stereo rectification failed.",
-                    source_text=source_text,
-                    detail_text=str(exc),
-                )
-                return
-
-        self._last_image = left_view.copy()
-        self._last_source_text = source_text
-        self.path_label.setText(str(self._stereo_manifest_paths[0].parent if self._stereo_manifest_paths else ""))
-        self.stereo_pair_label.setText(f"Pair {pair_index + 1}/{len(self._stereo_image_pairs)}")
-        self.current_summary_text = "Selected stereo pair is ready to analyze."
-        self.result_view.set_panel_titles("Stereo Left", "Stereo Right")
-        self.result_view.set_result(
-            self.current_summary_text,
-            left_view,
-            right_view,
-            source_text=source_text,
-            detail_text=detail_text,
-        )
-        self._refresh_navigation_buttons()
-        self._update_window_title(source_text)
-
-    def _show_previous_stereo_pair(self) -> None:
-        self._show_stereo_pair(max(0, self._stereo_current_index - 1))
-
-    def _show_next_stereo_pair(self) -> None:
-        next_index = min(len(self._stereo_image_pairs) - 1, self._stereo_current_index + 1)
-        self._show_stereo_pair(next_index)
-
-    def _run_stereo_pair_detection(self) -> None:
-        if self._stereo_current_index < 0 or not self._stereo_image_pairs:
-            self.statusBar().showMessage("Open a stereo session and select a pair first.", 3000)
-            return
-        left_path, right_path = self._stereo_image_pairs[self._stereo_current_index]
-        left_image = cv2.imread(str(left_path), cv2.IMREAD_COLOR)
-        right_image = cv2.imread(str(right_path), cv2.IMREAD_COLOR)
-        if left_image is None or right_image is None:
-            self.statusBar().showMessage("Could not read the selected stereo pair.", 4000)
-            return
-
-        self.statusBar().showMessage("Running stereo crab analysis...")
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            result = analyze_stereo_crab_pair(
-                left_image,
-                right_image,
-                self._stereo_calibration_artifact,
-                rectification_maps=self._stereo_rectification_maps,
-                force_square=self._force_square,
-                unwrap_size=self._unwrap_size,
-                board_polygon=self._manual_board_polygon,
-            )
-        finally:
-            QApplication.restoreOverrideCursor()
-
-        source_text = self._format_stereo_source_text(self._stereo_current_index)
-        detail_text = self._stereo_pair_detail_text(self._stereo_current_index)
-        valid_depth = result.get("valid_depth")
-        if valid_depth is not None:
-            coverage = int(np.count_nonzero(valid_depth)) / max(1, int(valid_depth.size))
-            detail_text = f"{detail_text} | valid_depth={coverage:.0%}"
-
-        detection_result = result.get("detection_result")
-        if detection_result is None:
-            self.current_summary_text = "Could not identify crabs in that stereo pair."
-            secondary = result.get("annotated_depth")
-            if secondary is None:
-                secondary = result.get("depth_preview")
-            if secondary is None:
-                secondary = result.get("right_rectified")
-            self.result_view.set_panel_titles("Stereo Left", "Depth Map" if result.get("depth_preview") is not None else "Stereo Right")
-            self.result_view.set_result(
-                self.current_summary_text,
-                result.get("left_rectified"),
-                secondary,
-                source_text=source_text,
-                detail_text=detail_text,
-                tone="warn",
-            )
-            self.statusBar().showMessage(self.current_summary_text, 5000)
-            self._refresh_navigation_buttons()
-            return
-
-        self._last_image = result["left_rectified"].copy()
-        self._last_source_text = source_text
-        self.current_summary_text = competition_summary_text(detection_result)
-        stereo_summary = stereo_depth_summary_text(detection_result)
-        detail_text = f"{detail_text} | {self._build_detail_text(detection_result)} | {stereo_summary}"
-        secondary = result.get("annotated_depth")
-        if secondary is None:
-            secondary = draw_competition_green_crab_detections(detection_result)
-        self.result_view.set_panel_titles(
-            "Stereo Left With Boxes",
-            "Depth Map" if result.get("annotated_depth") is not None else "Competition Display",
-        )
-        self.result_view.set_result(
-            self.current_summary_text,
-            result.get("annotated_left"),
-            secondary,
-            source_text=source_text,
-            detail_text=detail_text,
-        )
-        self._refresh_navigation_buttons()
-        self.statusBar().showMessage(f"{self.current_summary_text} | {stereo_summary}", 8000)
-        self._update_window_title(source_text)
-
-    def _run_stereo_session_scan(self) -> None:
-        if not self._stereo_image_pairs:
-            self.statusBar().showMessage("Open a stereo session before scanning.", 3000)
-            return
-
-        pair_count = len(self._stereo_image_pairs)
-        stride = max(1, pair_count // 40)
-        sample_indices = list(range(0, pair_count, stride))
-        if pair_count - 1 not in sample_indices:
-            sample_indices.append(pair_count - 1)
-        if 0 <= self._stereo_current_index < pair_count and self._stereo_current_index not in sample_indices:
-            sample_indices.append(self._stereo_current_index)
-        sample_indices = sorted(set(sample_indices))
-
-        self.statusBar().showMessage(f"Scanning {len(sample_indices)} stereo pair(s)...")
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        best: tuple[tuple, int, dict] | None = None
-        try:
-            for pair_index in sample_indices:
-                left_path, right_path = self._stereo_image_pairs[pair_index]
-                left_image = cv2.imread(str(left_path), cv2.IMREAD_COLOR)
-                right_image = cv2.imread(str(right_path), cv2.IMREAD_COLOR)
-                if left_image is None or right_image is None:
-                    continue
-                result = analyze_stereo_crab_pair(
-                    left_image,
-                    right_image,
-                    self._stereo_calibration_artifact,
-                    rectification_maps=self._stereo_rectification_maps,
-                    force_square=self._force_square,
-                    unwrap_size=self._unwrap_size,
-                    compute_depth=False,
-                )
-                detection_result = result.get("detection_result")
-                if detection_result is None:
-                    continue
-                quality = result.get("quality") or {}
-                species_counts = detection_result.get("species_counts") or {}
-                score = (
-                    int(detection_result.get("count", 0)),
-                    int(sum(int(species_counts.get(label, 0)) for label in ("european_green", "jonah", "native_rock"))),
-                    float(quality.get("quality", 0.0)),
-                    float(quality.get("confidence", 0.0)),
-                )
-                if best is None or score > best[0]:
-                    best = (score, pair_index, result)
-        finally:
-            QApplication.restoreOverrideCursor()
-
-        if best is None:
-            self.current_summary_text = "No reliable crab result was found in the sampled stereo pairs."
-            self.result_view.set_result(
-                self.current_summary_text,
-                self._last_image,
-                None,
-                source_text=str(self._stereo_manifest_paths[0].parent if self._stereo_manifest_paths else ""),
-                detail_text=f"sampled={len(sample_indices)} | stride={stride}",
-                tone="warn",
-            )
-            self.statusBar().showMessage(self.current_summary_text, 5000)
-            return
-
-        _score, pair_index, _result = best
-        self._show_stereo_pair(pair_index)
-        self._run_stereo_pair_detection()
-        self.statusBar().showMessage(
-            f"Best stereo pair {pair_index + 1}/{pair_count} from {len(sample_indices)} sampled pair(s).",
-            8000,
-        )
-
-    def _open_stereo_session(self) -> None:
-        selected_dir = QFileDialog.getExistingDirectory(
-            self,
-            "Open TritonPilot stereo session",
-            self._last_dir,
-        )
-        if not selected_dir:
-            return
-        self.set_stereo_session_path(Path(selected_dir))
-
-    def _open_stereo_calibration(self) -> None:
-        start_dir = self._stereo_manifest_paths[0].parent if self._stereo_manifest_paths else Path(self._last_dir)
-        selected_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Open stereo calibration",
-            str(start_dir),
-            "Calibration JSON (*.json);;All files (*)",
-        )
-        if not selected_path:
-            return
-        self.load_stereo_calibration(Path(selected_path))
-
     def _open_images(self) -> None:
         selected_paths, _ = QFileDialog.getOpenFileNames(
             self,
@@ -1284,9 +868,6 @@ class CrabDetectionWindow(QMainWindow):
         self._load_current_path()
 
     def _reload_current_source(self) -> None:
-        if self._stereo_image_pairs and self._stereo_current_index >= 0:
-            self._show_stereo_pair(self._stereo_current_index, preserve_manual=True)
-            return
         if self._current_index >= 0 and self._image_paths:
             self._load_current_path(preserve_manual=True)
             return
@@ -1297,9 +878,6 @@ class CrabDetectionWindow(QMainWindow):
 
     def _toggle_force_square(self, checked: bool) -> None:
         self._force_square = bool(checked)
-        if self._stereo_image_pairs and self._stereo_current_index >= 0:
-            self._show_stereo_pair(self._stereo_current_index, preserve_manual=True)
-            return
         if self._current_index >= 0 and self._image_paths:
             self._load_current_path(preserve_manual=True)
             return
@@ -1435,14 +1013,12 @@ class CrabDetectionWindow(QMainWindow):
         self._last_image = None
         self._last_source_text = ""
         self._manual_board_polygon = None
-        self.video_controls_container.hide()
-        self.stereo_controls_container.hide()
         self.result_view.set_panel_titles(
             "Original View",
             "Competition Display",
         )
         self.result_view.set_result(
-            "Open an image, folder, video, or stereo session to start crab detection.",
+            "Open an image, folder, or video to start crab detection.",
             None,
             None,
             detail_text="For video, select a frame manually or scan a time range for the best frame.",
@@ -1487,9 +1063,6 @@ class CrabDetectionWindow(QMainWindow):
             return
 
         self._manual_board_polygon = polygon
-        if self._stereo_image_pairs and self._stereo_current_index >= 0:
-            self._run_stereo_pair_detection()
-            return
         self._run_detection(
             self._last_image.copy(),
             source_text=self._last_source_text or "Live frame",
@@ -1499,9 +1072,6 @@ class CrabDetectionWindow(QMainWindow):
         if self._manual_board_polygon is None:
             return
         self._manual_board_polygon = None
-        if self._stereo_image_pairs and self._stereo_current_index >= 0:
-            self._show_stereo_pair(self._stereo_current_index)
-            return
         if self._last_image is not None:
             self._run_detection(
                 self._last_image.copy(),
@@ -1517,10 +1087,9 @@ class CrabDetectionWindow(QMainWindow):
     def _refresh_navigation_buttons(self) -> None:
         has_images = bool(self._image_paths)
         has_video = self._video_capture is not None and self._video_path is not None
-        has_stereo = bool(self._stereo_image_pairs)
         self.previous_btn.setEnabled(has_images and self._current_index > 0)
         self.next_btn.setEnabled(has_images and self._current_index < len(self._image_paths) - 1)
-        self.reload_btn.setEnabled(has_images or has_stereo or self._last_image is not None)
+        self.reload_btn.setEnabled(has_images or self._last_image is not None)
         self.manual_plane_btn.setEnabled(self._last_image is not None)
         self.clear_manual_plane_btn.setEnabled(self._manual_board_polygon is not None)
         self.video_previous_frame_btn.setEnabled(has_video and self._video_current_frame_index > 0)
@@ -1538,11 +1107,4 @@ class CrabDetectionWindow(QMainWindow):
         self.video_interval_spin.setEnabled(has_video)
         self.video_use_start_btn.setEnabled(has_video)
         self.video_use_end_btn.setEnabled(has_video)
-        self.stereo_previous_pair_btn.setEnabled(has_stereo and self._stereo_current_index > 0)
-        self.stereo_next_pair_btn.setEnabled(
-            has_stereo and self._stereo_current_index < len(self._stereo_image_pairs) - 1
-        )
-        self.stereo_run_pair_btn.setEnabled(has_stereo)
-        self.stereo_scan_session_btn.setEnabled(has_stereo)
-        self.stereo_open_calibration_btn.setEnabled(has_stereo or self._stereo_calibration_path is not None)
         self._validate_video_range()

@@ -13,6 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from analysis_workspace import workspace_paths  # noqa: E402
 from crab_detector_cv import (  # noqa: E402
     detect_crabs_in_video,
     detection_summary_text,
@@ -43,7 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=REPO_ROOT / "results" / "crab_video_detection",
+        default=workspace_paths().crab_results,
         help="Directory for annotated output images and CSV summary.",
     )
     return parser

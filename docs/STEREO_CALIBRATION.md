@@ -95,8 +95,8 @@ field of view makes full checkerboard detection unreliable.
 
 ## Output Artifact
 
-The default output is `stereo_calibration.json` next to the manifest, or next
-to the first selected source when several manifests are loaded. It stores:
+The default GUI output is under `Workspace/calibrations`, named from the stereo
+session when possible. It stores:
 
 - Left and right intrinsic matrices and distortion coefficients.
 - Stereo rotation and translation.
@@ -117,7 +117,8 @@ python -m main_stereo_iceberg_measurement path\to\manifest.json
 ```
 
 If `stereo_calibration.json` lives next to the manifest, the depth applet loads
-it automatically. Otherwise pass it explicitly with `--calibration`.
+it automatically. Otherwise pass the workspace artifact explicitly with
+`--calibration`.
 For pool-scale work, keep the maximum depth cap and left/right consistency
 check enabled in the depth applet; they prevent low-texture, near-zero-disparity
 speckles from turning into hundreds-of-meters depth samples. For PVC endpoints,
