@@ -41,14 +41,14 @@ competition runs, and generated result folders should remain outside git.
 
 ## Workspace Layout
 
-TritonAnalysis uses one machine-specific workspace root with stable folders
-under it. The absolute root can differ on every laptop, but the structure below
-it should stay the same.
+TritonAnalysis uses one workspace root with stable folders under it. The
+absolute root can differ on every laptop, but the structure below it should
+stay the same.
 
 Default root:
 
 ```text
-%USERPROFILE%\Documents\TritonAnalysisWorkspace
+<TritonAnalysis repo>\Workspace
 ```
 
 Override it before launch when needed:
@@ -60,7 +60,7 @@ $env:TRITON_ANALYSIS_WORKSPACE="D:\TritonAnalysisWorkspace"
 Recommended structure:
 
 ```text
-TritonAnalysisWorkspace/
+Workspace/
   incoming/
     pilot/                auto-synced TritonPilot recordings
     usb/                  manual USB-drive drops, if used
@@ -171,7 +171,7 @@ so a teammate can reproduce or explain the answer later.
 
 ## Results From `tools.crab_video_detect`
 
-The batch crab-video helper writes to
+The batch crab-video helper writes to a new timestamped folder under
 `Workspace/results/crab_detection` by default unless `--output-dir` is
 provided. Its typical outputs are:
 

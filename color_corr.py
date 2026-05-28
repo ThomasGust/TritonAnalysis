@@ -54,7 +54,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from analysis_workspace import workspace_paths
+from analysis_workspace import fresh_output_subdir, workspace_paths
 from gui.responsive import horizontal_scroll_area, resize_to_available_screen, vertical_scroll_area
 
 
@@ -1192,10 +1192,11 @@ class MainWindow(QMainWindow):
         )
 
     def open_video(self):
+        workspace = workspace_paths(create=True)
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Open underwater video",
-            "",
+            str(workspace.pilot_incoming),
             "Video Files (*.mp4 *.mov *.avi *.mkv *.m4v);;All Files (*)",
         )
         if not path:
@@ -1327,8 +1328,10 @@ class MainWindow(QMainWindow):
         if not self.video_path:
             return
 
-        output_root = workspace_paths(create=True).color_correction_results
-        suggested = output_root / f"{Path(self.video_path).stem}_corrected_pvc_red.mp4"
+        video_base = Path(self.video_path).stem
+        output_root = fresh_output_subdir(workspace_paths(create=True).color_correction_results, video_base)
+        output_root.mkdir(parents=True, exist_ok=True)
+        suggested = output_root / f"{video_base}_corrected_pvc_red.mp4"
         output_path, _ = QFileDialog.getSaveFileName(
             self,
             "Export corrected video",
@@ -1367,7 +1370,7 @@ class MainWindow(QMainWindow):
             return
 
         video_base = Path(self.video_path).stem
-        output_dir = self.unique_output_dir(Path(parent) / f"{video_base}_frames_0p1s")
+        output_dir = self.unique_output_dir(fresh_output_subdir(parent, f"{video_base}_frames_0p1s"))
         frame_settings = self.frame_selection_settings()
 
         self.export_button.setEnabled(False)
@@ -1414,7 +1417,7 @@ class MainWindow(QMainWindow):
             return
 
         video_base = Path(self.video_path).stem
-        output_dir = self.unique_output_dir(Path(parent) / f"{video_base}_selected_frames")
+        output_dir = self.unique_output_dir(fresh_output_subdir(parent, f"{video_base}_selected_frames"))
 
         self.export_button.setEnabled(False)
         self.export_fixed_frames_button.setEnabled(False)

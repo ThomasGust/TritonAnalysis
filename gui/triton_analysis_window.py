@@ -10,7 +10,7 @@ from PyQt6.QtCore import QSettings, Qt, QThread, QTimer, QUrl
 from PyQt6.QtGui import QAction, QDesktopServices
 from PyQt6.QtWidgets import QFileDialog, QInputDialog, QLabel, QMainWindow, QTabWidget
 
-from analysis_workspace import AnalysisWorkspace, workspace_paths
+from analysis_workspace import AnalysisWorkspace, set_active_workspace_root, workspace_paths
 from crab_detector_cv import DEFAULT_UNWRAP_SIZE
 from gui.crab_detection_window import CrabDetectionWindow
 from gui.edna_analysis_window import EDNAAnalysisWindow
@@ -23,6 +23,27 @@ from gui.responsive import resize_to_available_screen
 from gui.stereo_calibration_window import StereoCalibrationWindow
 from gui.stereo_iceberg_measurement_window import StereoIcebergMeasurementWindow
 from pilot_transfer import DEFAULT_PILOT_TRANSFER_URL
+
+
+_TRANSIENT_WORKSPACE_PARTS = {".pytest-work", ".pytest-tmp"}
+_TRANSIENT_WORKSPACE_PREFIXES = ("pytest-", "pytest-of-")
+
+
+def _looks_like_transient_workspace(path: str | Path) -> bool:
+    """Return whether a saved workspace points at a test temp directory."""
+    if not path:
+        return False
+    try:
+        parts = Path(path).expanduser().parts
+    except (OSError, RuntimeError, ValueError):
+        return False
+    for part in parts:
+        lowered = part.lower()
+        if lowered in _TRANSIENT_WORKSPACE_PARTS:
+            return True
+        if any(lowered.startswith(prefix) for prefix in _TRANSIENT_WORKSPACE_PREFIXES):
+            return True
+    return False
 
 
 class TritonAnalysisWindow(QMainWindow):
@@ -61,8 +82,14 @@ class TritonAnalysisWindow(QMainWindow):
         self._windows: dict[str, QMainWindow] = {}
         self._settings = QSettings("TritonAnalysis", "UnifiedApp")
         stored_workspace = str(self._settings.value("workspace/root", "") or "").strip()
+        if _looks_like_transient_workspace(stored_workspace):
+            stored_workspace = ""
         env_workspace = os.environ.get("TRITON_ANALYSIS_WORKSPACE", "").strip()
-        self._workspace: AnalysisWorkspace = workspace_paths(workspace_root or env_workspace or stored_workspace or None)
+        self._workspace: AnalysisWorkspace = workspace_paths(
+            workspace_root or env_workspace or stored_workspace or None,
+            create=True,
+        )
+        set_active_workspace_root(self._workspace.root)
         self._pilot_sync_url = str(
             pilot_transfer_url
             or self._settings.value("pilot_transfer/base_url", DEFAULT_PILOT_TRANSFER_URL)
@@ -71,6 +98,8 @@ class TritonAnalysisWindow(QMainWindow):
         env_sync_output = os.environ.get("TRITON_ANALYSIS_INBOX", "").strip()
         default_sync_output = env_sync_output or str(self._workspace.pilot_incoming)
         stored_sync_output = str(self._settings.value("pilot_transfer/output", "") or "").strip()
+        if _looks_like_transient_workspace(stored_sync_output):
+            stored_sync_output = ""
         if pilot_transfer_output:
             sync_output = pilot_transfer_output
         elif env_sync_output:
@@ -288,6 +317,7 @@ class TritonAnalysisWindow(QMainWindow):
 
     def _set_workspace_root(self, root: str | Path) -> None:
         self._workspace = workspace_paths(root, create=True)
+        set_active_workspace_root(self._workspace.root)
         self._settings.setValue("workspace/root", str(self._workspace.root))
         self._pilot_sync_output = self._workspace.pilot_incoming
         self._settings.setValue("pilot_transfer/output", str(self._pilot_sync_output))

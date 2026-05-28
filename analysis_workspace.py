@@ -4,20 +4,30 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 
 ENV_WORKSPACE_ROOT = "TRITON_ANALYSIS_WORKSPACE"
-DEFAULT_WORKSPACE_NAME = "TritonAnalysisWorkspace"
+DEFAULT_WORKSPACE_NAME = "Workspace"
+REPO_ROOT = Path(__file__).resolve().parent
+_ACTIVE_WORKSPACE_ROOT: Path | None = None
+
+
+def set_active_workspace_root(root: str | Path | None) -> None:
+    """Set the process-local workspace root used by applets."""
+    global _ACTIVE_WORKSPACE_ROOT
+    _ACTIVE_WORKSPACE_ROOT = Path(root).expanduser() if root else None
 
 
 def default_workspace_root() -> Path:
-    """Return the per-machine workspace root without creating it."""
+    """Return the default workspace root without creating it."""
     env_root = os.environ.get(ENV_WORKSPACE_ROOT, "").strip()
     if env_root:
         return Path(env_root).expanduser()
-    documents = Path.home() / "Documents"
-    return documents / DEFAULT_WORKSPACE_NAME
+    if _ACTIVE_WORKSPACE_ROOT is not None:
+        return _ACTIVE_WORKSPACE_ROOT
+    return REPO_ROOT / DEFAULT_WORKSPACE_NAME
 
 
 @dataclass(frozen=True)
@@ -80,6 +90,10 @@ class AnalysisWorkspace:
             self.pilot_incoming,
             self.sources,
             self.results,
+            self.realityscan_results,
+            self.crab_results,
+            self.coral_results,
+            self.color_correction_results,
             self.reports,
             self.exports,
             self.calibrations,
@@ -102,6 +116,43 @@ def workspace_paths(root: str | Path | None = None, *, create: bool = False) -> 
     """Build workspace folder paths for *root* or the configured default."""
     workspace = AnalysisWorkspace(Path(root).expanduser() if root else default_workspace_root())
     return workspace.ensure() if create else workspace
+
+
+def safe_output_slug(text: str, *, fallback: str = "run") -> str:
+    """Return a filesystem-friendly slug for generated output folders."""
+    chars: list[str] = []
+    for char in str(text or ""):
+        if char.isalnum() or char in ("-", "_"):
+            chars.append(char)
+        else:
+            chars.append("_")
+    slug = "".join(chars).strip("_")
+    return slug or fallback
+
+
+def fresh_output_subdir(
+    parent: str | Path,
+    label: str,
+    *,
+    create: bool = False,
+    when: datetime | None = None,
+) -> Path:
+    """Return a timestamped subfolder that does not already contain outputs."""
+    root = Path(parent).expanduser()
+    stamp = (when or datetime.now()).strftime("%Y%m%d_%H%M%S")
+    stem = f"{safe_output_slug(label)}_{stamp}"
+    candidate = root / stem
+    if not candidate.exists():
+        if create:
+            candidate.mkdir(parents=True, exist_ok=False)
+        return candidate
+    for suffix in range(2, 1000):
+        candidate = root / f"{stem}_{suffix:02d}"
+        if not candidate.exists():
+            if create:
+                candidate.mkdir(parents=True, exist_ok=False)
+            return candidate
+    raise RuntimeError(f"Could not find an unused output folder under {root}")
 
 
 def workspace_label(path: str | Path, root: str | Path | None = None) -> str:

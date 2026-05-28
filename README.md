@@ -122,10 +122,10 @@ remain available as backups.
 The status bar includes automatic TritonPilot media sync status and the active
 destination folder.
 
-By default, synced media and generated outputs live under
-`%USERPROFILE%\Documents\TritonAnalysisWorkspace`. The `Workspace` menu can
-move that root on each computer while keeping subfolders like
-`incoming\pilot`, `results`, and `reports` consistent.
+By default, synced media and generated outputs live under `.\Workspace` inside
+this checkout. The `Workspace` menu can move that root on each computer while
+keeping subfolders like `incoming\pilot`, `results`, `reports`, and
+`calibrations` consistent.
 
 Crab competition analyzer:
 
@@ -210,7 +210,7 @@ python -m tools.crab_video_detect path\to\video.mp4
 Pilot media transfer helper:
 
 ```powershell
-python -m tools.pilot_transfer_sync http://10.77.0.1:8765 --output "$env:USERPROFILE\Documents\TritonAnalysisWorkspace\incoming\pilot"
+python -m tools.pilot_transfer_sync http://10.77.0.1:8765 --output ".\Workspace\incoming\pilot"
 ```
 
 ## Competition Workflow

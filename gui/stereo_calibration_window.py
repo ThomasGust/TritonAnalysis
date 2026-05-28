@@ -363,7 +363,7 @@ class StereoCalibrationWindow(QMainWindow):
         paths, _filter = QFileDialog.getOpenFileNames(
             self,
             "Open TritonPilot stereo manifest(s)",
-            str(Path.cwd()),
+            str(self._stereo_session_start()),
             "Stereo manifest (manifest.json);;JSON files (*.json);;All files (*)",
         )
         if paths:
@@ -373,7 +373,7 @@ class StereoCalibrationWindow(QMainWindow):
         path = QFileDialog.getExistingDirectory(
             self,
             "Open TritonPilot stereo session folder",
-            str(Path.cwd()),
+            str(self._stereo_session_start()),
         )
         if path:
             self.load_manifests([Path(path)])
@@ -397,6 +397,12 @@ class StereoCalibrationWindow(QMainWindow):
             return output_dir / f"{session_name}_stereo_calibration.json"
         return output_dir / "stereo_calibration.json"
 
+    @staticmethod
+    def _stereo_session_start() -> Path:
+        workspace = workspace_paths(create=True)
+        stereo_sessions = workspace.pilot_incoming / "stereo_sessions"
+        return stereo_sessions if stereo_sessions.exists() else workspace.pilot_incoming
+
     def load_manifest(self, path: Path) -> None:
         self.load_manifests([path])
 
@@ -407,7 +413,7 @@ class StereoCalibrationWindow(QMainWindow):
         if source_count == 1:
             self.manifest_edit.setText(str(self.manifest_paths[0]))
         else:
-            first_parent = self.manifest_paths[0].parent if self.manifest_paths else Path.cwd()
+            first_parent = self.manifest_paths[0].parent if self.manifest_paths else self._stereo_session_start()
             self.manifest_edit.setText(f"{source_count} manifests | {first_parent}")
         if not self.output_edit.text().strip():
             self.output_edit.setText(str(self._default_output_path()))

@@ -29,7 +29,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from analysis_workspace import workspace_paths
+from analysis_workspace import fresh_output_subdir, workspace_paths
 from edna_analysis import (
     DEFAULT_SPECIES,
     SAMPLE_COUNTS,
@@ -460,7 +460,7 @@ class EDNAAnalysisWindow(QMainWindow):
         self.statusBar().showMessage("eDNA judge report copied.", 4000)
 
     def _save_csv(self) -> None:
-        results_dir = workspace_paths(create=True).reports / "edna"
+        results_dir = fresh_output_subdir(workspace_paths(create=True).reports / "edna", "edna_frequency")
         try:
             results_dir.mkdir(parents=True, exist_ok=True)
         except OSError:

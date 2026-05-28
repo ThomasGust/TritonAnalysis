@@ -13,7 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from analysis_workspace import workspace_paths  # noqa: E402
+from analysis_workspace import fresh_output_subdir, workspace_paths  # noqa: E402
 from crab_detector_cv import (  # noqa: E402
     detect_crabs_in_video,
     detection_summary_text,
@@ -44,8 +44,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=workspace_paths().crab_results,
-        help="Directory for annotated output images and CSV summary.",
+        default=None,
+        help="Directory for annotated output images and CSV summary. Defaults to a new timestamped run folder.",
     )
     return parser
 
@@ -64,13 +64,14 @@ def main(argv: list[str] | None = None) -> int:
         print("No crabs were detected in the sampled video frames.")
         return 2
 
-    args.output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = args.output_dir or fresh_output_subdir(workspace_paths(create=True).crab_results, Path(args.video).stem)
+    output_dir.mkdir(parents=True, exist_ok=True)
     detection_result = result["detection_result"]
     annotated = draw_crab_detections(result["frame"], detection_result)
-    frame_path = args.output_dir / "best_frame.jpg"
-    annotated_path = args.output_dir / "best_annotated.jpg"
-    mask_path = args.output_dir / "best_mask.png"
-    summary_path = args.output_dir / "summary.csv"
+    frame_path = output_dir / "best_frame.jpg"
+    annotated_path = output_dir / "best_annotated.jpg"
+    mask_path = output_dir / "best_mask.png"
+    summary_path = output_dir / "summary.csv"
 
     cv2.imwrite(str(frame_path), result["frame"])
     cv2.imwrite(str(annotated_path), annotated)

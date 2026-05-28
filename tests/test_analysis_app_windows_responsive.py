@@ -7,10 +7,11 @@ import pytest
 
 pytest.importorskip("PyQt6")
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSettings, Qt
 from PyQt6.QtWidgets import QApplication, QScrollArea, QTabWidget
 
 from gui.style import apply_modern_style
+from analysis_workspace import set_active_workspace_root
 
 
 def _app() -> QApplication:
@@ -24,6 +25,26 @@ def _app() -> QApplication:
 @pytest.fixture(autouse=True)
 def _disable_auto_pilot_sync(monkeypatch):
     monkeypatch.setenv("TRITON_ANALYSIS_AUTO_SYNC", "0")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_unified_app_settings():
+    settings = QSettings("TritonAnalysis", "UnifiedApp")
+    snapshot = {key: settings.value(key) for key in settings.allKeys()}
+    settings.clear()
+    settings.sync()
+    del settings
+    set_active_workspace_root(None)
+    try:
+        yield
+    finally:
+        set_active_workspace_root(None)
+        settings = QSettings("TritonAnalysis", "UnifiedApp")
+        settings.clear()
+        for key, value in snapshot.items():
+            settings.setValue(key, value)
+        settings.sync()
+        del settings
 
 
 @pytest.mark.parametrize(
@@ -177,11 +198,40 @@ def test_unified_analysis_window_uses_workspace_relative_sync_label(tmp_path: Pa
         assert "Workspace" in label
         assert str(Path("Workspace") / "incoming" / "pilot") in label
         assert str(workspace) in window._pilot_sync_label.toolTip()
+        assert (workspace / "results").exists()
+        assert (workspace / "results" / "realityscan").exists()
+        assert (workspace / "reports").exists()
 
         new_workspace = tmp_path / "new-workspace"
         window._set_workspace_root(new_workspace)
         assert window._pilot_sync_output == new_workspace / "incoming" / "pilot"
         assert str(Path("Workspace") / "incoming" / "pilot") in window._pilot_sync_label.text()
+        assert (new_workspace / "results").exists()
+        assert (new_workspace / "calibrations").exists()
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_unified_analysis_window_ignores_pytest_saved_workspace(tmp_path: Path):
+    app = _app()
+    from analysis_workspace import REPO_ROOT
+    from gui.triton_analysis_window import TritonAnalysisWindow
+
+    stale_workspace = Path(".pytest-work") / "pytest-of-Thoma" / "pytest-1" / "test_case" / "workspace"
+    settings = QSettings("TritonAnalysis", "UnifiedApp")
+    settings.setValue("workspace/root", str(stale_workspace))
+    settings.setValue("pilot_transfer/output", str(stale_workspace / "incoming" / "pilot"))
+    settings.sync()
+
+    window = TritonAnalysisWindow(pilot_transfer_auto_sync=False)
+    try:
+        window.show()
+        app.processEvents()
+
+        assert window._workspace.root == REPO_ROOT / "Workspace"
+        assert window._pilot_sync_output == REPO_ROOT / "Workspace" / "incoming" / "pilot"
     finally:
         window.close()
         window.deleteLater()

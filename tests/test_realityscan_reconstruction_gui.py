@@ -76,6 +76,31 @@ def test_realityscan_gui_builds_stereo_pipeline_command(tmp_path: Path):
         app.processEvents()
 
 
+def test_realityscan_gui_blank_output_uses_fresh_subfolder(tmp_path: Path, monkeypatch):
+    app = _app()
+    session, calibration = _stereo_session(tmp_path)
+    monkeypatch.setenv("TRITON_ANALYSIS_WORKSPACE", str(tmp_path / "workspace"))
+
+    window = RealityScanReconstructionWindow()
+    try:
+        window.session_edit.setText(str(session))
+        window.calibration_edit.setText(str(calibration))
+
+        first = Path(window._output_workspace_for_command(preview=False))
+        first.mkdir(parents=True)
+        second = Path(window._output_workspace_for_command(preview=False))
+
+        assert first.parent == second.parent
+        assert first != second
+        assert first.name.startswith("session-a_")
+        assert second.name.startswith("session-a_")
+        assert "<new subfolder each run>" in window.command_preview_text()
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
 def test_realityscan_gui_alignment_only_enables_tournament(tmp_path: Path):
     app = _app()
     window = RealityScanReconstructionWindow()

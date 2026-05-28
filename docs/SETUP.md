@@ -95,11 +95,11 @@ crab sample and reference images. Larger videos used by some computer-vision
 tests are intentionally not required; those tests skip themselves when the
 recordings are absent.
 
-For competition use, create a local workspace folder outside the repo for
-incoming media, reports, and generated results:
+For competition use, TritonAnalysis creates a local ignored `Workspace` folder
+inside the repo for incoming media, reports, and generated results:
 
 ```powershell
-mkdir "$env:USERPROFILE\Documents\TritonAnalysisWorkspace"
+python -c "from analysis_workspace import workspace_paths; workspace_paths(create=True)"
 ```
 
 Keep original captures unchanged and write applet outputs to a separate results

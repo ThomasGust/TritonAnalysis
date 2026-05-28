@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from analysis_workspace import workspace_paths
+from analysis_workspace import fresh_output_subdir, workspace_paths
 from coral_garden_model import (
     DEFAULT_CORAL_GARDEN_WIDTH_CM,
     RectangularPrism,
@@ -460,7 +460,7 @@ class CoralGardenModelWindow(QMainWindow):
 
     @staticmethod
     def _default_output_path(filename: str) -> Path:
-        results_dir = workspace_paths(create=True).coral_results
+        results_dir = fresh_output_subdir(workspace_paths(create=True).coral_results, "coral_garden_model")
         try:
             results_dir.mkdir(parents=True, exist_ok=True)
         except OSError:

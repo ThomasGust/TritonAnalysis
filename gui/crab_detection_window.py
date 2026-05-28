@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from analysis_workspace import workspace_paths
 from crab_detector_cv import (
     DEFAULT_UNWRAP_SIZE,
     competition_summary_text,
@@ -313,7 +314,7 @@ class CrabDetectionWindow(QMainWindow):
         self._video_current_frame_index = 0
         self._video_current_frame: np.ndarray | None = None
         self._updating_video_controls = False
-        self._last_dir = str(Path.cwd())
+        self._last_dir = str(workspace_paths(create=True).pilot_incoming)
         self._last_image: np.ndarray | None = None
         self._last_source_text = ""
         self._manual_board_polygon: np.ndarray | None = None

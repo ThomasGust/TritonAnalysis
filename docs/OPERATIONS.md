@@ -26,8 +26,8 @@ On the analysis computer:
 - Run `python -m pytest`.
 - Open each GUI applet once.
 - Confirm sample/reference data under `data/` is present.
-- Choose a TritonAnalysis workspace root, normally
-  `%USERPROFILE%\Documents\TritonAnalysisWorkspace`.
+- Confirm the TritonAnalysis workspace root, normally `.\Workspace` inside the
+  checkout.
 - Practice the USB drive or dedicated-Ethernet transfer workflow from
   [Network And Data Handoff Guide](NETWORKING.md).
 - Practice the exact applet workflow with representative images and videos.
@@ -178,9 +178,10 @@ station.
 7. Open the metric OBJ, contact sheet, report, or `metric_scale.json` from the
    output panel.
 
-The default output workspace is under `Workspace\results\realityscan`. That
-keeps photogrammetry artifacts with the analysis evidence trail instead of
-inside the live pilot UI.
+The default output workspace is a new timestamped subfolder under
+`Workspace\results\realityscan` for each run. That keeps photogrammetry
+artifacts with the analysis evidence trail instead of inside the live pilot UI,
+and prevents a new reconstruction from overwriting the previous one.
 
 Use the `Model Viewer` tab in the reconstruction applet, the `View Metric
 Model` output button, or launch `main_realityscan_model_viewer` directly to

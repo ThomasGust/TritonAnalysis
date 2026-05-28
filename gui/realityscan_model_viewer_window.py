@@ -40,7 +40,13 @@ except Exception:  # pragma: no cover - depends on optional local install
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_RESULTS_DIR = workspace_paths().realityscan_results
+
+
+def default_results_dir(*, create: bool = False) -> Path:
+    path = workspace_paths(create=create).realityscan_results
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 class _SectionCard(QFrame):
@@ -317,7 +323,8 @@ class RealityScanModelViewerPanel(QWidget):
             path = Path(text).expanduser()
             if path.exists():
                 return path.parent
-        return DEFAULT_RESULTS_DIR if DEFAULT_RESULTS_DIR.exists() else REPO_ROOT
+        results_dir = default_results_dir(create=True)
+        return results_dir if results_dir.exists() else REPO_ROOT
 
     def _model_path(self) -> Path:
         return Path(self.model_edit.text().strip().strip('"')).expanduser()

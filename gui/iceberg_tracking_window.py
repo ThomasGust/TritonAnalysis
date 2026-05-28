@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from analysis_workspace import workspace_paths
+from analysis_workspace import fresh_output_subdir, workspace_paths
 from iceberg_tracking import (
     DEFAULT_PLATFORMS,
     THREAT_GREEN,
@@ -916,7 +916,7 @@ class IcebergTrackingWindow(QMainWindow):
         self.statusBar().showMessage("Iceberg tracking report copied.", 4000)
 
     def _save_report(self) -> None:
-        results_dir = workspace_paths(create=True).reports / "iceberg_tracking"
+        results_dir = fresh_output_subdir(workspace_paths(create=True).reports / "iceberg_tracking", "iceberg_tracking_report")
         try:
             results_dir.mkdir(parents=True, exist_ok=True)
         except OSError:

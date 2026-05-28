@@ -6,7 +6,6 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime
 from pathlib import Path
 
 from PyQt6.QtCore import QProcess, QProcessEnvironment, Qt, QTimer, QUrl
@@ -38,24 +37,19 @@ from PyQt6.QtWidgets import (
 
 from gui.realityscan_model_viewer_window import RealityScanModelViewerPanel
 from gui.responsive import resize_to_available_screen, vertical_scroll_area
-from analysis_workspace import workspace_paths
+from analysis_workspace import fresh_output_subdir, safe_output_slug, workspace_paths
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_RESULTS_DIR = workspace_paths().realityscan_results
 PIPELINE_RELATIVE_PATH = Path("tools") / "realityscan_underwater_pipeline.py"
 PRESETS = ("balanced", "high-detail", "max-detail")
 
 
-def _safe_slug(text: str) -> str:
-    chars: list[str] = []
-    for char in str(text or ""):
-        if char.isalnum() or char in ("-", "_"):
-            chars.append(char)
-        else:
-            chars.append("_")
-    slug = "".join(chars).strip("_")
-    return slug or "scan"
+def default_results_dir(*, create: bool = False) -> Path:
+    path = workspace_paths(create=create).realityscan_results
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def find_default_pipeline_root() -> Path:
@@ -245,7 +239,7 @@ class RealityScanReconstructionWindow(QMainWindow):
         input_card.body.addLayout(calibration_row)
 
         self.output_edit = QLineEdit()
-        self.output_edit.setPlaceholderText(str(DEFAULT_RESULTS_DIR / "<auto>"))
+        self.output_edit.setPlaceholderText(str(default_results_dir() / "<new subfolder each run>"))
         self.output_edit.setClearButtonEnabled(True)
         self.output_edit.textChanged.connect(self._refresh_command_preview)
         output_row = QHBoxLayout()
@@ -559,12 +553,12 @@ class RealityScanReconstructionWindow(QMainWindow):
         explicit = self._path_arg(self.output_edit.text())
         if explicit:
             return explicit
+        results_dir = default_results_dir(create=not preview)
         if preview:
-            return str(DEFAULT_RESULTS_DIR / "<auto>")
+            return str(results_dir / "<new subfolder each run>")
         session = self._clean_path_text(self.session_edit.text())
         stem = Path(session).parent.name if Path(session).name.lower() == "manifest.json" else Path(session).name
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        return str((DEFAULT_RESULTS_DIR / f"{_safe_slug(stem)}_{stamp}").resolve())
+        return str(fresh_output_subdir(results_dir, safe_output_slug(stem, fallback="scan")).resolve())
 
     def build_command(self, *, preview: bool = False, output_override: str | None = None) -> list[str]:
         session = self._path_arg(self.session_edit.text()) or ("<stereo-session>" if preview else "")
@@ -683,6 +677,12 @@ class RealityScanReconstructionWindow(QMainWindow):
             path = Path(session_text).expanduser()
             if path.exists():
                 return path.parent if path.is_file() else path
+        workspace = workspace_paths(create=True)
+        synced_sessions = workspace.pilot_incoming / "stereo_sessions"
+        if synced_sessions.exists():
+            return synced_sessions
+        if workspace.pilot_incoming.exists():
+            return workspace.pilot_incoming
         pilot_sessions = self._pipeline_root() / "recordings" / "stereo_sessions"
         return pilot_sessions if pilot_sessions.exists() else REPO_ROOT
 
@@ -702,7 +702,7 @@ class RealityScanReconstructionWindow(QMainWindow):
             self.session_edit.setText(str(Path(path)))
 
     def _choose_calibration(self) -> None:
-        start = self._session_dir_from_text() or self._session_dialog_start()
+        start = self._calibration_dialog_start()
         path, _filter = QFileDialog.getOpenFileName(
             self,
             "Select stereo calibration",
@@ -711,6 +711,13 @@ class RealityScanReconstructionWindow(QMainWindow):
         )
         if path:
             self.calibration_edit.setText(str(Path(path)))
+
+    def _calibration_dialog_start(self) -> Path:
+        candidate = self._default_calibration_candidate()
+        if candidate is not None and candidate.exists():
+            return candidate.parent
+        calibration_dir = workspace_paths(create=True).calibrations
+        return calibration_dir if calibration_dir.exists() else self._session_dialog_start()
 
     def _choose_output_dir(self) -> None:
         start = Path(self._output_workspace_for_command(preview=False)).parent
@@ -747,18 +754,19 @@ class RealityScanReconstructionWindow(QMainWindow):
     def _autoload_session_calibration(self) -> None:
         if self.calibration_edit.text().strip():
             return
-        session_dir = self._session_dir_from_text()
-        if session_dir is None:
-            return
-        candidate = session_dir / "stereo_calibration.json"
-        if candidate.exists():
+        candidate = self._default_calibration_candidate()
+        if candidate is not None and candidate.exists():
             self.calibration_edit.setText(str(candidate))
 
     def _find_recent_calibration(self) -> None:
         candidates: list[Path] = []
-        session_dir = self._session_dir_from_text()
-        if session_dir is not None:
-            candidates.append(session_dir / "stereo_calibration.json")
+        default_candidate = self._default_calibration_candidate()
+        if default_candidate is not None:
+            candidates.append(default_candidate)
+        calibration_dir = workspace_paths(create=True).calibrations
+        if calibration_dir.exists():
+            candidates.extend(calibration_dir.glob("*_stereo_calibration.json"))
+            candidates.extend(calibration_dir.glob("stereo_calibration.json"))
         for root in (self._pipeline_root() / "recordings" / "stereo_sessions", REPO_ROOT.parent / "TritonPilot" / "recordings" / "stereo_sessions"):
             if root.exists():
                 candidates.extend(root.glob("*/stereo_calibration.json"))
@@ -769,6 +777,21 @@ class RealityScanReconstructionWindow(QMainWindow):
         selected = sorted(candidates, key=lambda path: path.stat().st_mtime, reverse=True)[0]
         self.calibration_edit.setText(str(selected))
         self.statusBar().showMessage(f"Calibration selected: {selected}", 5000)
+
+    def _default_calibration_candidate(self) -> Path | None:
+        session_dir = self._session_dir_from_text()
+        if session_dir is None:
+            return None
+        calibration_dir = workspace_paths(create=True).calibrations
+        candidates = [
+            session_dir / "stereo_calibration.json",
+            calibration_dir / f"{session_dir.name}_stereo_calibration.json",
+            calibration_dir / "stereo_calibration.json",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return candidates[1]
 
     def _on_alignment_changed(self, *_args) -> None:
         if self.alignment_only_check.isChecked() and self._combo_value(self.alignment_combo) == "off":
@@ -788,7 +811,7 @@ class RealityScanReconstructionWindow(QMainWindow):
         QApplication.clipboard().setText(self.command_preview_text())
         self.statusBar().showMessage("Command copied.", 2500)
 
-    def _validate_before_run(self) -> bool:
+    def _validate_before_run(self, *, output_workspace: str | None = None) -> bool:
         pipeline_root = self._pipeline_root()
         if not (pipeline_root / PIPELINE_RELATIVE_PATH).exists():
             QMessageBox.warning(
@@ -815,7 +838,7 @@ class RealityScanReconstructionWindow(QMainWindow):
             QMessageBox.warning(self, "RealityScan Reconstruction", f"Stereo calibration does not exist:\n{calibration_text}")
             return False
 
-        output = Path(self._output_workspace_for_command(preview=False)).expanduser()
+        output = Path(output_workspace or self._output_workspace_for_command(preview=False)).expanduser()
         if output.exists() and any(output.iterdir()) and not self.overwrite_check.isChecked():
             QMessageBox.warning(
                 self,
@@ -828,12 +851,10 @@ class RealityScanReconstructionWindow(QMainWindow):
     def _start_pipeline(self) -> None:
         if self._process is not None and self._process.state() != QProcess.ProcessState.NotRunning:
             return
-        if not self._validate_before_run():
+        output_workspace = self._output_workspace_for_command(preview=False)
+        if not self._validate_before_run(output_workspace=output_workspace):
             return
 
-        output_workspace = self._output_workspace_for_command(preview=False)
-        if not self.output_edit.text().strip():
-            self.output_edit.setText(output_workspace)
         command = self.build_command(output_override=output_workspace)
         self._clear_outputs()
         self._line_buffer = ""

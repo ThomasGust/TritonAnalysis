@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from analysis_workspace import workspace_paths
 from gui.canvas_navigation import clamp_pan_to_edge_margin, moved_past_pan_threshold
 from gui.crab_result_dialog import frame_to_pixmap
 from gui.responsive import resize_to_available_screen, vertical_scroll_area
@@ -625,12 +626,16 @@ class StereoSegmentMeasurementWindow(QMainWindow):
             self._populate_results_table()
 
     def _choose_manifest(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Open TritonPilot stereo session folder", str(Path.cwd()))
+        path = QFileDialog.getExistingDirectory(
+            self,
+            "Open TritonPilot stereo session folder",
+            str(self._stereo_session_start()),
+        )
         if path:
             self.load_manifest(Path(path))
 
     def _choose_calibration(self) -> None:
-        start = self.manifest_paths[0].parent if self.manifest_paths else Path.cwd()
+        start = self._calibration_start()
         path, _filter = QFileDialog.getOpenFileName(
             self,
             "Open stereo calibration artifact",
@@ -683,7 +688,33 @@ class StereoSegmentMeasurementWindow(QMainWindow):
     def _default_calibration_path(self) -> Path | None:
         if not self.manifest_paths:
             return None
-        return self.manifest_paths[0].parent / "stereo_calibration.json"
+        first = self.manifest_paths[0]
+        session_dir = first.parent if first.name.lower() == "manifest.json" else first
+        if not session_dir.is_dir():
+            session_dir = first.parent
+        session_name = session_dir.name
+        calibration_dir = workspace_paths(create=True).calibrations
+        candidates = [
+            session_dir / "stereo_calibration.json",
+            calibration_dir / f"{session_name}_stereo_calibration.json",
+            calibration_dir / "stereo_calibration.json",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return candidates[1]
+
+    @staticmethod
+    def _stereo_session_start() -> Path:
+        workspace = workspace_paths(create=True)
+        stereo_sessions = workspace.pilot_incoming / "stereo_sessions"
+        return stereo_sessions if stereo_sessions.exists() else workspace.pilot_incoming
+
+    def _calibration_start(self) -> Path:
+        default = self._default_calibration_path()
+        if default is not None and default.exists():
+            return default.parent
+        return workspace_paths(create=True).calibrations
 
     def _populate_loaded_labels(self) -> None:
         pair = self.manifest.get("pair") or {}

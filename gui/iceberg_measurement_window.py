@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from analysis_workspace import workspace_paths
 from gui.canvas_navigation import clamp_pan_to_edge_margin, moved_past_pan_threshold
 from gui.crab_result_dialog import frame_to_pixmap
 from iceberg_measurement import (
@@ -596,7 +597,7 @@ class IcebergMeasurementWindow(QMainWindow):
         self._video_fps = 0.0
         self._video_current_frame_index = 0
         self._updating_video_controls = False
-        self._last_dir = str(Path.cwd())
+        self._last_dir = str(workspace_paths(create=True).pilot_incoming)
         self._last_frame: np.ndarray | None = None
         self._last_source_text = ""
 

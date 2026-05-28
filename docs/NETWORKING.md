@@ -53,13 +53,13 @@ with the URL, connection state, and destination folder. The backup CLI command
 is:
 
 ```powershell
-python -m tools.pilot_transfer_sync http://10.77.0.1:8765 --output "$env:USERPROFILE\Documents\TritonAnalysisWorkspace\incoming\pilot"
+python -m tools.pilot_transfer_sync http://10.77.0.1:8765 --output ".\Workspace\incoming\pilot"
 ```
 
 Preview what would copy without writing files:
 
 ```powershell
-python -m tools.pilot_transfer_sync http://10.77.0.1:8765 --output "$env:USERPROFILE\Documents\TritonAnalysisWorkspace\incoming\pilot" --dry-run
+python -m tools.pilot_transfer_sync http://10.77.0.1:8765 --output ".\Workspace\incoming\pilot" --dry-run
 ```
 
 The sync preserves the folder layout advertised by TritonPilot. Files that
@@ -83,8 +83,8 @@ python -m tools.analysis_transfer_server --root recordings --host 127.0.0.1 --po
 Terminal 2, from the TritonAnalysis repository root:
 
 ```powershell
-python -m tools.pilot_transfer_sync http://127.0.0.1:8765 --output "$env:USERPROFILE\Documents\TritonAnalysisWorkspace\incoming\pilot" --dry-run
-python -m tools.pilot_transfer_sync http://127.0.0.1:8765 --output "$env:USERPROFILE\Documents\TritonAnalysisWorkspace\incoming\pilot"
+python -m tools.pilot_transfer_sync http://127.0.0.1:8765 --output ".\Workspace\incoming\pilot" --dry-run
+python -m tools.pilot_transfer_sync http://127.0.0.1:8765 --output ".\Workspace\incoming\pilot"
 ```
 
 Stop the pilot-side server with `Ctrl+C` when the simulation is finished.
@@ -109,7 +109,7 @@ Results are exported for the team/judges
 Use clear workspace folders such as:
 
 ```text
-TritonAnalysisWorkspace/
+Workspace/
   incoming/pilot/
   sources/run_01/
     primary_camera/

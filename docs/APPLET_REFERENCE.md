@@ -360,7 +360,7 @@ Inputs:
 
 Outputs:
 
-- RealityScan workspace under `Workspace/results/realityscan` by default
+- New timestamped RealityScan workspace under `Workspace/results/realityscan` by default
 - Contact sheet, logs, reports, project file, and OBJ export
 - Metric-scaled OBJ and `metric_scale.json` when stereo scaling succeeds
 
