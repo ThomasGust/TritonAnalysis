@@ -30,7 +30,7 @@ from gui.edna_analysis_window import EDNAAnalysisWindow
 from gui.iceberg_measurement_window import IcebergMeasurementWindow
 from gui.iceberg_tracking_window import IcebergTrackingWindow
 from gui.multi_rect_length_measurement_window import MultiRectLengthMeasurementWindow
-from gui.pilot_transfer_sync import PilotTransferSyncWorker
+from gui.pilot_transfer_sync import PilotTransferSyncWorker, SyncFn
 from gui.realityscan_reconstruction_window import RealityScanReconstructionWindow
 from gui.responsive import resize_to_available_screen
 from gui.stereo_calibration_window import StereoCalibrationWindow
@@ -87,6 +87,7 @@ class TritonAnalysisWindow(QMainWindow):
         pilot_transfer_url: str | None = None,
         pilot_transfer_output: str | Path | None = None,
         pilot_transfer_auto_sync: bool | None = None,
+        pilot_transfer_sync_fn: SyncFn | None = None,
         workspace_root: str | Path | None = None,
         parent=None,
     ):
@@ -138,6 +139,8 @@ class TritonAnalysisWindow(QMainWindow):
         )
         self._pilot_sync_busy = False
         self._pilot_sync_thread: QThread | None = None
+        self._pilot_sync_worker: PilotTransferSyncWorker | None = None
+        self._pilot_sync_fn = pilot_transfer_sync_fn
         self._pilot_sync_last_ok_ts = 0.0
         self._pilot_sync_last_error = ""
         self._pilot_sync_auto_act: QAction | None = None
@@ -592,17 +595,25 @@ class TritonAnalysisWindow(QMainWindow):
             self._start_pilot_sync()
 
     def _start_pilot_sync(self, *, force: bool = False) -> None:
-        if (not self._pilot_sync_enabled and not force) or self._pilot_sync_busy:
+        if not self._pilot_sync_enabled and not force:
+            return
+        if self._pilot_sync_busy:
+            if force:
+                self._pilot_sync_progress_label.setText("A Pilot sync is already running.")
             return
         self._pilot_sync_busy = True
         self._update_pilot_sync_label("syncing")
 
-        worker = PilotTransferSyncWorker(
-            base_url=self._pilot_sync_url,
-            destination=self._pilot_sync_output,
-            timeout=self._pilot_sync_timeout_s,
-        )
+        worker_kwargs = {
+            "base_url": self._pilot_sync_url,
+            "destination": self._pilot_sync_output,
+            "timeout": self._pilot_sync_timeout_s,
+        }
+        if self._pilot_sync_fn is not None:
+            worker_kwargs["sync_fn"] = self._pilot_sync_fn
+        worker = PilotTransferSyncWorker(**worker_kwargs)
         thread = QThread(self)
+        self._pilot_sync_worker = worker
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.progress.connect(self._handle_pilot_sync_progress)
@@ -617,9 +628,14 @@ class TritonAnalysisWindow(QMainWindow):
     def _clear_pilot_sync_thread(self, thread: QThread) -> None:
         if self._pilot_sync_thread is thread:
             self._pilot_sync_thread = None
+        if self._pilot_sync_busy and self._pilot_sync_worker is not None:
+            self._pilot_sync_busy = False
+            self._pilot_sync_worker = None
+            self._update_pilot_sync_label("lost", "sync worker stopped before reporting completion")
 
     def _finish_pilot_sync(self, payload: object) -> None:
         self._pilot_sync_busy = False
+        self._pilot_sync_worker = None
         data = payload if isinstance(payload, dict) else {}
         if data.get("ok"):
             summary = data.get("summary")

@@ -295,6 +295,50 @@ def test_unified_analysis_window_shows_pilot_sync_transfer_progress(tmp_path: Pa
         app.processEvents()
 
 
+def test_unified_analysis_sync_now_finishes_from_background_worker(tmp_path: Path):
+    app = _app()
+    from pilot_transfer import PilotTransferSummary
+    from gui.triton_analysis_window import TritonAnalysisWindow
+
+    def _fake_sync(base_url, destination, *, overwrite=False, timeout=10.0, progress_callback=None):
+        if progress_callback is not None:
+            progress_callback({"event": "index_done", "scanned": 2, "total_bytes": 42})
+            progress_callback({"event": "complete", "scanned": 2, "copied": 1, "skipped": 1, "bytes_copied": 42})
+        return PilotTransferSummary(
+            base_url=base_url,
+            destination=destination,
+            scanned=2,
+            copied=1,
+            skipped=1,
+            bytes_copied=42,
+        )
+
+    window = TritonAnalysisWindow(
+        pilot_transfer_auto_sync=False,
+        pilot_transfer_url="http://pilot.test:8765",
+        pilot_transfer_output=tmp_path / "incoming",
+        pilot_transfer_sync_fn=_fake_sync,
+    )
+    try:
+        window.show()
+        app.processEvents()
+
+        window._start_pilot_sync(force=True)
+        for _attempt in range(100):
+            app.processEvents()
+            if not window._pilot_sync_busy and window._pilot_sync_thread is None:
+                break
+
+        assert window._pilot_sync_busy is False
+        assert window._pilot_sync_thread is None
+        assert "Pilot Sync: OK" in window._pilot_sync_label.text()
+        assert "received 1" in window._pilot_sync_label.text()
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
 def test_edna_count_entry_rows_are_visible_without_table_scroll():
     app = _app()
     from edna_analysis import DEFAULT_SPECIES
