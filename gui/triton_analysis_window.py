@@ -24,7 +24,6 @@ from PyQt6.QtWidgets import (
 )
 
 from analysis_workspace import AnalysisWorkspace, set_active_workspace_root, workspace_paths
-from crab_detector_cv import DEFAULT_UNWRAP_SIZE
 from gui.crab_detection_window import CrabDetectionWindow
 from gui.edna_analysis_window import EDNAAnalysisWindow
 from gui.iceberg_measurement_window import IcebergMeasurementWindow
@@ -77,6 +76,7 @@ class TritonAnalysisWindow(QMainWindow):
         self,
         *,
         crab_paths: list[str | Path] | None = None,
+        crab_reference_image: str | Path | None = None,
         backup_coral_paths: list[str | Path] | None = None,
         backup_iceberg_paths: list[str | Path] | None = None,
         stereo_manifest_path: str | Path | None = None,
@@ -178,8 +178,7 @@ class TritonAnalysisWindow(QMainWindow):
             "Crab Detection",
             CrabDetectionWindow(
                 image_paths=[str(path) for path in crab_paths or []],
-                force_square=True,
-                unwrap_size=DEFAULT_UNWRAP_SIZE,
+                reference_image=crab_reference_image,
                 parent=self,
             ),
         )

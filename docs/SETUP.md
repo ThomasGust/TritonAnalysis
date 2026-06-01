@@ -18,6 +18,7 @@ The base dependency list is in `requirements.txt`:
 - `numpy`
 - `opencv-python`
 - `scipy`
+- `ultralytics` for optional YOLO crab fine tuning and inference
 
 `requirements-windows.txt` and `requirements-macos.txt` currently include the
 same base file.
@@ -90,10 +91,15 @@ constrained.
 
 ## Optional Local Data
 
-The repository includes small reference/sample assets under `data/`, including
-crab sample and reference images. Larger videos used by some computer-vision
-tests are intentionally not required; those tests skip themselves when the
-recordings are absent.
+The repository may include small reference/sample assets under `data/` when an
+applet needs them. Larger videos used by computer-vision tests are intentionally
+not required; those tests skip themselves when the recordings are absent.
+For crab detection, either keep the known TritonPilot reference recording
+available as a sibling checkout or set:
+
+```powershell
+$env:TRITON_CRAB_REFERENCE_IMAGE="D:\path\to\crab_board_reference.png"
+```
 
 For competition use, TritonAnalysis creates a local ignored `Workspace` folder
 inside the repo for incoming media, reports, and generated results:
@@ -104,6 +110,11 @@ python -c "from analysis_workspace import workspace_paths; workspace_paths(creat
 
 Keep original captures unchanged and write applet outputs to a separate results
 folder inside that workspace.
+
+YOLO crab training uses Ultralytics on top of PyTorch. If PyTorch can use the
+local GPU, `tools.crab_yolo_train` will select it; otherwise it falls back to
+CPU. On newer GPUs, install a PyTorch build that explicitly supports that GPU
+architecture before starting long training runs.
 
 ## No Live ROV Dependencies
 

@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
 
 from analysis_workspace import workspace_paths
 from gui.canvas_navigation import clamp_pan_to_edge_margin, moved_past_pan_threshold
-from gui.crab_result_dialog import frame_to_pixmap
+from gui.image_preview import frame_to_pixmap
 from iceberg_measurement import (
     MeasurementError,
     measure_affine_variable_length,

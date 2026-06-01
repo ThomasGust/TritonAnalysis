@@ -47,10 +47,10 @@ logic in importable modules.
 The core analysis modules are ordinary Python modules with functions and data
 classes:
 
-- `crab_detector_cv.py` detects boards, unwraps images, classifies crab
-  candidates, scores video samples, and renders annotated outputs.
 - `iceberg_tracking.py` handles coordinate conversion, closest-approach
   geometry, threat levels, survey sequence validation, and report generation.
+- `crab_detector.py` matches the fixed crab board reference image, projects the
+  known European green crab boxes, and renders annotated images.
 - `iceberg_measurement.py` measures iceberg PVC segments using affine,
   line-endpoint, and spatial calibration helpers.
 - `planar_measurement.py` performs homography-based planar height and segment

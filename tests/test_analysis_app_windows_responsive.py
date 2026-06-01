@@ -50,8 +50,8 @@ def _isolate_unified_app_settings():
 @pytest.mark.parametrize(
     ("window_path", "min_scroll_areas"),
     [
-        ("gui.triton_analysis_window.TritonAnalysisWindow", 8),
-        ("gui.crab_detection_window.CrabDetectionWindow", 3),
+        ("gui.triton_analysis_window.TritonAnalysisWindow", 6),
+        ("gui.crab_detection_window.CrabDetectionWindow", 1),
         ("gui.edna_analysis_window.EDNAAnalysisWindow", 1),
         ("gui.iceberg_tracking_window.IcebergTrackingWindow", 1),
         ("gui.coral_garden_model_window.CoralGardenModelWindow", 0),

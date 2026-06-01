@@ -86,7 +86,7 @@ machine. Mark new tests when they leave that boundary:
 
 ## What The Tests Cover
 
-- Crab detector sample counts and video selection behavior
+- Crab detector reference matching, European green count, annotations, and GUI wiring
 - eDNA frequency math, validation, GUI count updates, and reports
 - Iceberg coordinate conversion, threat thresholds, survey validation, and
   report formatting
@@ -113,10 +113,12 @@ machine. Mark new tests when they leave that boundary:
 
 ## Crab Detection Looks Wrong
 
-- Try a sharper frame.
-- Use manual board-corner selection when automatic board detection fails.
-- Check whether the board is occluded, cropped, or heavily distorted.
-- Compare the annotated output to the original before trusting the count.
+- Confirm the image contains the same fixed board artwork as the reference.
+- Use a sharper frame with the board more fully visible.
+- Pass `--reference-image` or set `TRITON_CRAB_REFERENCE_IMAGE` if the default
+  local reference is missing or stale.
+- Treat low-confidence results as review-needed, especially on edge-on or
+  heavily cropped stereo frames.
 
 ## Measurement Applet Reports Geometry Errors
 

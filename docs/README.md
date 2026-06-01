@@ -19,8 +19,8 @@ competition analysis applets.
 - [Applet Reference](APPLET_REFERENCE.md) - Purpose, inputs, outputs, and
   important implementation modules for each applet.
 - [Subsystem Reference](SUBSYSTEMS.md) - Repository package/module ownership.
-- [Data And Inputs](DATA_AND_INPUTS.md) - Supported file types, bundled
-  reference data, output locations, and handoff conventions.
+- [Data And Inputs](DATA_AND_INPUTS.md) - Supported file types, bundled/reference
+  data, output locations, and handoff conventions.
 - [Stereo Calibration](STEREO_CALIBRATION.md) - Calibrating stereo rigs from
   TritonPilot stereo capture sessions, writing calibration artifacts, and
   checking them with stereo depth and segment measurement.

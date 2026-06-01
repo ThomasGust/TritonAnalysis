@@ -40,7 +40,12 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="*",
         default=None,
         metavar="PATH",
-        help="Optional image files, image folders, or one video file to preload in the Crab tab.",
+        help="Optional image files or folders to preload in the Crab Detection tab.",
+    )
+    parser.add_argument(
+        "--crab-reference-image",
+        default=None,
+        help="Optional crab-board reference image for European green crab detection.",
     )
     parser.add_argument(
         "--backup-coral",
@@ -114,6 +119,7 @@ def main(argv: list[str] | None = None) -> int:
 
     window = TritonAnalysisWindow(
         crab_paths=args.crab,
+        crab_reference_image=args.crab_reference_image,
         backup_coral_paths=args.backup_coral,
         backup_iceberg_paths=args.backup_iceberg,
         stereo_manifest_path=args.stereo_manifest or None,

@@ -13,8 +13,8 @@ GUI class.
 
 ## Core Analysis Modules
 
-- `crab_detector_cv.py` owns crab board detection, image unwrapping, candidate
-  masks, classification, video sample scoring, and annotated rendering.
+- `crab_detector.py` owns fixed-board reference matching, European green crab
+  count/box projection, and annotated rendering.
 - `iceberg_tracking.py` owns coordinate conversions, platform geometry, threat
   assessment, survey validation, and report formatting.
 - `iceberg_measurement.py` owns iceberg variable-segment measurement algorithms
@@ -41,7 +41,7 @@ The GUI package owns PyQt windows, dialogs, canvases, responsive helpers, and
 shared styling:
 
 - `crab_detection_window.py`
-- `crab_result_dialog.py`
+- `image_preview.py`
 - `iceberg_tracking_window.py`
 - `iceberg_measurement_window.py`
 - `planar_height_measurement_window.py`
@@ -58,19 +58,19 @@ showing previews, displaying errors, and presenting results.
 
 ## `tools/`
 
-`tools/crab_video_detect.py` is a CLI helper for scanning video files with the
-crab detector. It writes annotated outputs and a CSV summary to a results
-folder.
+`tools/crab_image_detect.py` scans saved image files or folders, writes
+annotated European green crab images, and records `summary.csv`.
+`tools/crab_video_detect.py` remains a placeholder until video sampling is
+rebuilt on top of the image detector.
 
 Future tools should remain file-based and analysis-focused. If a tool needs
 live vehicle state, reconsider which repository should own it.
 
 ## `data/`
 
-`data/` contains small bundled assets such as crab samples and reference images.
-These files support tests, demos, and detector behavior. Large competition
-recordings should stay outside the repository and be copied into local media
-folders as needed.
+`data/` contains small bundled assets when an applet needs them. Large
+competition recordings should stay outside the repository and be copied into
+local media folders as needed.
 
 ## `tests/`
 

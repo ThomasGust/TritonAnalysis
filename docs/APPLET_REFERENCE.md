@@ -40,34 +40,36 @@ Primary modules:
 Launch:
 
 ```powershell
-python -m main_crab_detection [image-folder-or-video ...]
+python -m main_crab_detection [image-folder-or-file ...]
+python -m main_crab_detection path\to\archive --detector yolo --yolo-model Workspace\models\crab_yolo\run\weights\best.pt
 ```
 
 Purpose:
 
-- Detect competition crab board imagery.
-- Count detected crab candidates.
-- Classify supported species/reference-copy candidates.
-- Render annotated views for review.
+- Match the fixed crab competition board from a reference image.
+- Count European green crabs with the trained YOLO model when weights are available.
+- Count the four European green crab regions with board projection when the fixed board is visible.
+- Draw bounding boxes for European green crabs in the source image.
 
 Primary modules:
 
 - `main_crab_detection.py`
 - `gui/crab_detection_window.py`
-- `gui/crab_result_dialog.py`
-- `crab_detector_cv.py`
+- `crab_detector.py`
+- `tools/crab_image_detect.py`
+- `tools/crab_yolo_predict.py`
 
 Inputs:
 
-- Image files
-- Folders of image files
-- A video file
-- Optional manually selected board corners
+- Image files or folders of images
+- Optional YOLO model via `--yolo-model`
+- Optional reference image via `--reference-image` or
+  `TRITON_CRAB_REFERENCE_IMAGE`
 
 Useful batch helper:
 
 ```powershell
-python -m tools.crab_video_detect path\to\video.mp4 --output-dir path\to\results
+python -m tools.crab_image_detect path\to\images --output-dir path\to\results
 ```
 
 ## Iceberg Tracking

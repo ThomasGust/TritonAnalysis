@@ -1,280 +1,81 @@
+import os
 from pathlib import Path
 
 import cv2
-import numpy as np
 import pytest
 
-from crab_detector_cv import (
-    apply_channel_gains,
-    classify_crab_crop,
-    detect_crabs_in_video,
-    detect_crabs,
-    estimate_board_white_balance_gains,
-    unwrap_board,
+from crab_detector import (
+    default_reference_image_path,
+    detect_european_green_crabs,
+    detection_summary_text,
+    draw_european_green_crab_detections,
 )
 
 
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytestmark = pytest.mark.vision
-REPO_ROOT = Path(__file__).resolve().parents[1]
-ANALYSIS_ROOT = REPO_ROOT
 
 
-def test_crab_detector_finds_expected_counts_on_bundled_sample():
-    sample_path = ANALYSIS_ROOT / "data" / "crab_samples" / "crabby.jpg"
-    image = cv2.imread(str(sample_path))
-    assert image is not None
-
-    result = detect_crabs(image)
-
-    assert result is not None
-    assert result["count"] == 8
-    assert result["green_count"] == 4
-    assert result["other_count"] == 4
+def _reference_image() -> Path:
+    path = default_reference_image_path()
+    if path is None:
+        pytest.skip("default crab reference image is not available on this machine")
+    return path
 
 
-def test_crab_detector_accepts_manual_board_polygon():
-    sample_path = ANALYSIS_ROOT / "data" / "crab_samples" / "crabby.jpg"
-    image = cv2.imread(str(sample_path))
-    assert image is not None
+def test_crab_detector_counts_reference_board_green_crabs():
+    image_path = _reference_image()
+    image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
 
-    auto_result = detect_crabs(image)
-    assert auto_result is not None
-
-    unordered_polygon = np.roll(auto_result["board_polygon"], 2, axis=0)
-    manual_result = detect_crabs(image, board_polygon=unordered_polygon)
-
-    assert manual_result is not None
-    assert manual_result["board_polygon_source"] == "manual"
-    assert manual_result["count"] == 8
-    assert manual_result["green_count"] == 4
-    assert manual_result["other_count"] == 4
-
-
-def test_crab_classifier_keeps_native_rock_under_red_attenuation():
-    sample_path = ANALYSIS_ROOT / "data" / "crab_samples" / "crabby.jpg"
-    image = cv2.imread(str(sample_path))
-    assert image is not None
-
-    baseline = detect_crabs(image)
-    assert baseline is not None
-
-    underwater = image.astype(np.float32)
-    underwater[:, :, 2] *= 0.55
-    underwater[:, :, 1] = underwater[:, :, 1] * 1.02 + 10.0
-    underwater[:, :, 0] = underwater[:, :, 0] * 1.05 + 16.0
-    underwater = np.clip(underwater, 0, 255).astype(np.uint8)
-
-    unwrapped, _, _ = unwrap_board(
-        underwater,
-        polygon=baseline["board_polygon"],
-        output_size=baseline["unwrapped_image"].shape[1::-1],
-    )
-    assert unwrapped is not None
-
-    gains = estimate_board_white_balance_gains(unwrapped, baseline["unwrapped_mask"])
-    corrected = apply_channel_gains(unwrapped, gains)
-    green_count = 0
-
-    for detection in baseline["detections"]:
-        x, y, width, height = detection["unwrapped_box"]
-        crop = corrected[y : y + height, x : x + width]
-        classification = classify_crab_crop(crop)
-        green_count += int(classification["is_european_green"])
-
-    assert green_count == 4
-
-
-@pytest.mark.groundtruth
-@pytest.mark.slow
-def test_reference_copy_detector_counts_underwater_aux_video_frame():
-    video_path = (
-        REPO_ROOT
-        / "recordings"
-        / "20260506-184600"
-        / "Aux Camera.mp4"
-    )
-    if not video_path.exists():
-        import pytest
-
-        pytest.skip("underwater auxiliary camera recording is not available")
-
-    capture = cv2.VideoCapture(str(video_path))
-    capture.set(cv2.CAP_PROP_POS_MSEC, 5000)
-    ok, frame = capture.read()
-    capture.release()
-    assert ok
-
-    result = detect_crabs(frame)
+    result = detect_european_green_crabs(image)
 
     assert result is not None
-    assert result["detector"] == "reference_copy"
-    assert result["count"] == 8
-    assert result["green_count"] == 4
-    assert result["species_counts"]["jonah"] == 2
-    assert result["species_counts"]["native_rock"] == 2
+    assert result.count == 4
+    assert result.inlier_count > 50
+    assert "European green crabs: 4" in detection_summary_text(result)
+    assert all(detection.bbox[2] > 0 and detection.bbox[3] > 0 for detection in result.detections)
 
 
-@pytest.mark.groundtruth
-@pytest.mark.slow
-def test_reference_copy_detector_ignores_tiny_artifact_candidate():
-    video_path = (
-        REPO_ROOT
-        / "recordings"
-        / "20260506-184445"
-        / "Aux Camera.mp4"
-    )
-    if not video_path.exists():
-        import pytest
+def test_crab_detector_handles_rotated_scaled_snapshot():
+    image_path = _reference_image().parent / "20260530-081228_Arm_Camera_snapshot.png"
+    if not image_path.exists():
+        pytest.skip("rotated crab snapshot is not available on this machine")
+    image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
 
-        pytest.skip("underwater auxiliary camera recording is not available")
-
-    capture = cv2.VideoCapture(str(video_path))
-    capture.set(cv2.CAP_PROP_POS_MSEC, 3500)
-    ok, frame = capture.read()
-    capture.release()
-    assert ok
-
-    result = detect_crabs(frame)
+    result = detect_european_green_crabs(image)
 
     assert result is not None
-    assert result["detector"] == "reference_copy"
-    assert result["count"] == 8
+    assert result.count == 4
+    assert result.inlier_count >= 20
 
 
-@pytest.mark.groundtruth
-@pytest.mark.slow
-def test_video_detector_selects_underwater_frame_with_expected_counts():
-    video_path = (
-        REPO_ROOT
-        / "recordings"
-        / "20260506-184600"
-        / "Aux Camera.mp4"
-    )
-    if not video_path.exists():
-        import pytest
+def test_crab_detector_draws_annotated_output():
+    image_path = _reference_image()
+    image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+    result = detect_european_green_crabs(image)
 
-        pytest.skip("underwater auxiliary camera recording is not available")
+    annotated = draw_european_green_crab_detections(image, result)
 
-    result = detect_crabs_in_video(
-        video_path,
-        start_seconds=4.5,
-        end_seconds=5.1,
-        sample_interval_seconds=0.5,
-    )
-
-    assert result is not None
-    detection_result = result["detection_result"]
-    assert detection_result["count"] == 8
-    assert detection_result["green_count"] == 4
-    assert result["temporal_vote"] is not None
-    assert result["temporal_vote"]["signature"][:3] == (4, 2, 2)
-    assert result["quality"]["confidence"] > 0.0
+    assert annotated.shape == image.shape
+    assert annotated.dtype == image.dtype
+    assert (annotated != image).any()
 
 
-@pytest.mark.groundtruth
-@pytest.mark.slow
-def test_video_detector_rejects_low_evidence_gripper_scan():
-    video_path = (
-        REPO_ROOT
-        / "recordings"
-        / "20260507-204434"
-        / "Aux Camera.mp4"
-    )
-    if not video_path.exists():
-        import pytest
+def test_crab_detection_window_runs_on_loaded_image():
+    pytest.importorskip("PyQt6")
+    from PyQt6.QtWidgets import QApplication
+    from gui.crab_detection_window import CrabDetectionWindow
 
-        pytest.skip("low-evidence gripper recording is not available")
-
-    result = detect_crabs_in_video(
-        video_path,
-        start_seconds=0.0,
-        end_seconds=5.0,
-        sample_interval_seconds=0.5,
-    )
-
-    assert result is None
-
-
-@pytest.mark.groundtruth
-@pytest.mark.slow
-def test_hard_pool_video_rejects_compression_artifact_frame():
-    video_path = (
-        REPO_ROOT
-        / "recordings"
-        / "20260507-154235"
-        / "Aux Camera.mp4"
-    )
-    if not video_path.exists():
-        import pytest
-
-        pytest.skip("hard pool auxiliary camera recording is not available")
-
-    capture = cv2.VideoCapture(str(video_path))
-    capture.set(cv2.CAP_PROP_POS_MSEC, 2500)
-    ok, frame = capture.read()
-    capture.release()
-    assert ok
-
-    result = detect_crabs(frame)
-
-    assert result is None or result["count"] <= 12
-
-
-@pytest.mark.groundtruth
-@pytest.mark.slow
-def test_video_detector_selects_plausible_frame_in_hard_pool_video():
-    video_path = (
-        REPO_ROOT
-        / "recordings"
-        / "20260507-154235"
-        / "Aux Camera.mp4"
-    )
-    if not video_path.exists():
-        import pytest
-
-        pytest.skip("hard pool auxiliary camera recording is not available")
-
-    result = detect_crabs_in_video(
-        video_path,
-        start_seconds=0.0,
-        end_seconds=5.0,
-        sample_interval_seconds=0.5,
-    )
-
-    assert result is not None
-    detection_result = result["detection_result"]
-    assert detection_result["count"] == 8
-    assert detection_result["green_count"] == 4
-    assert detection_result["species_counts"]["jonah"] == 2
-    assert detection_result["species_counts"]["native_rock"] == 2
-    assert result["temporal_vote"] is not None
-    assert result["temporal_vote"]["signature"][:3] == (4, 2, 2)
-
-
-@pytest.mark.groundtruth
-@pytest.mark.slow
-def test_hard_pool_video_keeps_edge_touching_green_crab():
-    video_path = (
-        REPO_ROOT
-        / "recordings"
-        / "20260507-154235"
-        / "Aux Camera.mp4"
-    )
-    if not video_path.exists():
-        import pytest
-
-        pytest.skip("hard pool auxiliary camera recording is not available")
-
-    capture = cv2.VideoCapture(str(video_path))
-    capture.set(cv2.CAP_PROP_POS_FRAMES, 47)
-    ok, frame = capture.read()
-    capture.release()
-    assert ok
-
-    result = detect_crabs(frame)
-
-    assert result is not None
-    assert result["count"] == 8
-    assert result["green_count"] == 4
-    assert result["species_counts"]["jonah"] == 2
-    assert result["species_counts"]["native_rock"] == 2
+    app = QApplication.instance() or QApplication([])
+    image_path = _reference_image()
+    window = CrabDetectionWindow(image_paths=[image_path], detector_mode="board")
+    try:
+        window.show()
+        app.processEvents()
+        assert window._current_result is not None
+        assert window._current_result.count == 4
+        assert "European green crabs: 4" in window.status_label.text()
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()

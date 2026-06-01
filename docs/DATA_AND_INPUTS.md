@@ -29,15 +29,10 @@ try converting it to `.mp4` with a common H.264 encoding before competition.
 
 ## Bundled Data
 
-The `data/` folder contains small assets used by applets and tests:
-
-```text
-data/crab_samples/
-data/crab_reference/
-```
-
-These assets are appropriate to keep in the repository. Large raw videos,
-competition runs, and generated result folders should remain outside git.
+The `data/` folder is reserved for small assets used by applets and tests. The
+crab detector can use `data/crab_board_reference.png` when present, or a path
+provided with `TRITON_CRAB_REFERENCE_IMAGE`. Large raw videos, competition
+runs, and generated result folders should remain outside git.
 
 ## Workspace Layout
 
@@ -69,7 +64,7 @@ Workspace/
     run_02/
   calibrations/           stereo_calibration.json and related artifacts
   results/
-    crab_detection/
+    crab_detection/       annotated crab images and CSV summaries
     coral_garden/
     realityscan/
     color_correction/
@@ -114,8 +109,10 @@ run-specific source folder you want to preserve.
 
 Crab detection:
 
-- Source image, folder, or video
-- Optional manual board-corner clicks
+- Source image or folder of images
+- A reference image of the fixed crab board, supplied automatically when the
+  known local TritonPilot recording exists or explicitly with
+  `TRITON_CRAB_REFERENCE_IMAGE`
 
 Iceberg tracking:
 
@@ -169,16 +166,8 @@ Depending on the applet, outputs may include:
 For judge-facing results, keep exported artifacts and the source media together
 so a teammate can reproduce or explain the answer later.
 
-## Results From `tools.crab_video_detect`
+## Crab Detection Outputs
 
-The batch crab-video helper writes to a new timestamped folder under
-`Workspace/results/crab_detection` by default unless `--output-dir` is
-provided. Its typical outputs are:
-
-- `best_frame.jpg`
-- `best_annotated.jpg`
-- `best_mask.png`
-- `summary.csv`
-
-Use `--output-dir` during competition so generated files land in the run's
-results folder.
+`tools.crab_image_detect` writes annotated images and `summary.csv` to a new
+timestamped folder under `Workspace/results/crab_detection` by default unless
+`--output-dir` is provided.

@@ -32,7 +32,7 @@ from PyQt6.QtWidgets import (
 )
 
 from analysis_workspace import workspace_paths
-from gui.crab_result_dialog import ImagePreviewPanel, frame_to_pixmap
+from gui.image_preview import ImagePreviewPanel, frame_to_pixmap
 from gui.responsive import resize_to_available_screen, vertical_scroll_area
 from stereo_calibration import load_manifest_collection
 from stereo_depth import (

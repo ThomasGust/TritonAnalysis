@@ -16,7 +16,7 @@ The repository is organized as a unified competition app, top-level backup
 applets, and shared analysis modules:
 
 - Unified tabbed competition-day analysis window
-- Crab detection from images, folders, or video files
+- Crab detection for the fixed reference board, including European green crab boxes and synthetic YOLO data
 - Iceberg tracking and threat assessment
 - Iceberg PVC segment measurement
 - Planar height measurement
@@ -28,7 +28,6 @@ applets, and shared analysis modules:
 - Stereo segment measurement presets for generic, iceberg, and coral lengths
 - RealityScan stereo photogrammetry reconstruction wrapper
 - Three.js OBJ viewport and distance measurement for reconstructed models
-- Batch crab-video detection helper
 
 Each applet can be launched directly with `python -m ...` from the repository
 root.
@@ -51,7 +50,9 @@ main_realityscan_reconstruction.py     Stereo RealityScan reconstruction GUI
 main_realityscan_model_viewer.py       Three.js OBJ measurement viewer
 color_corr.py                          Underwater correction/frame-export GUI
 pilot_transfer.py                      Pull-only TritonPilot media sync helper
-crab_detector_cv.py                    Crab computer-vision pipeline
+crab_detector.py                       Reference-board crab detector
+tools/crab_yolo_train.py               YOLO fine-tuning helper for green crabs
+tools/crab_yolo_predict.py             YOLO image prediction helper for green crabs
 iceberg_tracking.py                    Coordinate/threat-assessment logic
 iceberg_measurement.py                 2D/3D measurement algorithms
 planar_measurement.py                  Planar homography measurement algorithms
@@ -63,7 +64,7 @@ coral_garden_model.py                  Prism model and OBJ export
 edna_analysis.py                       eDNA frequency calculations and reports
 gui/                                   PyQt windows and responsive helpers
 tools/                                 Batch/CLI helper tools
-data/                                  Reference images and bundled samples
+data/                                  Bundled app/test assets
 tests/                                 Hardware-free tests and optional vision checks
 docs/                                  Maintained user and maintainer docs
 ```
@@ -130,7 +131,12 @@ keeping subfolders like `incoming\pilot`, `results`, `reports`, and
 Crab competition analyzer:
 
 ```powershell
-python -m main_crab_detection [image-folder-or-video ...]
+python -m main_crab_detection [image-folder-or-file ...]
+python -m main_crab_detection path\to\archive --detector yolo --yolo-model Workspace\models\crab_yolo\run\weights\best.pt
+python -m tools.crab_image_detect path\to\images --output-dir path\to\results
+python -m tools.crab_generate_synthetic_dataset path\to\images --train-count 700 --val-count 180
+python -m tools.crab_yolo_train Workspace\datasets\crab_green_yolo_YYYYMMDD_HHMMSS\data.yaml
+python -m tools.crab_yolo_predict path\to\images --model Workspace\models\crab_yolo\run\weights\best.pt
 ```
 
 Iceberg tracking threat applet:
@@ -199,12 +205,6 @@ Underwater color correction and frame export:
 
 ```powershell
 python -m color_corr
-```
-
-Batch crab-video helper:
-
-```powershell
-python -m tools.crab_video_detect path\to\video.mp4
 ```
 
 Pilot media transfer helper:

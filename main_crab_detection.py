@@ -11,33 +11,55 @@ if __package__ in (None, ""):
 
 from PyQt6.QtWidgets import QApplication
 
-from crab_detector_cv import DEFAULT_UNWRAP_SIZE
 from gui.crab_detection_window import CrabDetectionWindow
 from gui.style import apply_modern_style
+from tools.crab_yolo_predict import DEFAULT_CONFIDENCE
 
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the crab detection command-line parser."""
     parser = argparse.ArgumentParser(
-        description="Standalone GUI for running crab detection against images, folders, or videos.",
+        description="Standalone GUI for reference-board European green crab detection.",
     )
     parser.add_argument(
         "paths",
         nargs="*",
-        help="Image files, folders, or one video file to load when the app starts.",
+        help="Image files or folders to load when the app starts.",
+    )
+    parser.add_argument(
+        "--reference-image",
+        default=None,
+        help="Optional crab-board reference image. Defaults to TRITON_CRAB_REFERENCE_IMAGE or the known TritonPilot recording.",
+    )
+    parser.add_argument(
+        "--detector",
+        choices=("auto", "yolo", "board"),
+        default="auto",
+        help="Detector mode. Auto uses the newest trained YOLO model when available, otherwise board projection.",
+    )
+    parser.add_argument(
+        "--yolo-model",
+        default=None,
+        help="Optional YOLO .pt weights for European green crab detection.",
+    )
+    parser.add_argument(
+        "--yolo-conf",
+        type=float,
+        default=DEFAULT_CONFIDENCE,
+        help="YOLO confidence threshold.",
     )
     parser.add_argument(
         "--no-force-square",
         action="store_true",
-        help="Preserve the detected board aspect ratio instead of forcing a square unwrap.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--unwrap-size",
         nargs=2,
         type=int,
         metavar=("WIDTH", "HEIGHT"),
-        default=DEFAULT_UNWRAP_SIZE,
-        help=f"Output size for the board unwrap. Default: {DEFAULT_UNWRAP_SIZE[0]} {DEFAULT_UNWRAP_SIZE[1]}.",
+        default=None,
+        help=argparse.SUPPRESS,
     )
     return parser
 
@@ -52,8 +74,10 @@ def main(argv: list[str] | None = None) -> int:
 
     window = CrabDetectionWindow(
         image_paths=args.paths,
-        force_square=not args.no_force_square,
-        unwrap_size=args.unwrap_size,
+        reference_image=args.reference_image,
+        detector_mode=args.detector,
+        yolo_model=args.yolo_model,
+        yolo_confidence=args.yolo_conf,
     )
     window.show()
     return app.exec()
