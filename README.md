@@ -12,8 +12,8 @@ live piloting station.
 
 ## What Runs On The Analysis Computer
 
-The repository is organized as a unified competition app, top-level backup
-applets, and shared analysis modules:
+The repository is organized as a unified competition app, packaged backup
+applets, and task-focused analysis modules:
 
 - Unified tabbed competition-day analysis window
 - Crab detection for the fixed reference board, including European green crab boxes and synthetic YOLO data
@@ -35,34 +35,35 @@ root.
 ## Repository Layout
 
 ```text
-main_crab_detection.py                 Crab detection GUI entry point
-main_triton_analysis.py                Unified tabbed competition-day GUI
-main_iceberg_tracking.py               Iceberg threat-assessment GUI
-main_iceberg_measurement.py            Iceberg variable-segment GUI
-main_planar_height_measurement.py      Planar height measurement GUI
-main_multi_rect_length_measurement.py  Multi-rectangle length GUI
-main_coral_garden_model.py             Coral garden CAD-model GUI
-main_edna_analysis.py                  eDNA frequency GUI
-main_stereo_depth.py                   Stereo depth/length-check GUI
-main_stereo_segment_measurement.py     Stereo segment measurement GUI
-main_stereo_iceberg_measurement.py     Iceberg preset shortcut
-main_realityscan_reconstruction.py     Stereo RealityScan reconstruction GUI
-main_realityscan_model_viewer.py       Three.js OBJ measurement viewer
-color_corr.py                          Underwater correction/frame-export GUI
-pilot_transfer.py                      Pull-only TritonPilot media sync helper
-crab_detector.py                       Reference-board crab detector
+main_triton_analysis.py                                  Top-level unified GUI launcher
+triton_analysis/apps/main_crab_detection.py                 Crab detection GUI entry point
+triton_analysis/apps/main_triton_analysis.py                Unified tabbed competition-day GUI
+triton_analysis/apps/main_iceberg_tracking.py               Iceberg threat-assessment GUI
+triton_analysis/apps/main_iceberg_measurement.py            Iceberg variable-segment GUI
+triton_analysis/apps/main_planar_height_measurement.py      Planar height measurement GUI
+triton_analysis/apps/main_multi_rect_length_measurement.py  Multi-rectangle length GUI
+triton_analysis/apps/main_coral_garden_model.py             Coral garden CAD-model GUI
+triton_analysis/apps/main_edna_analysis.py                  eDNA frequency GUI
+triton_analysis/apps/main_stereo_depth.py                   Stereo depth/length-check GUI
+triton_analysis/apps/main_stereo_segment_measurement.py     Stereo segment measurement GUI
+triton_analysis/apps/main_stereo_iceberg_measurement.py     Iceberg preset shortcut
+triton_analysis/apps/main_realityscan_reconstruction.py     Stereo RealityScan reconstruction GUI
+triton_analysis/apps/main_realityscan_model_viewer.py       Three.js OBJ measurement viewer
+triton_analysis/apps/color_corr.py                          Underwater correction/frame-export GUI
+triton_analysis/sync/pilot_transfer.py                      Pull-only TritonPilot media sync helper
+triton_analysis/crab/detector.py                       Reference-board crab detector
 tools/crab_yolo_train.py               YOLO fine-tuning helper for green crabs
 tools/crab_yolo_predict.py             YOLO image prediction helper for green crabs
-iceberg_tracking.py                    Coordinate/threat-assessment logic
-iceberg_measurement.py                 2D/3D measurement algorithms
-planar_measurement.py                  Planar homography measurement algorithms
-stereo_calibration.py                  Stereo calibration artifact generation
-stereo_depth.py                        Stereo rectification/disparity helpers
-stereo_segment_measurement.py          Stereo segment endpoint measurement helpers
-stereo_iceberg_measurement.py          Iceberg measurement compatibility wrappers
-coral_garden_model.py                  Prism model and OBJ export
-edna_analysis.py                       eDNA frequency calculations and reports
-gui/                                   PyQt windows and responsive helpers
+triton_analysis/iceberg/tracking.py                    Coordinate/threat-assessment logic
+triton_analysis/iceberg/measurement.py                 2D/3D measurement algorithms
+triton_analysis/measurement/planar.py                  Planar homography measurement algorithms
+triton_analysis/stereo/calibration.py                  Stereo calibration artifact generation
+triton_analysis/stereo/depth.py                        Stereo rectification/disparity helpers
+triton_analysis/stereo/segment_measurement.py          Stereo segment endpoint measurement helpers
+triton_analysis/stereo/iceberg_measurement.py          Iceberg measurement compatibility wrappers
+triton_analysis/coral/garden_model.py                  Prism model and OBJ export
+triton_analysis/edna/analysis.py                       eDNA frequency calculations and reports
+triton_analysis/gui/                                   PyQt windows and responsive helpers
 tools/                                 Batch/CLI helper tools
 data/                                  Bundled app/test assets
 tests/                                 Hardware-free tests and optional vision checks
@@ -110,10 +111,11 @@ python -m pytest
 Unified competition window:
 
 ```powershell
-python -m main_triton_analysis
-python -m main_triton_analysis --stereo-manifest path\to\stereo_session --calibration path\to\stereo_calibration.json
-python -m main_triton_analysis --pilot-transfer-url http://10.77.0.1:8765
-python -m main_triton_analysis --workspace D:\TritonAnalysisWorkspace
+python main_triton_analysis.py
+python -m triton_analysis.apps.main_triton_analysis
+python -m triton_analysis.apps.main_triton_analysis --stereo-manifest path\to\stereo_session --calibration path\to\stereo_calibration.json
+python -m triton_analysis.apps.main_triton_analysis --pilot-transfer-url http://10.77.0.1:8765
+python -m triton_analysis.apps.main_triton_analysis --workspace D:\TritonAnalysisWorkspace
 ```
 
 The unified window opens with Coral Reconstruction, then Crab Detection, Stereo
@@ -131,8 +133,8 @@ keeping subfolders like `incoming\pilot`, `results`, `reports`, and
 Crab competition analyzer:
 
 ```powershell
-python -m main_crab_detection [image-folder-or-file ...]
-python -m main_crab_detection path\to\archive --detector yolo --yolo-model Workspace\models\crab_yolo\run\weights\best.pt
+python -m triton_analysis.apps.main_crab_detection [image-folder-or-file ...]
+python -m triton_analysis.apps.main_crab_detection path\to\archive --detector yolo --yolo-model Workspace\models\crab_yolo\run\weights\best.pt
 python -m tools.crab_image_detect path\to\images --output-dir path\to\results
 python -m tools.crab_generate_synthetic_dataset path\to\images --train-count 700 --val-count 180
 python -m tools.crab_yolo_train Workspace\datasets\crab_green_yolo_YYYYMMDD_HHMMSS\data.yaml
@@ -142,46 +144,46 @@ python -m tools.crab_yolo_predict path\to\images --model Workspace\models\crab_y
 Iceberg tracking threat applet:
 
 ```powershell
-python -m main_iceberg_tracking
+python -m triton_analysis.apps.main_iceberg_tracking
 ```
 
 Coral garden CAD model applet:
 
 ```powershell
-python -m main_coral_garden_model
+python -m triton_analysis.apps.main_coral_garden_model
 ```
 
 eDNA frequency analysis applet:
 
 ```powershell
-python -m main_edna_analysis
-python -m main_edna_analysis --sample
+python -m triton_analysis.apps.main_edna_analysis
+python -m triton_analysis.apps.main_edna_analysis --sample
 ```
 
 Measurement applets:
 
 ```powershell
-python -m main_iceberg_measurement [image-or-video ...]
-python -m main_planar_height_measurement [image-or-video ...]
-python -m main_multi_rect_length_measurement [image-or-video ...]
+python -m triton_analysis.apps.main_iceberg_measurement [image-or-video ...]
+python -m triton_analysis.apps.main_planar_height_measurement [image-or-video ...]
+python -m triton_analysis.apps.main_multi_rect_length_measurement [image-or-video ...]
 ```
 
 Stereo calibration from TritonPilot capture sessions:
 
 ```powershell
-python -m main_stereo_calibration_gui path\to\manifest.json
-python -m main_stereo_calibration path\to\manifest.json [more-manifests-or-folders ...] --charuco
+python -m triton_analysis.apps.main_stereo_calibration_gui path\to\manifest.json
+python -m triton_analysis.apps.main_stereo_calibration path\to\manifest.json [more-manifests-or-folders ...] --charuco
 ```
 
 Stereo depth and 3D length checks:
 
 ```powershell
-python -m main_stereo_depth path\to\manifest.json
-python -m main_stereo_depth path\to\manifest.json --calibration path\to\stereo_calibration.json
-python -m main_stereo_segment_measurement path\to\manifest.json
-python -m main_stereo_segment_measurement path\to\manifest.json --preset coral
-python -m main_stereo_iceberg_measurement path\to\manifest.json
-python -m main_stereo_iceberg_measurement path\to\manifest.json --calibration path\to\stereo_calibration.json
+python -m triton_analysis.apps.main_stereo_depth path\to\manifest.json
+python -m triton_analysis.apps.main_stereo_depth path\to\manifest.json --calibration path\to\stereo_calibration.json
+python -m triton_analysis.apps.main_stereo_segment_measurement path\to\manifest.json
+python -m triton_analysis.apps.main_stereo_segment_measurement path\to\manifest.json --preset coral
+python -m triton_analysis.apps.main_stereo_iceberg_measurement path\to\manifest.json
+python -m triton_analysis.apps.main_stereo_iceberg_measurement path\to\manifest.json --calibration path\to\stereo_calibration.json
 ```
 
 For low-texture PVC structures, use the stereo depth applet's rectified
@@ -194,8 +196,8 @@ stereo iceberg command still opens the same applet in Iceberg Keel mode.
 RealityScan stereo reconstruction and model viewing:
 
 ```powershell
-python -m main_realityscan_reconstruction path\to\stereo_session --calibration path\to\stereo_calibration.json
-python -m main_realityscan_model_viewer path\to\underwater_model_metric.obj
+python -m triton_analysis.apps.main_realityscan_reconstruction path\to\stereo_session --calibration path\to\stereo_calibration.json
+python -m triton_analysis.apps.main_realityscan_model_viewer path\to\underwater_model_metric.obj
 ```
 
 The reconstruction GUI includes a Model Viewer tab that embeds the Three.js
@@ -204,7 +206,7 @@ viewport when `PyQt6-WebEngine` is installed, with a browser fallback.
 Underwater color correction and frame export:
 
 ```powershell
-python -m color_corr
+python -m triton_analysis.apps.color_corr
 ```
 
 Pilot media transfer helper:

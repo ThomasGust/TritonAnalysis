@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 import pytest
 
-from stereo_calibration import (
+from triton_analysis.stereo.calibration import (
     DEFAULT_CHARUCO_DICTIONARY,
     DEFAULT_CHARUCO_MARKER_SIZE,
     DEFAULT_CHARUCO_SQUARES_X,
@@ -46,7 +46,7 @@ def test_charuco_defaults_use_calibio_dictionary():
 
     assert board.dictionary == DEFAULT_CHARUCO_DICTIONARY == "DICT_5X5_1000"
     assert (board.squares_x, board.squares_y) == (12, 9)
-    assert (board.square_size, board.marker_size) == (60.0, 45.0)
+    assert (board.square_size, board.marker_size, board.units) == (6.0, 4.5, "cm")
 
 
 def test_blank_stereo_detection_returns_preview_summary():

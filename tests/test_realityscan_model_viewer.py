@@ -10,8 +10,8 @@ pytest.importorskip("PyQt6")
 
 from PyQt6.QtWidgets import QApplication
 
-from gui.realityscan_model_viewer_window import ModelViewerServer, RealityScanModelViewerWindow
-from gui.style import apply_modern_style
+from triton_analysis.gui.realityscan_model_viewer_window import ModelViewerServer, RealityScanModelViewerWindow
+from triton_analysis.gui.style import apply_modern_style
 
 
 def _app() -> QApplication:
@@ -78,6 +78,10 @@ def test_model_viewer_server_serves_threejs_viewer_and_model(tmp_path: Path):
         assert "rollStepSelect" in html
         assert "truthInput" in html
         assert "truthUnitSelect" in html
+        assert '<option value="cm" selected>cm</option>' in html
+        assert "distanceSignificantDigits = 4" in html
+        assert "formatSignificantValue" in html
+        assert "value.toPrecision(digits)" not in html
         assert "scaleBtn" in html
         assert "freeOrbitBtn" not in html
         assert "floorBtn" in html
@@ -131,6 +135,7 @@ def test_model_viewer_window_starts_local_viewer(tmp_path: Path):
     try:
         window._start_viewer()
 
+        assert window.panel.unit_combo.currentData() == "cm"
         assert window.url_edit.text().startswith("http://127.0.0.1:")
         assert window.browser_btn.isEnabled()
         assert window.reload_btn.isEnabled()

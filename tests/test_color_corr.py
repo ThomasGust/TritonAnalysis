@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import pytest
 
-from color_corr import FixedIntervalFrameExportWorker, ProcessingSettings, VideoProcessor
+from triton_analysis.apps.color_corr import FixedIntervalFrameExportWorker, ProcessingSettings, VideoProcessor
 
 
 pytestmark = pytest.mark.vision

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from stereo_iceberg_measurement import (
+from triton_analysis.stereo.iceberg_measurement import (
     measure_stereo_keel_depth,
     summarize_keel_measurements,
     unit_scale_to_cm,

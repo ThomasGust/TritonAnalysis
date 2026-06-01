@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from iceberg_measurement import (
+from triton_analysis.iceberg.measurement import (
     MeasurementError,
     measure_affine_variable_length,
     measure_line_endpoint_iceberg_variable_length,

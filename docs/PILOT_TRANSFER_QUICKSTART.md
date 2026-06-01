@@ -88,7 +88,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\setup_pilot_transfer_link.ps1 -
 Launch the unified GUI against the same repo-local workspace:
 
 ```powershell
-python -m main_triton_analysis --workspace ".\Workspace"
+python -m triton_analysis.apps.main_triton_analysis --workspace ".\Workspace"
 ```
 
 ## Pilot Side

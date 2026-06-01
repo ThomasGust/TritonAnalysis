@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from edna_analysis import (
+from triton_analysis.edna.analysis import (
     SAMPLE_COUNTS,
     build_csv_text,
     build_judge_report,
@@ -49,7 +49,7 @@ def test_edna_window_updates_sample_counts():
 
     from PyQt6.QtWidgets import QApplication
 
-    from gui.edna_analysis_window import EDNAAnalysisWindow
+    from triton_analysis.gui.edna_analysis_window import EDNAAnalysisWindow
 
     app = QApplication.instance()
     if app is None:

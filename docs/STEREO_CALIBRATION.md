@@ -26,7 +26,7 @@ calibration board used in the pool.
 Launch the stereo calibration applet:
 
 ```powershell
-python -m main_stereo_calibration_gui path\to\manifest.json
+python -m triton_analysis.apps.main_stereo_calibration_gui path\to\manifest.json
 ```
 
 The window lets you inspect one manifest or a combined set of manifests,
@@ -34,7 +34,7 @@ preview left/right image pairs, choose checkerboard or ChArUco board settings,
 set minimum accepted pairs, run calibration, review rejected observations, and
 write the calibration artifact.
 The default board settings match Triton's pool ChArUco board:
-9 rows by 12 columns, 60 mm square width, 45 mm marker width, and the
+9 rows by 12 columns, 6 cm square width, 4.5 cm marker width, and the
 calib.io default `DICT_5X5_1000` dictionary.
 Checkerboard-only fields are hidden when ChArUco mode is selected.
 Selecting a pair overlays detected board markers/corners on both previews and
@@ -46,7 +46,7 @@ The command-line path is still useful for repeatable batch runs. For a
 checkerboard, `--columns` and `--rows` are inner-corner counts:
 
 ```powershell
-python -m main_stereo_calibration path\to\manifest.json `
+python -m triton_analysis.apps.main_stereo_calibration path\to\manifest.json `
   --checkerboard `
   --columns 9 `
   --rows 6 `
@@ -62,7 +62,7 @@ For a ChArUco board, `--squares-x` and `--squares-y` are full square counts.
 The defaults match Triton's board, so the normal command is:
 
 ```powershell
-python -m main_stereo_calibration path\to\manifest.json `
+python -m triton_analysis.apps.main_stereo_calibration path\to\manifest.json `
   --charuco
 ```
 
@@ -73,21 +73,21 @@ accepting useful partial-board views.
 You can also pass several manifests or a parent folder:
 
 ```powershell
-python -m main_stereo_calibration path\to\stereo_sessions --charuco
-python -m main_stereo_calibration path\to\session1\manifest.json path\to\session2\manifest.json --charuco
+python -m triton_analysis.apps.main_stereo_calibration path\to\stereo_sessions --charuco
+python -m triton_analysis.apps.main_stereo_calibration path\to\session1\manifest.json path\to\session2\manifest.json --charuco
 ```
 
 Equivalent explicit values:
 
 ```powershell
-python -m main_stereo_calibration path\to\manifest.json `
+python -m triton_analysis.apps.main_stereo_calibration path\to\manifest.json `
   --charuco `
   --squares-x 12 `
   --squares-y 9 `
-  --square-size 60 `
-  --marker-size 45 `
+  --square-size 6 `
+  --marker-size 4.5 `
   --dictionary DICT_5X5_1000 `
-  --units mm
+  --units cm
 ```
 
 ChArUco is preferred when the board is partially visible or when the fisheye
@@ -111,9 +111,9 @@ session when possible. It stores:
 The artifact is the handoff point for the stereo depth applet:
 
 ```powershell
-python -m main_stereo_depth path\to\manifest.json
-python -m main_stereo_segment_measurement path\to\manifest.json
-python -m main_stereo_iceberg_measurement path\to\manifest.json
+python -m triton_analysis.apps.main_stereo_depth path\to\manifest.json
+python -m triton_analysis.apps.main_stereo_segment_measurement path\to\manifest.json
+python -m triton_analysis.apps.main_stereo_iceberg_measurement path\to\manifest.json
 ```
 
 If `stereo_calibration.json` lives next to the manifest, the depth applet loads

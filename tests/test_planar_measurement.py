@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from planar_measurement import (
+from triton_analysis.measurement.planar import (
     MeasurementError,
     measure_planar_height,
     measure_planar_height_from_plane,

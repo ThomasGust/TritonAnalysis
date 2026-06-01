@@ -1,7 +1,7 @@
 from pathlib import Path
 from datetime import datetime
 
-from analysis_workspace import (
+from triton_analysis.workspace import (
     DEFAULT_WORKSPACE_NAME,
     ENV_WORKSPACE_ROOT,
     REPO_ROOT,

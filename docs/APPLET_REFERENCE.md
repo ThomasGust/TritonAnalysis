@@ -8,8 +8,9 @@ implementation lives.
 Launch:
 
 ```powershell
-python -m main_triton_analysis
-python -m main_triton_analysis --stereo-manifest path\to\stereo_session --calibration path\to\stereo_calibration.json
+python -m triton_analysis.apps.main_triton_analysis
+python main_triton_analysis.py
+python -m triton_analysis.apps.main_triton_analysis --stereo-manifest path\to\stereo_session --calibration path\to\stereo_calibration.json
 ```
 
 Purpose:
@@ -31,8 +32,8 @@ Tabs:
 
 Primary modules:
 
-- `main_triton_analysis.py`
-- `gui/triton_analysis_window.py`
+- `triton_analysis/apps/main_triton_analysis.py`
+- `triton_analysis/gui/triton_analysis_window.py`
 - The same window modules used by the standalone applets
 
 ## Crab Detection
@@ -40,8 +41,8 @@ Primary modules:
 Launch:
 
 ```powershell
-python -m main_crab_detection [image-folder-or-file ...]
-python -m main_crab_detection path\to\archive --detector yolo --yolo-model Workspace\models\crab_yolo\run\weights\best.pt
+python -m triton_analysis.apps.main_crab_detection [image-folder-or-file ...]
+python -m triton_analysis.apps.main_crab_detection path\to\archive --detector yolo --yolo-model Workspace\models\crab_yolo\run\weights\best.pt
 ```
 
 Purpose:
@@ -53,9 +54,9 @@ Purpose:
 
 Primary modules:
 
-- `main_crab_detection.py`
-- `gui/crab_detection_window.py`
-- `crab_detector.py`
+- `triton_analysis/apps/main_crab_detection.py`
+- `triton_analysis/gui/crab_detection_window.py`
+- `triton_analysis/crab/detector.py`
 - `tools/crab_image_detect.py`
 - `tools/crab_yolo_predict.py`
 
@@ -77,7 +78,7 @@ python -m tools.crab_image_detect path\to\images --output-dir path\to\results
 Launch:
 
 ```powershell
-python -m main_iceberg_tracking
+python -m triton_analysis.apps.main_iceberg_tracking
 ```
 
 Purpose:
@@ -89,9 +90,9 @@ Purpose:
 
 Primary modules:
 
-- `main_iceberg_tracking.py`
-- `gui/iceberg_tracking_window.py`
-- `iceberg_tracking.py`
+- `triton_analysis/apps/main_iceberg_tracking.py`
+- `triton_analysis/gui/iceberg_tracking_window.py`
+- `triton_analysis/iceberg/tracking.py`
 
 Inputs:
 
@@ -113,7 +114,7 @@ Outputs:
 Launch:
 
 ```powershell
-python -m main_iceberg_measurement [image-or-video ...]
+python -m triton_analysis.apps.main_iceberg_measurement [image-or-video ...]
 ```
 
 Purpose:
@@ -123,9 +124,9 @@ Purpose:
 
 Primary modules:
 
-- `main_iceberg_measurement.py`
-- `gui/iceberg_measurement_window.py`
-- `iceberg_measurement.py`
+- `triton_analysis/apps/main_iceberg_measurement.py`
+- `triton_analysis/gui/iceberg_measurement_window.py`
+- `triton_analysis/iceberg/measurement.py`
 
 Inputs:
 
@@ -144,7 +145,7 @@ Outputs:
 Launch:
 
 ```powershell
-python -m main_planar_height_measurement [image-or-video ...]
+python -m triton_analysis.apps.main_planar_height_measurement [image-or-video ...]
 ```
 
 Purpose:
@@ -154,9 +155,9 @@ Purpose:
 
 Primary modules:
 
-- `main_planar_height_measurement.py`
-- `gui/planar_height_measurement_window.py`
-- `planar_measurement.py`
+- `triton_analysis/apps/main_planar_height_measurement.py`
+- `triton_analysis/gui/planar_height_measurement_window.py`
+- `triton_analysis/measurement/planar.py`
 
 Inputs:
 
@@ -176,7 +177,7 @@ Outputs:
 Launch:
 
 ```powershell
-python -m main_multi_rect_length_measurement [image-or-video ...]
+python -m triton_analysis.apps.main_multi_rect_length_measurement [image-or-video ...]
 ```
 
 Purpose:
@@ -186,9 +187,9 @@ Purpose:
 
 Primary modules:
 
-- `main_multi_rect_length_measurement.py`
-- `gui/multi_rect_length_measurement_window.py`
-- `planar_measurement.py`
+- `triton_analysis/apps/main_multi_rect_length_measurement.py`
+- `triton_analysis/gui/multi_rect_length_measurement_window.py`
+- `triton_analysis/measurement/planar.py`
 
 Inputs:
 
@@ -207,8 +208,8 @@ Outputs:
 Launch:
 
 ```powershell
-python -m main_stereo_calibration_gui [manifest.json]
-python -m main_stereo_calibration path\to\manifest.json [more-manifests-or-folders ...] --charuco
+python -m triton_analysis.apps.main_stereo_calibration_gui [manifest.json]
+python -m triton_analysis.apps.main_stereo_calibration path\to\manifest.json [more-manifests-or-folders ...] --charuco
 ```
 
 Purpose:
@@ -220,16 +221,16 @@ Purpose:
 
 Primary modules:
 
-- `main_stereo_calibration_gui.py`
-- `main_stereo_calibration.py`
-- `gui/stereo_calibration_window.py`
-- `stereo_calibration.py`
+- `triton_analysis/apps/main_stereo_calibration_gui.py`
+- `triton_analysis/apps/main_stereo_calibration.py`
+- `triton_analysis/gui/stereo_calibration_window.py`
+- `triton_analysis/stereo/calibration.py`
 
 Inputs:
 
 - TritonPilot stereo `manifest.json` files or stereo session folders
 - Checkerboard or ChArUco board dimensions; defaults match Triton's ChArUco
-  board: 12 columns, 9 rows, 60 mm squares, 45 mm markers,
+  board: 12 columns, 9 rows, 6 cm squares, 4.5 cm markers,
   `DICT_5X5_1000`
 - Minimum accepted pair/corner thresholds
 
@@ -244,8 +245,8 @@ Outputs:
 Launch:
 
 ```powershell
-python -m main_stereo_depth path\to\manifest.json
-python -m main_stereo_depth path\to\manifest.json --calibration path\to\stereo_calibration.json
+python -m triton_analysis.apps.main_stereo_depth path\to\manifest.json
+python -m triton_analysis.apps.main_stereo_depth path\to\manifest.json --calibration path\to\stereo_calibration.json
 ```
 
 Purpose:
@@ -260,10 +261,10 @@ Purpose:
 
 Primary modules:
 
-- `main_stereo_depth.py`
-- `gui/stereo_depth_window.py`
-- `stereo_depth.py`
-- `stereo_calibration.py`
+- `triton_analysis/apps/main_stereo_depth.py`
+- `triton_analysis/gui/stereo_depth_window.py`
+- `triton_analysis/stereo/depth.py`
+- `triton_analysis/stereo/calibration.py`
 
 Inputs:
 
@@ -285,10 +286,10 @@ Outputs:
 Launch:
 
 ```powershell
-python -m main_stereo_segment_measurement path\to\manifest.json
-python -m main_stereo_segment_measurement path\to\manifest.json --preset coral
-python -m main_stereo_iceberg_measurement path\to\manifest.json
-python -m main_stereo_iceberg_measurement path\to\manifest.json --calibration path\to\stereo_calibration.json
+python -m triton_analysis.apps.main_stereo_segment_measurement path\to\manifest.json
+python -m triton_analysis.apps.main_stereo_segment_measurement path\to\manifest.json --preset coral
+python -m triton_analysis.apps.main_stereo_iceberg_measurement path\to\manifest.json
+python -m triton_analysis.apps.main_stereo_iceberg_measurement path\to\manifest.json --calibration path\to\stereo_calibration.json
 ```
 
 Purpose:
@@ -304,13 +305,13 @@ Purpose:
 
 Primary modules:
 
-- `main_stereo_segment_measurement.py`
-- `main_stereo_iceberg_measurement.py`
-- `gui/stereo_segment_measurement_window.py`
-- `gui/stereo_iceberg_measurement_window.py`
-- `stereo_segment_measurement.py`
-- `stereo_iceberg_measurement.py`
-- `stereo_depth.py`
+- `triton_analysis/apps/main_stereo_segment_measurement.py`
+- `triton_analysis/apps/main_stereo_iceberg_measurement.py`
+- `triton_analysis/gui/stereo_segment_measurement_window.py`
+- `triton_analysis/gui/stereo_iceberg_measurement_window.py`
+- `triton_analysis/stereo/segment_measurement.py`
+- `triton_analysis/stereo/iceberg_measurement.py`
+- `triton_analysis/stereo/depth.py`
 
 Inputs:
 
@@ -332,7 +333,7 @@ Outputs:
 Launch:
 
 ```powershell
-python -m main_realityscan_reconstruction path\to\stereo_session --calibration path\to\stereo_calibration.json
+python -m triton_analysis.apps.main_realityscan_reconstruction path\to\stereo_session --calibration path\to\stereo_calibration.json
 ```
 
 Purpose:
@@ -349,8 +350,8 @@ Purpose:
 
 Primary modules:
 
-- `main_realityscan_reconstruction.py`
-- `gui/realityscan_reconstruction_window.py`
+- `triton_analysis/apps/main_realityscan_reconstruction.py`
+- `triton_analysis/gui/realityscan_reconstruction_window.py`
 - Existing pipeline checkout selected in the GUI's `Pipeline Root` field
 
 Inputs:
@@ -371,7 +372,7 @@ Outputs:
 Launch:
 
 ```powershell
-python -m main_realityscan_model_viewer path\to\underwater_model_metric.obj
+python -m triton_analysis.apps.main_realityscan_model_viewer path\to\underwater_model_metric.obj
 ```
 
 Purpose:
@@ -380,7 +381,7 @@ Purpose:
 - Orbit, pan, zoom, frame the model, and inspect the textured mesh in an
   embedded Qt WebEngine view or browser fallback.
 - Create multiple two-point measurement lines and report straight-line
-  distances in meters, centimeters, or millimeters.
+  distances in centimeters by default, with meters or millimeters available.
 - Show a small distance label over each completed measurement line in the
   viewport.
 - Drag existing endpoints along the mesh surface, delete selected points or
@@ -390,8 +391,8 @@ Purpose:
 
 Primary modules:
 
-- `main_realityscan_model_viewer.py`
-- `gui/realityscan_model_viewer_window.py`
+- `triton_analysis/apps/main_realityscan_model_viewer.py`
+- `triton_analysis/gui/realityscan_model_viewer_window.py`
 
 Inputs:
 
@@ -409,7 +410,7 @@ Outputs:
 Launch:
 
 ```powershell
-python -m main_coral_garden_model
+python -m triton_analysis.apps.main_coral_garden_model
 ```
 
 Purpose:
@@ -420,9 +421,9 @@ Purpose:
 
 Primary modules:
 
-- `main_coral_garden_model.py`
-- `gui/coral_garden_model_window.py`
-- `coral_garden_model.py`
+- `triton_analysis/apps/main_coral_garden_model.py`
+- `triton_analysis/gui/coral_garden_model_window.py`
+- `triton_analysis/coral/garden_model.py`
 
 Inputs:
 
@@ -442,8 +443,8 @@ Outputs:
 Launch:
 
 ```powershell
-python -m main_edna_analysis
-python -m main_edna_analysis --sample
+python -m triton_analysis.apps.main_edna_analysis
+python -m triton_analysis.apps.main_edna_analysis --sample
 ```
 
 Purpose:
@@ -453,9 +454,9 @@ Purpose:
 
 Primary modules:
 
-- `main_edna_analysis.py`
-- `gui/edna_analysis_window.py`
-- `edna_analysis.py`
+- `triton_analysis/apps/main_edna_analysis.py`
+- `triton_analysis/gui/edna_analysis_window.py`
+- `triton_analysis/edna/analysis.py`
 
 Inputs:
 
@@ -473,7 +474,7 @@ Outputs:
 Launch:
 
 ```powershell
-python -m color_corr
+python -m triton_analysis.apps.color_corr
 ```
 
 Purpose:
@@ -484,8 +485,8 @@ Purpose:
 
 Primary modules:
 
-- `color_corr.py`
-- `gui/responsive.py`
+- `triton_analysis/apps/color_corr.py`
+- `triton_analysis/gui/responsive.py`
 
 Inputs:
 

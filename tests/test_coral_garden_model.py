@@ -1,6 +1,6 @@
 import pytest
 
-from coral_garden_model import (
+from triton_analysis.coral.garden_model import (
     DEFAULT_CORAL_GARDEN_WIDTH_CM,
     build_coral_garden_prisms,
     export_obj,

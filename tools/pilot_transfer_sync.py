@@ -6,7 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from pilot_transfer import DEFAULT_INBOX, DEFAULT_PILOT_TRANSFER_URL, sync_from_pilot
+from triton_analysis.sync.pilot_transfer import DEFAULT_INBOX, DEFAULT_PILOT_TRANSFER_URL, sync_from_pilot
 
 
 def build_parser() -> argparse.ArgumentParser:

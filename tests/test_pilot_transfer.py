@@ -7,7 +7,7 @@ from urllib.parse import unquote
 
 import pytest
 
-from pilot_transfer import PilotTransferSummary, fetch_pilot_index, sync_from_pilot
+from triton_analysis.sync.pilot_transfer import PilotTransferSummary, fetch_pilot_index, sync_from_pilot
 
 
 class _TransferHandler(BaseHTTPRequestHandler):
@@ -109,7 +109,7 @@ def test_sync_dry_run_does_not_write(tmp_path: Path):
 
 def test_pilot_transfer_sync_worker_reports_success(tmp_path: Path):
     pytest.importorskip("PyQt6")
-    from gui.pilot_transfer_sync import PilotTransferSyncWorker
+    from triton_analysis.gui.pilot_transfer_sync import PilotTransferSyncWorker
 
     payloads = []
 

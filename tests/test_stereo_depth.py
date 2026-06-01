@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from stereo_depth import (
+from triton_analysis.stereo.depth import (
     colorize_depth,
     colorize_disparity,
     distance_between_samples,

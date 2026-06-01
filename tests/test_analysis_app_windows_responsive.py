@@ -10,8 +10,8 @@ pytest.importorskip("PyQt6")
 from PyQt6.QtCore import QSettings, Qt
 from PyQt6.QtWidgets import QApplication, QScrollArea, QTabWidget
 
-from gui.style import apply_modern_style
-from analysis_workspace import set_active_workspace_root
+from triton_analysis.gui.style import apply_modern_style
+from triton_analysis.workspace import set_active_workspace_root
 
 
 def _app() -> QApplication:
@@ -50,21 +50,21 @@ def _isolate_unified_app_settings():
 @pytest.mark.parametrize(
     ("window_path", "min_scroll_areas"),
     [
-        ("gui.triton_analysis_window.TritonAnalysisWindow", 6),
-        ("gui.crab_detection_window.CrabDetectionWindow", 1),
-        ("gui.edna_analysis_window.EDNAAnalysisWindow", 1),
-        ("gui.iceberg_tracking_window.IcebergTrackingWindow", 1),
-        ("gui.coral_garden_model_window.CoralGardenModelWindow", 0),
-        ("gui.iceberg_measurement_window.IcebergMeasurementWindow", 2),
-        ("gui.planar_height_measurement_window.PlanarHeightMeasurementWindow", 2),
-        ("gui.multi_rect_length_measurement_window.MultiRectLengthMeasurementWindow", 2),
-        ("gui.stereo_calibration_window.StereoCalibrationWindow", 1),
-        ("gui.stereo_depth_window.StereoDepthWindow", 1),
-        ("gui.stereo_segment_measurement_window.StereoSegmentMeasurementWindow", 1),
-        ("gui.stereo_iceberg_measurement_window.StereoIcebergMeasurementWindow", 1),
-        ("gui.realityscan_reconstruction_window.RealityScanReconstructionWindow", 1),
-        ("gui.realityscan_model_viewer_window.RealityScanModelViewerWindow", 1),
-        ("color_corr.MainWindow", 3),
+        ("triton_analysis.gui.triton_analysis_window.TritonAnalysisWindow", 6),
+        ("triton_analysis.gui.crab_detection_window.CrabDetectionWindow", 1),
+        ("triton_analysis.gui.edna_analysis_window.EDNAAnalysisWindow", 1),
+        ("triton_analysis.gui.iceberg_tracking_window.IcebergTrackingWindow", 1),
+        ("triton_analysis.gui.coral_garden_model_window.CoralGardenModelWindow", 0),
+        ("triton_analysis.gui.iceberg_measurement_window.IcebergMeasurementWindow", 2),
+        ("triton_analysis.gui.planar_height_measurement_window.PlanarHeightMeasurementWindow", 2),
+        ("triton_analysis.gui.multi_rect_length_measurement_window.MultiRectLengthMeasurementWindow", 2),
+        ("triton_analysis.gui.stereo_calibration_window.StereoCalibrationWindow", 1),
+        ("triton_analysis.gui.stereo_depth_window.StereoDepthWindow", 1),
+        ("triton_analysis.gui.stereo_segment_measurement_window.StereoSegmentMeasurementWindow", 1),
+        ("triton_analysis.gui.stereo_iceberg_measurement_window.StereoIcebergMeasurementWindow", 1),
+        ("triton_analysis.gui.realityscan_reconstruction_window.RealityScanReconstructionWindow", 1),
+        ("triton_analysis.gui.realityscan_model_viewer_window.RealityScanModelViewerWindow", 1),
+        ("triton_analysis.apps.color_corr.MainWindow", 3),
     ],
 )
 def test_analysis_windows_fit_available_screen(window_path: str, min_scroll_areas: int):
@@ -92,7 +92,7 @@ def test_analysis_windows_fit_available_screen(window_path: str, min_scroll_area
 
 def test_multi_rect_actions_and_anchor_canvases_are_visible():
     app = _app()
-    from gui.multi_rect_length_measurement_window import MultiRectLengthMeasurementWindow
+    from triton_analysis.gui.multi_rect_length_measurement_window import MultiRectLengthMeasurementWindow
 
     window = MultiRectLengthMeasurementWindow()
     try:
@@ -126,7 +126,7 @@ def test_multi_rect_actions_and_anchor_canvases_are_visible():
 
 def test_unified_analysis_window_contains_competition_tabs():
     app = _app()
-    from gui.triton_analysis_window import TritonAnalysisWindow
+    from triton_analysis.gui.triton_analysis_window import TritonAnalysisWindow
 
     window = TritonAnalysisWindow()
     try:
@@ -159,7 +159,7 @@ def test_unified_analysis_window_contains_competition_tabs():
 
 def test_unified_analysis_window_shows_pilot_sync_destination(tmp_path: Path):
     app = _app()
-    from gui.triton_analysis_window import TritonAnalysisWindow
+    from triton_analysis.gui.triton_analysis_window import TritonAnalysisWindow
 
     destination = tmp_path / "incoming"
     window = TritonAnalysisWindow(
@@ -184,7 +184,7 @@ def test_unified_analysis_window_shows_pilot_sync_destination(tmp_path: Path):
 
 def test_unified_analysis_window_uses_workspace_relative_sync_label(tmp_path: Path):
     app = _app()
-    from gui.triton_analysis_window import TritonAnalysisWindow
+    from triton_analysis.gui.triton_analysis_window import TritonAnalysisWindow
 
     workspace = tmp_path / "analysis-workspace"
     window = TritonAnalysisWindow(
@@ -219,8 +219,8 @@ def test_unified_analysis_window_uses_workspace_relative_sync_label(tmp_path: Pa
 
 def test_unified_analysis_window_ignores_pytest_saved_workspace(tmp_path: Path):
     app = _app()
-    from analysis_workspace import REPO_ROOT
-    from gui.triton_analysis_window import TritonAnalysisWindow
+    from triton_analysis.workspace import REPO_ROOT
+    from triton_analysis.gui.triton_analysis_window import TritonAnalysisWindow
 
     stale_workspace = Path(".pytest-work") / "pytest-of-Thoma" / "pytest-1" / "test_case" / "workspace"
     settings = QSettings("TritonAnalysis", "UnifiedApp")
@@ -243,7 +243,7 @@ def test_unified_analysis_window_ignores_pytest_saved_workspace(tmp_path: Path):
 
 def test_unified_analysis_window_shows_pilot_sync_transfer_progress(tmp_path: Path):
     app = _app()
-    from gui.triton_analysis_window import TritonAnalysisWindow
+    from triton_analysis.gui.triton_analysis_window import TritonAnalysisWindow
 
     window = TritonAnalysisWindow(
         pilot_transfer_auto_sync=False,
@@ -297,8 +297,8 @@ def test_unified_analysis_window_shows_pilot_sync_transfer_progress(tmp_path: Pa
 
 def test_unified_analysis_sync_now_finishes_from_background_worker(tmp_path: Path):
     app = _app()
-    from pilot_transfer import PilotTransferSummary
-    from gui.triton_analysis_window import TritonAnalysisWindow
+    from triton_analysis.sync.pilot_transfer import PilotTransferSummary
+    from triton_analysis.gui.triton_analysis_window import TritonAnalysisWindow
 
     def _fake_sync(base_url, destination, *, overwrite=False, timeout=10.0, progress_callback=None):
         if progress_callback is not None:
@@ -341,8 +341,8 @@ def test_unified_analysis_sync_now_finishes_from_background_worker(tmp_path: Pat
 
 def test_edna_count_entry_rows_are_visible_without_table_scroll():
     app = _app()
-    from edna_analysis import DEFAULT_SPECIES
-    from gui.edna_analysis_window import EDNAAnalysisWindow
+    from triton_analysis.edna.analysis import DEFAULT_SPECIES
+    from triton_analysis.gui.edna_analysis_window import EDNAAnalysisWindow
 
     window = EDNAAnalysisWindow()
     try:

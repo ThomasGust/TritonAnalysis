@@ -42,8 +42,8 @@ From the TritonAnalysis repository root:
 Competition-day tabbed app:
 
 ```powershell
-python -m main_triton_analysis
-python -m main_triton_analysis --stereo-manifest path\to\stereo_session --calibration path\to\stereo_calibration.json
+python -m triton_analysis.apps.main_triton_analysis
+python -m triton_analysis.apps.main_triton_analysis --stereo-manifest path\to\stereo_session --calibration path\to\stereo_calibration.json
 ```
 
 The unified app includes Coral Reconstruction, Crab Detection, Stereo Iceberg
@@ -64,65 +64,65 @@ trigger a manual sync.
 Crab detection:
 
 ```powershell
-python -m main_crab_detection path\to\images
+python -m triton_analysis.apps.main_crab_detection path\to\images
 python -m tools.crab_image_detect path\to\images --output-dir path\to\results
 ```
 
 Iceberg tracking:
 
 ```powershell
-python -m main_iceberg_tracking
+python -m triton_analysis.apps.main_iceberg_tracking
 ```
 
 Iceberg measurement:
 
 ```powershell
-python -m main_iceberg_measurement path\to\image_or_video
+python -m triton_analysis.apps.main_iceberg_measurement path\to\image_or_video
 ```
 
 Stereo segment measurement:
 
 ```powershell
-python -m main_stereo_segment_measurement path\to\stereo_session
-python -m main_stereo_segment_measurement path\to\stereo_session --preset coral
-python -m main_stereo_iceberg_measurement path\to\stereo_session
+python -m triton_analysis.apps.main_stereo_segment_measurement path\to\stereo_session
+python -m triton_analysis.apps.main_stereo_segment_measurement path\to\stereo_session --preset coral
+python -m triton_analysis.apps.main_stereo_iceberg_measurement path\to\stereo_session
 ```
 
 RealityScan stereo reconstruction:
 
 ```powershell
-python -m main_realityscan_reconstruction path\to\stereo_session --calibration path\to\stereo_calibration.json
-python -m main_realityscan_model_viewer path\to\underwater_model_metric.obj
+python -m triton_analysis.apps.main_realityscan_reconstruction path\to\stereo_session --calibration path\to\stereo_calibration.json
+python -m triton_analysis.apps.main_realityscan_model_viewer path\to\underwater_model_metric.obj
 ```
 
 Planar height measurement:
 
 ```powershell
-python -m main_planar_height_measurement path\to\image_or_video
+python -m triton_analysis.apps.main_planar_height_measurement path\to\image_or_video
 ```
 
 Multi-rectangle length measurement:
 
 ```powershell
-python -m main_multi_rect_length_measurement path\to\image_or_video
+python -m triton_analysis.apps.main_multi_rect_length_measurement path\to\image_or_video
 ```
 
 Coral garden model:
 
 ```powershell
-python -m main_coral_garden_model
+python -m triton_analysis.apps.main_coral_garden_model
 ```
 
 eDNA frequency:
 
 ```powershell
-python -m main_edna_analysis
+python -m triton_analysis.apps.main_edna_analysis
 ```
 
 Color correction:
 
 ```powershell
-python -m color_corr
+python -m triton_analysis.apps.color_corr
 ```
 
 ## Crab Detection Workflow
@@ -135,7 +135,7 @@ bounding boxes around them.
 Use the GUI for review:
 
 ```powershell
-python -m main_crab_detection path\to\images
+python -m triton_analysis.apps.main_crab_detection path\to\images
 ```
 
 The GUI's `Auto` detector mode uses the newest trained YOLO crab weights under
@@ -143,7 +143,7 @@ The GUI's `Auto` detector mode uses the newest trained YOLO crab weights under
 projection. To force a specific YOLO model for archive review:
 
 ```powershell
-python -m main_crab_detection path\to\archive --detector yolo --yolo-model Workspace\models\crab_yolo\run\weights\best.pt
+python -m triton_analysis.apps.main_crab_detection path\to\archive --detector yolo --yolo-model Workspace\models\crab_yolo\run\weights\best.pt
 ```
 
 Use the batch image helper when processing many still photos:
@@ -232,9 +232,9 @@ Floor` undoes the alignment. Use `Roll -` / `Roll +` and the roll-step selector
 for manual camera roll when a model needs a custom viewing angle. The viewer
 also includes `Fit`, `Reset`, preset camera views, a toggleable 3D grid, and
 optional measurement labels.
-Select `Measure`, click pairs of points on the mesh, and choose meters,
-centimeters, or millimeters for the readout. Each completed line gets a small
-in-viewport distance tag near its midpoint. Existing endpoints can be selected
+Select `Measure`, click pairs of points on the mesh, and use the default
+centimeter readout unless you explicitly need meters or millimeters. Each
+completed line gets a small in-viewport distance tag near its midpoint. Existing endpoints can be selected
 and dragged while Measure is active; `Delete` removes the selected endpoint, or
 the active measurement when no endpoint is selected. `Set Center` moves the
 visible 3D cursor and orbit pivot to the next clicked mesh point. `Pick Assist`
@@ -244,8 +244,8 @@ are easier to distinguish from the pool floor. Use `Edges` when extra cyan
 surface boundary lines help separate objects from the background.
 
 For post-submission ground truth, select the completed measurement that was used
-as the guess, enter the true length and units in the ground-truth controls, and
-click `Apply Scale`. The viewer applies a uniform scale factor to the model,
+as the guess, enter the true length in the centimeter-default ground-truth
+controls, and click `Apply Scale`. The viewer applies a uniform scale factor to the model,
 measurements, markers, grid, camera target, and saved view so follow-up
 measurements use the corrected scale. Keep `underwater_model_metric.obj` as the
 preferred input when you need real-world distances.
@@ -262,7 +262,7 @@ Use them as calculation/report tools:
 
 ## Color Correction And Frame Export
 
-`color_corr.py` is for preprocessing underwater videos and exporting corrected
+`triton_analysis/apps/color_corr.py` is for preprocessing underwater videos and exporting corrected
 versions or selected frames. It is intentionally repeatable and conservative;
 it is not meant to invent visual detail.
 

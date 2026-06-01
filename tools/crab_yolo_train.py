@@ -12,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from analysis_workspace import workspace_paths  # noqa: E402
+from triton_analysis.workspace import workspace_paths  # noqa: E402
 
 
 DEFAULT_BASE_MODEL = "yolo11n.pt"

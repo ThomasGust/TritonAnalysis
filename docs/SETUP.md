@@ -44,7 +44,7 @@ python -m pytest
 Launch an applet:
 
 ```powershell
-python -m main_crab_detection
+python -m triton_analysis.apps.main_crab_detection
 ```
 
 ## macOS And Linux Setup
@@ -68,7 +68,7 @@ python -m pytest
 Launch an applet:
 
 ```sh
-python -m main_iceberg_tracking
+python -m triton_analysis.apps.main_iceberg_tracking
 ```
 
 ## Applet Smoke Tests
@@ -76,14 +76,14 @@ python -m main_iceberg_tracking
 These commands should at least open the GUI on a properly configured desktop:
 
 ```powershell
-python -m main_crab_detection
-python -m main_iceberg_tracking
-python -m main_coral_garden_model
-python -m main_edna_analysis --sample
-python -m main_iceberg_measurement
-python -m main_planar_height_measurement
-python -m main_multi_rect_length_measurement
-python -m color_corr
+python -m triton_analysis.apps.main_crab_detection
+python -m triton_analysis.apps.main_iceberg_tracking
+python -m triton_analysis.apps.main_coral_garden_model
+python -m triton_analysis.apps.main_edna_analysis --sample
+python -m triton_analysis.apps.main_iceberg_measurement
+python -m triton_analysis.apps.main_planar_height_measurement
+python -m triton_analysis.apps.main_multi_rect_length_measurement
+python -m triton_analysis.apps.color_corr
 ```
 
 Close each window before launching the next one if the machine is resource
@@ -105,7 +105,7 @@ For competition use, TritonAnalysis creates a local ignored `Workspace` folder
 inside the repo for incoming media, reports, and generated results:
 
 ```powershell
-python -c "from analysis_workspace import workspace_paths; workspace_paths(create=True)"
+python -c "from triton_analysis.workspace import workspace_paths; workspace_paths(create=True)"
 ```
 
 Keep original captures unchanged and write applet outputs to a separate results

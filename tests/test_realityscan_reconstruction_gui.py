@@ -9,9 +9,9 @@ pytest.importorskip("PyQt6")
 
 from PyQt6.QtWidgets import QApplication
 
-from gui.realityscan_reconstruction_window import RealityScanReconstructionWindow
-from gui.realityscan_model_viewer_window import RealityScanModelViewerPanel
-from gui.style import apply_modern_style
+from triton_analysis.gui.realityscan_reconstruction_window import RealityScanReconstructionWindow
+from triton_analysis.gui.realityscan_model_viewer_window import RealityScanModelViewerPanel
+from triton_analysis.gui.style import apply_modern_style
 
 
 def _app() -> QApplication:

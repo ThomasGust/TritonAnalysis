@@ -11,7 +11,7 @@ from PyQt6.QtCore import QPoint, QRectF, Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
-from gui.canvas_navigation import clamp_pan_to_edge_margin
+from triton_analysis.gui.canvas_navigation import clamp_pan_to_edge_margin
 
 
 def test_zoomed_canvas_pan_allows_image_edges_to_move_inward():
@@ -33,7 +33,7 @@ def test_zoomed_canvas_pan_allows_image_edges_to_move_inward():
 
 def test_left_drag_on_empty_zoomed_measurement_canvas_pans_instead_of_adding_point():
     app = QApplication.instance() or QApplication([])
-    from gui.iceberg_measurement_window import AFFINE_MODE, ClickSpec, MeasurementCanvas
+    from triton_analysis.gui.iceberg_measurement_window import AFFINE_MODE, ClickSpec, MeasurementCanvas
 
     canvas = MeasurementCanvas()
     canvas.set_click_specs(AFFINE_MODE, [ClickSpec("a", "Point A")], clear=True)

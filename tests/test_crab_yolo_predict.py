@@ -2,7 +2,7 @@ import argparse
 
 import pytest
 
-from analysis_workspace import set_active_workspace_root
+from triton_analysis.workspace import set_active_workspace_root
 from tools.crab_yolo_predict import (
     YoloPrediction,
     _boxes_text,

@@ -4,7 +4,7 @@ from pathlib import Path
 import cv2
 import pytest
 
-from crab_detector import (
+from triton_analysis.crab.detector import (
     default_reference_image_path,
     detect_european_green_crabs,
     detection_summary_text,
@@ -64,7 +64,7 @@ def test_crab_detector_draws_annotated_output():
 def test_crab_detection_window_runs_on_loaded_image():
     pytest.importorskip("PyQt6")
     from PyQt6.QtWidgets import QApplication
-    from gui.crab_detection_window import CrabDetectionWindow
+    from triton_analysis.gui.crab_detection_window import CrabDetectionWindow
 
     app = QApplication.instance() or QApplication([])
     image_path = _reference_image()

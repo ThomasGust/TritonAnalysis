@@ -1,11 +1,11 @@
 # TritonAnalysis Architecture
 
-TritonAnalysis uses a simple applet architecture: top-level entry points create
+TritonAnalysis uses a simple applet architecture: packaged entry points create
 PyQt windows, GUI classes handle operator interaction, and pure analysis modules
 perform the calculations. This keeps task logic testable without launching the
 full GUI.
 
-`main_triton_analysis.py` composes the competition-critical windows into one
+`triton_analysis/apps/main_triton_analysis.py` composes the competition-critical windows into one
 tabbed operator app. The original single-purpose entry points still launch the
 same window classes directly, which keeps them useful as field backups.
 
@@ -31,12 +31,12 @@ Those responsibilities belong to TritonPilot and TritonOS.
 
 ## Entry Point Pattern
 
-Each `main_*.py` file follows the same pattern:
+Each `triton_analysis/apps/main_*.py` file follows the same pattern:
 
 1. Build an `argparse.ArgumentParser`.
 2. Create a `QApplication`.
-3. Apply the shared GUI style from `gui/style.py`.
-4. Construct the applet window from `gui/`.
+3. Apply the shared GUI style from `triton_analysis/gui/style.py`.
+4. Construct the applet window from `triton_analysis/gui/`.
 5. Show the window and enter the Qt event loop.
 
 This makes applets easy to launch with `python -m ...` while keeping their
@@ -47,34 +47,34 @@ logic in importable modules.
 The core analysis modules are ordinary Python modules with functions and data
 classes:
 
-- `iceberg_tracking.py` handles coordinate conversion, closest-approach
+- `triton_analysis/iceberg/tracking.py` handles coordinate conversion, closest-approach
   geometry, threat levels, survey sequence validation, and report generation.
-- `crab_detector.py` matches the fixed crab board reference image, projects the
+- `triton_analysis/crab/detector.py` matches the fixed crab board reference image, projects the
   known European green crab boxes, and renders annotated images.
-- `iceberg_measurement.py` measures iceberg PVC segments using affine,
+- `triton_analysis/iceberg/measurement.py` measures iceberg PVC segments using affine,
   line-endpoint, and spatial calibration helpers.
-- `planar_measurement.py` performs homography-based planar height and segment
+- `triton_analysis/measurement/planar.py` performs homography-based planar height and segment
   measurement.
-- `coral_garden_model.py` builds a three-prism coral garden model and exports
+- `triton_analysis/coral/garden_model.py` builds a three-prism coral garden model and exports
   OBJ text.
-- `edna_analysis.py` calculates percent frequencies and formats judge reports
+- `triton_analysis/edna/analysis.py` calculates percent frequencies and formats judge reports
   or CSV text.
-- `color_corr.py` contains both GUI and image-processing classes for video
+- `triton_analysis/apps/color_corr.py` contains both GUI and image-processing classes for video
   correction and frame export.
-- `stereo_calibration.py` calibrates stereo rigs from saved TritonPilot
+- `triton_analysis/stereo/calibration.py` calibrates stereo rigs from saved TritonPilot
   left/right image-pair manifests and writes OpenCV calibration artifacts.
-- `stereo_depth.py` applies stereo calibration artifacts for rectification,
+- `triton_analysis/stereo/depth.py` applies stereo calibration artifacts for rectification,
   disparity, depth reprojection, and 3D point sampling.
-- `stereo_segment_measurement.py` measures straight 3D segments from endpoint
+- `triton_analysis/stereo/segment_measurement.py` measures straight 3D segments from endpoint
   correspondences clicked in rectified stereo views.
-- `stereo_iceberg_measurement.py` keeps backward-compatible wrappers for the
+- `triton_analysis/stereo/iceberg_measurement.py` keeps backward-compatible wrappers for the
   iceberg keel workflow.
 
 Tests should target these modules directly when possible.
 
 ## GUI Layer
 
-The `gui/` package owns PyQt windows, canvases, dialogs, styling, and responsive
+The `triton_analysis/gui/` package owns PyQt windows, canvases, dialogs, styling, and responsive
 layout helpers. It should gather operator input, preview media, display errors,
 and call the core modules for calculations.
 
@@ -123,9 +123,9 @@ judge-facing report, table, CSV, or visual model
 
 When adding a new applet:
 
-1. Put reusable calculation logic in a top-level module.
-2. Add a `gui/` window for interaction.
-3. Add a `main_*.py` entry point.
+1. Put reusable calculation logic in the matching task package under `triton_analysis/`.
+2. Add a `triton_analysis/gui/` window for interaction.
+3. Add a `triton_analysis/apps/main_*.py` entry point.
 4. Add tests for core calculations.
 5. Add GUI smoke or layout tests when the window has important interaction
    surfaces.

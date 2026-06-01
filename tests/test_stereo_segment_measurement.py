@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from stereo_segment_measurement import (
+from triton_analysis.stereo.segment_measurement import (
     measure_stereo_segment,
     preset_by_key,
     right_endpoint_order_mismatch,

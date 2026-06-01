@@ -1,6 +1,6 @@
 import pytest
 
-from iceberg_tracking import (
+from triton_analysis.iceberg.tracking import (
     DEFAULT_PLATFORMS,
     Platform,
     assess_platform,
