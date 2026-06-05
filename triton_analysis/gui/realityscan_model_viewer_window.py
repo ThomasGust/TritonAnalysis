@@ -12,7 +12,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, unquote, urlparse
 
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import QTimer, Qt, QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QComboBox,
@@ -41,6 +41,7 @@ except Exception:  # pragma: no cover - depends on optional local install
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+VIEWER_ASSET_ROOT = Path(__file__).resolve().parent / "assets" / "three"
 
 
 def default_results_dir(*, create: bool = False) -> Path:
@@ -104,6 +105,9 @@ class _ViewerRequestHandler(SimpleHTTPRequestHandler):
         if parsed.path in ("", "/", "/viewer.html"):
             self._send_viewer_html()
             return
+        if parsed.path.startswith("/assets/three/"):
+            self._send_viewer_asset(parsed.path[len("/assets/three/") :], include_body=True)
+            return
         if parsed.path.startswith("/files/"):
             self._send_model_file(parsed.path[len("/files/") :], include_body=True)
             return
@@ -111,6 +115,9 @@ class _ViewerRequestHandler(SimpleHTTPRequestHandler):
 
     def do_HEAD(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path.startswith("/assets/three/"):
+            self._send_viewer_asset(parsed.path[len("/assets/three/") :], include_body=False)
+            return
         if parsed.path.startswith("/files/"):
             self._send_model_file(parsed.path[len("/files/") :], include_body=False)
             return
@@ -124,6 +131,31 @@ class _ViewerRequestHandler(SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+    def _send_viewer_asset(self, rel_url: str, *, include_body: bool) -> None:
+        rel_path = Path(unquote(rel_url))
+        if rel_path.is_absolute() or ".." in rel_path.parts:
+            self.send_error(HTTPStatus.FORBIDDEN)
+            return
+        asset_root = VIEWER_ASSET_ROOT.resolve()
+        path = (asset_root / rel_path).resolve()
+        if not _is_relative_to(path, asset_root) or not path.is_file():
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        ctype = "text/javascript; charset=utf-8" if path.suffix == ".js" else self.guess_type(str(path))
+        try:
+            data = path.read_bytes() if include_body else b""
+            size = path.stat().st_size
+        except OSError:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(size))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        if include_body:
+            self.wfile.write(data)
 
     def _send_model_file(self, rel_url: str, *, include_body: bool) -> None:
         rel_path = Path(unquote(rel_url))
@@ -191,10 +223,12 @@ class RealityScanModelViewerPanel(QWidget):
         self._server: ModelViewerServer | None = None
         self._viewer_url = ""
         self._current_model_path: Path | None = None
+        self._shutting_down = False
 
         self._build_ui()
         if model_path:
             self.model_edit.setText(str(Path(model_path)))
+            QTimer.singleShot(0, self._start_viewer)
         self._set_status("Select a metric OBJ model.", "idle")
 
     def closeEvent(self, event) -> None:
@@ -202,6 +236,7 @@ class RealityScanModelViewerPanel(QWidget):
         super().closeEvent(event)
 
     def shutdown(self) -> None:
+        self._shutting_down = True
         self._stop_server()
 
     def _stop_server(self) -> None:
@@ -233,6 +268,7 @@ class RealityScanModelViewerPanel(QWidget):
         self.model_edit = QLineEdit()
         self.model_edit.setPlaceholderText("underwater_model_metric.obj")
         self.model_edit.setClearButtonEnabled(True)
+        self.model_edit.returnPressed.connect(self._start_viewer)
         model_row = QHBoxLayout()
         model_row.addWidget(self.model_edit, 1)
         self.browse_model_btn = QPushButton("Browse...")
@@ -259,6 +295,7 @@ class RealityScanModelViewerPanel(QWidget):
         launch_card.body.addWidget(self.status_label)
         button_row = QHBoxLayout()
         self.start_btn = QPushButton("Load Viewport")
+        self.start_btn.setToolTip("Reload the selected OBJ model.")
         self.start_btn.clicked.connect(self._start_viewer)
         self.browser_btn = QPushButton("Open Browser")
         self.browser_btn.clicked.connect(self._open_browser)
@@ -293,14 +330,14 @@ class RealityScanModelViewerPanel(QWidget):
             self.web_view.setHtml(
                 "<!doctype html><html><body style='margin:0;background:#0d1117;color:#cbd5e1;"
                 "font-family:Segoe UI,Arial,sans-serif;display:grid;place-items:center;height:100vh'>"
-                "Select a model, then load the viewport.</body></html>"
+                "Select an OBJ model to load the viewport.</body></html>"
             )
             viewer_layout.addWidget(self.web_view, 1)
         else:
             self.web_view = None
             placeholder = QLabel(
                 "Embedded Qt WebEngine is not available in this environment.\n"
-                "Use Load Viewport, then Open Browser for the Three.js viewer."
+                "Select an OBJ model, then use Open Browser for the Three.js viewer."
             )
             placeholder.setObjectName("summaryHint")
             placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -317,6 +354,7 @@ class RealityScanModelViewerPanel(QWidget):
         )
         if path:
             self.model_edit.setText(str(Path(path)))
+            self._start_viewer()
 
     def _dialog_start(self) -> Path:
         text = self.model_edit.text().strip().strip('"')
@@ -331,6 +369,8 @@ class RealityScanModelViewerPanel(QWidget):
         return Path(self.model_edit.text().strip().strip('"')).expanduser()
 
     def _start_viewer(self) -> None:
+        if self._shutting_down:
+            return
         model = self._model_path()
         if not model.exists() or model.suffix.lower() != ".obj":
             QMessageBox.warning(self, "Model Viewer", f"Select an OBJ model first:\n{model}")
@@ -550,8 +590,8 @@ def _viewer_html(*, model_url: str, model_name: str) -> str:
   <script type="importmap">
     {{
       "imports": {{
-        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        "three": "/assets/three/three.module.js",
+        "three/addons/": "/assets/three/addons/"
       }}
     }}
   </script>

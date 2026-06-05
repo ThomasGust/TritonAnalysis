@@ -10,6 +10,7 @@ pytest.importorskip("PyQt6")
 
 from PyQt6.QtWidgets import QApplication
 
+import triton_analysis.gui.realityscan_model_viewer_window as model_viewer
 from triton_analysis.gui.realityscan_model_viewer_window import ModelViewerServer, RealityScanModelViewerWindow
 from triton_analysis.gui.style import apply_modern_style
 
@@ -47,7 +48,9 @@ def test_model_viewer_server_serves_threejs_viewer_and_model(tmp_path: Path):
         html = urllib.request.urlopen(url, timeout=5).read().decode("utf-8")
         obj_text = urllib.request.urlopen(url.replace("/viewer.html", "/files/underwater_model_metric.obj"), timeout=5).read().decode("utf-8")
 
-        assert "three@0.160.0" in html
+        assert '"/assets/three/three.module.js"' in html
+        assert '"/assets/three/addons/"' in html
+        assert "cdn.jsdelivr.net" not in html
         assert "TrackballControls" in html
         assert "OrbitControls" not in html
         assert "OBJLoader" in html
@@ -124,6 +127,12 @@ def test_model_viewer_server_serves_threejs_viewer_and_model(tmp_path: Path):
         assert "3D Grid" in html
         assert "* 0.0014" in html
         assert "v 1 0 0" in obj_text
+
+        three_text = urllib.request.urlopen(
+            url.replace("/viewer.html", "/assets/three/three.module.js"),
+            timeout=5,
+        ).read().decode("utf-8")
+        assert "REVISION = '160'" in three_text
     finally:
         server.stop()
 
@@ -136,6 +145,29 @@ def test_model_viewer_window_starts_local_viewer(tmp_path: Path):
         window._start_viewer()
 
         assert window.panel.unit_combo.currentData() == "cm"
+        assert window.url_edit.text().startswith("http://127.0.0.1:")
+        assert window.browser_btn.isEnabled()
+        assert window.reload_btn.isEnabled()
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_model_viewer_browse_starts_viewport(tmp_path: Path, monkeypatch):
+    app = _app()
+    model = _sample_obj(tmp_path)
+    window = RealityScanModelViewerWindow()
+    try:
+        monkeypatch.setattr(
+            model_viewer.QFileDialog,
+            "getOpenFileName",
+            staticmethod(lambda *_args, **_kwargs: (str(model), "OBJ models (*.obj)")),
+        )
+
+        window.panel._choose_model()
+
+        assert window.model_edit.text() == str(model)
         assert window.url_edit.text().startswith("http://127.0.0.1:")
         assert window.browser_btn.isEnabled()
         assert window.reload_btn.isEnabled()

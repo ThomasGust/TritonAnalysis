@@ -164,7 +164,7 @@ def test_unified_analysis_window_shows_pilot_sync_destination(tmp_path: Path):
     destination = tmp_path / "incoming"
     window = TritonAnalysisWindow(
         pilot_transfer_auto_sync=False,
-        pilot_transfer_url="http://127.0.0.1:8765",
+        pilot_transfer_url="http://10.77.0.1:8765",
         pilot_transfer_output=destination,
     )
     try:
@@ -172,7 +172,7 @@ def test_unified_analysis_window_shows_pilot_sync_destination(tmp_path: Path):
         app.processEvents()
 
         assert "Pilot Sync: OFF" in window._pilot_sync_label.text()
-        assert "http://127.0.0.1:8765" in window._pilot_sync_label.text()
+        assert "http://10.77.0.1:8765" in window._pilot_sync_label.text()
         assert str(destination) in window._pilot_sync_label.text()
         assert "Automatic sync is off" in window._pilot_sync_progress_label.text()
         assert str(destination) in window._pilot_sync_destination_label.text()
@@ -189,7 +189,7 @@ def test_unified_analysis_window_uses_workspace_relative_sync_label(tmp_path: Pa
     workspace = tmp_path / "analysis-workspace"
     window = TritonAnalysisWindow(
         pilot_transfer_auto_sync=False,
-        pilot_transfer_url="http://127.0.0.1:8765",
+        pilot_transfer_url="http://10.77.0.1:8765",
         workspace_root=workspace,
     )
     try:
@@ -247,7 +247,7 @@ def test_unified_analysis_window_shows_pilot_sync_transfer_progress(tmp_path: Pa
 
     window = TritonAnalysisWindow(
         pilot_transfer_auto_sync=False,
-        pilot_transfer_url="http://127.0.0.1:8765",
+        pilot_transfer_url="http://10.77.0.1:8765",
         pilot_transfer_output=tmp_path / "incoming",
     )
     try:
@@ -333,6 +333,41 @@ def test_unified_analysis_sync_now_finishes_from_background_worker(tmp_path: Pat
         assert window._pilot_sync_thread is None
         assert "Pilot Sync: OK" in window._pilot_sync_label.text()
         assert "received 1" in window._pilot_sync_label.text()
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_unified_analysis_stays_usable_when_pilot_network_is_unavailable(tmp_path: Path):
+    app = _app()
+    from triton_analysis.gui.triton_analysis_window import TritonAnalysisWindow
+
+    def _offline_sync(base_url, destination, *, overwrite=False, timeout=10.0, progress_callback=None):
+        raise OSError("network unavailable")
+
+    window = TritonAnalysisWindow(
+        pilot_transfer_auto_sync=False,
+        pilot_transfer_url="http://10.77.0.1:8765",
+        pilot_transfer_output=tmp_path / "incoming",
+        pilot_transfer_sync_fn=_offline_sync,
+    )
+    try:
+        window.show()
+        app.processEvents()
+
+        window._start_pilot_sync(force=True)
+        for _attempt in range(100):
+            app.processEvents()
+            if not window._pilot_sync_busy and window._pilot_sync_thread is None:
+                break
+
+        assert window._pilot_sync_busy is False
+        assert window._pilot_sync_thread is None
+        assert "Pilot Sync: LOST" in window._pilot_sync_label.text()
+        assert "network unavailable" in window._pilot_sync_label.text()
+        assert window.tabs.count() == len(TritonAnalysisWindow.TAB_KEYS)
+        assert window.focus_tab("edna")
     finally:
         window.close()
         window.deleteLater()

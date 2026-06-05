@@ -10,7 +10,7 @@ competition analysis applets.
   on Windows, macOS, or Linux.
 - [Network And Data Handoff Guide](NETWORKING.md) - Clarifies that
   TritonAnalysis has no live ROV network dependency and describes USB,
-  dedicated-Ethernet, and localhost-simulation handoff options.
+  dedicated-Ethernet, and manual handoff options.
 - [Operations Guide](OPERATIONS.md) - Competition-day workflow for launching
   applets, loading media, entering task data, exporting results, and preserving
   evidence.

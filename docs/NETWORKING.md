@@ -75,34 +75,6 @@ Inside the unified TritonAnalysis app, use the `Workspace` menu to choose the
 workspace root, and the `Pilot Sync` menu to toggle auto sync, sync now, set a
 custom destination folder, or change the Pilot URL.
 
-## One-Computer Simulation
-
-You can test the transfer without a second Windows computer by using
-`127.0.0.1`.
-
-Terminal 1, from the TritonPilot repository root:
-
-```powershell
-python -m tools.analysis_transfer_server --root recordings --host 127.0.0.1 --port 8765 --stable-seconds 0
-```
-
-Terminal 2, from the TritonAnalysis repository root:
-
-```powershell
-python -m tools.pilot_transfer_sync http://127.0.0.1:8765 --output ".\Workspace\incoming\pilot" --dry-run
-python -m tools.pilot_transfer_sync http://127.0.0.1:8765 --output ".\Workspace\incoming\pilot"
-```
-
-Stop the pilot-side server with `Ctrl+C` when the simulation is finished.
-
-The unified TritonAnalysis app also supports a same-computer fallback. If the
-Pilot URL cannot be reached and a local sibling checkout such as
-`..\TritonPilot\recordings` exists, sync copies directly from that recordings
-folder into `Workspace\incoming\pilot` while preserving the same run-folder
-layout. To point it at a different local Pilot checkout, set
-`TRITON_PILOT_ROOT`; to point directly at a recordings folder, set
-`TRITON_PILOT_RECORDINGS`.
-
 ## Data Handoff From TritonPilot
 
 The normal handoff is:

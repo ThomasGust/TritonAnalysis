@@ -1,8 +1,6 @@
 import json
-import os
 import shutil
 import threading
-import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote
@@ -13,7 +11,6 @@ import triton_analysis.sync.pilot_transfer as pilot_transfer
 from triton_analysis.sync.pilot_transfer import (
     PilotTransferSummary,
     fetch_pilot_index,
-    sync_from_local_pilot,
     sync_from_pilot,
 )
 
@@ -138,36 +135,11 @@ def test_fetch_pilot_index_sorts_newest_run_folders_first():
         thread.join(timeout=1.0)
 
 
-def test_sync_from_local_pilot_copies_recording_tree(tmp_path: Path):
-    source = tmp_path / "TritonPilot" / "recordings"
-    run_file = source / "20260605-130000" / "Primary_Camera_snapshot.png"
-    run_file.parent.mkdir(parents=True)
-    run_file.write_bytes(b"image\n")
-    old_time = time.time() - 10.0
-    os.utime(run_file, (old_time, old_time))
-
-    incoming = tmp_path / "Workspace" / "incoming" / "pilot"
-    events = []
-    summary = sync_from_local_pilot(source, incoming, stable_seconds=0.0, progress_callback=events.append)
-
-    assert summary.base_url == f"local:{source.resolve()}"
-    assert summary.scanned == 1
-    assert summary.copied == 1
-    assert (incoming / "20260605-130000" / "Primary_Camera_snapshot.png").read_bytes() == b"image\n"
-    assert any(event["event"] == "copy_start" for event in events)
-
-    second = sync_from_local_pilot(source, incoming, stable_seconds=0.0)
-    assert second.copied == 0
-    assert second.skipped == 1
-
-
-def test_sync_from_pilot_falls_back_to_local_recordings(monkeypatch, tmp_path: Path):
+def test_sync_from_pilot_requires_reachable_transfer_server(monkeypatch, tmp_path: Path):
     source = tmp_path / "TritonPilot" / "recordings"
     run_file = source / "20260605-130000" / "frame.txt"
     run_file.parent.mkdir(parents=True)
     run_file.write_text("local\n", encoding="utf-8")
-    old_time = time.time() - 10.0
-    os.utime(run_file, (old_time, old_time))
 
     def _raise_network_error(*_args, **_kwargs):
         raise OSError("network unavailable")
@@ -176,17 +148,35 @@ def test_sync_from_pilot_falls_back_to_local_recordings(monkeypatch, tmp_path: P
     incoming = tmp_path / "incoming"
     events = []
 
-    summary = sync_from_pilot(
-        "http://10.77.0.1:8765",
-        incoming,
-        local_source=source,
-        progress_callback=events.append,
-    )
+    with pytest.raises(OSError, match="network unavailable"):
+        sync_from_pilot(
+            "http://10.77.0.1:8765",
+            incoming,
+            progress_callback=events.append,
+        )
 
-    assert summary.base_url == f"local:{source.resolve()}"
+    assert not incoming.exists()
+    assert run_file.read_text(encoding="utf-8") == "local\n"
+    assert [event["event"] for event in events] == ["index_start"]
+    assert all(event["event"] != "local_fallback" for event in events)
+
+
+def test_sync_from_pilot_copies_from_http_transfer_server(tmp_path: Path):
+    server, thread, base_url = _serve({"20260605-130000/frame.txt": b"served\n"})
+    try:
+        incoming = tmp_path / "incoming"
+        summary = sync_from_pilot(
+            base_url,
+            incoming,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=1.0)
+
+    assert summary.base_url == base_url
     assert summary.copied == 1
-    assert (incoming / "20260605-130000" / "frame.txt").read_text(encoding="utf-8") == "local\n"
-    assert any(event["event"] == "local_fallback" for event in events)
+    assert (incoming / "20260605-130000" / "frame.txt").read_text(encoding="utf-8") == "served\n"
 
 
 def test_pilot_transfer_sync_worker_reports_success(tmp_path: Path):
