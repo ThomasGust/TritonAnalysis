@@ -29,7 +29,7 @@ from PyQt6.QtWidgets import (
 
 from triton_analysis.gui.file_dialogs import ThumbnailFileDialog as QFileDialog
 
-from triton_analysis.workspace import workspace_paths
+from triton_analysis.workspace import latest_pilot_stereo_sessions_dir, workspace_paths
 from triton_analysis.gui.image_preview import ImagePreviewPanel
 from triton_analysis.gui.responsive import resize_to_available_screen, vertical_scroll_area
 from triton_analysis.stereo.calibration import (
@@ -400,9 +400,7 @@ class StereoCalibrationWindow(QMainWindow):
 
     @staticmethod
     def _stereo_session_start() -> Path:
-        workspace = workspace_paths(create=True)
-        stereo_sessions = workspace.pilot_incoming / "stereo_sessions"
-        return stereo_sessions if stereo_sessions.exists() else workspace.pilot_incoming
+        return latest_pilot_stereo_sessions_dir(create=True)
 
     def load_manifest(self, path: Path) -> None:
         self.load_manifests([path])

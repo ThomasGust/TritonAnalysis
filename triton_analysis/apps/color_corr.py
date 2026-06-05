@@ -55,7 +55,7 @@ from PyQt6.QtWidgets import (
 
 from triton_analysis.gui.file_dialogs import ThumbnailFileDialog as QFileDialog
 
-from triton_analysis.workspace import fresh_output_subdir, workspace_paths
+from triton_analysis.workspace import fresh_output_subdir, latest_pilot_run_dir, workspace_paths
 from triton_analysis.gui.responsive import horizontal_scroll_area, resize_to_available_screen, vertical_scroll_area
 
 
@@ -1193,11 +1193,10 @@ class MainWindow(QMainWindow):
         )
 
     def open_video(self):
-        workspace = workspace_paths(create=True)
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Open underwater video",
-            str(workspace.pilot_incoming),
+            str(latest_pilot_run_dir(create=True)),
             "Video Files (*.mp4 *.mov *.avi *.mkv *.m4v);;All Files (*)",
         )
         if not path:

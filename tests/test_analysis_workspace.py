@@ -7,6 +7,9 @@ from triton_analysis.workspace import (
     REPO_ROOT,
     default_workspace_root,
     fresh_output_subdir,
+    latest_pilot_run_dir,
+    latest_pilot_stereo_sessions_dir,
+    recent_pilot_run_dirs,
     set_active_workspace_root,
     workspace_label,
     workspace_paths,
@@ -54,3 +57,28 @@ def test_fresh_output_subdir_uses_timestamp_and_avoids_existing_folder(tmp_path:
 
     assert first == parent / "My_Scan_20260527_103045"
     assert second == parent / "My_Scan_20260527_103045_02"
+
+
+def test_latest_pilot_run_helpers_prefer_new_timestamped_runs(tmp_path: Path):
+    workspace = workspace_paths(tmp_path / "analysis-root", create=True)
+    older = workspace.pilot_incoming / "20260605-120000"
+    newer = workspace.pilot_incoming / "20260605-130000"
+    legacy = workspace.pilot_incoming / "run_01"
+    root_stereo = workspace.pilot_incoming / "stereo_sessions"
+    for folder in (older, newer, legacy, root_stereo):
+        folder.mkdir(parents=True)
+    (older / "stereo_sessions").mkdir()
+    (newer / "stereo_sessions").mkdir()
+
+    assert recent_pilot_run_dirs(workspace.root)[:3] == [newer, older, legacy]
+    assert latest_pilot_run_dir(workspace.root) == newer
+    assert latest_pilot_stereo_sessions_dir(workspace.root) == newer / "stereo_sessions"
+
+
+def test_latest_pilot_run_helpers_fall_back_to_inbox_for_flat_files(tmp_path: Path):
+    workspace = workspace_paths(tmp_path / "analysis-root", create=True)
+    (workspace.pilot_incoming / "frame.png").write_text("image", encoding="utf-8")
+
+    assert recent_pilot_run_dirs(workspace.root) == []
+    assert latest_pilot_run_dir(workspace.root) == workspace.pilot_incoming
+    assert latest_pilot_stereo_sessions_dir(workspace.root) == workspace.pilot_incoming

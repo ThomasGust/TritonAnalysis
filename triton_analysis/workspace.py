@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -12,6 +13,7 @@ ENV_WORKSPACE_ROOT = "TRITON_ANALYSIS_WORKSPACE"
 DEFAULT_WORKSPACE_NAME = "Workspace"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 _ACTIVE_WORKSPACE_ROOT: Path | None = None
+_PILOT_RUN_NAME_RE = re.compile(r"^\d{8}-\d{6}(?:-\d{3})?(?:-\d{2})?$")
 
 
 def set_active_workspace_root(root: str | Path | None) -> None:
@@ -116,6 +118,52 @@ def workspace_paths(root: str | Path | None = None, *, create: bool = False) -> 
     """Build workspace folder paths for *root* or the configured default."""
     workspace = AnalysisWorkspace(Path(root).expanduser() if root else default_workspace_root())
     return workspace.ensure() if create else workspace
+
+
+def _pilot_run_sort_key(path: Path) -> tuple[int, str | int, str]:
+    name = Path(path).name
+    if _PILOT_RUN_NAME_RE.match(name):
+        return (2, name, name.lower())
+    try:
+        mtime_ns = int(Path(path).stat().st_mtime_ns)
+    except OSError:
+        mtime_ns = 0
+    return (1, mtime_ns, name.lower())
+
+
+def recent_pilot_run_dirs(root: str | Path | None = None, *, create: bool = False) -> list[Path]:
+    """Return synced TritonPilot run folders newest first."""
+    incoming = workspace_paths(root, create=create).pilot_incoming
+    try:
+        children = list(incoming.iterdir())
+    except OSError:
+        return []
+    run_dirs = [
+        child
+        for child in children
+        if child.is_dir() and child.name.lower() != "stereo_sessions"
+    ]
+    return sorted(run_dirs, key=_pilot_run_sort_key, reverse=True)
+
+
+def latest_pilot_run_dir(root: str | Path | None = None, *, create: bool = False) -> Path:
+    """Return the newest synced Pilot run folder, or the Pilot inbox for legacy flat files."""
+    workspace = workspace_paths(root, create=create)
+    runs = recent_pilot_run_dirs(root, create=False)
+    return runs[0] if runs else workspace.pilot_incoming
+
+
+def latest_pilot_stereo_sessions_dir(root: str | Path | None = None, *, create: bool = False) -> Path:
+    """Return the stereo_sessions folder inside the newest run that has one."""
+    workspace = workspace_paths(root, create=create)
+    for run_dir in recent_pilot_run_dirs(root, create=False):
+        stereo_sessions = run_dir / "stereo_sessions"
+        if stereo_sessions.exists():
+            return stereo_sessions
+    legacy = workspace.pilot_incoming / "stereo_sessions"
+    if legacy.exists():
+        return legacy
+    return latest_pilot_run_dir(root, create=False)
 
 
 def safe_output_slug(text: str, *, fallback: str = "run") -> str:

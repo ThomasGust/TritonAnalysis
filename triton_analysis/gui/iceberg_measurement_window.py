@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
 
 from triton_analysis.gui.file_dialogs import ThumbnailFileDialog as QFileDialog
 
-from triton_analysis.workspace import workspace_paths
+from triton_analysis.workspace import latest_pilot_run_dir
 from triton_analysis.gui.canvas_navigation import clamp_pan_to_edge_margin, moved_past_pan_threshold
 from triton_analysis.gui.image_preview import frame_to_pixmap
 from triton_analysis.iceberg.measurement import (
@@ -598,7 +598,7 @@ class IcebergMeasurementWindow(QMainWindow):
         self._video_fps = 0.0
         self._video_current_frame_index = 0
         self._updating_video_controls = False
-        self._last_dir = str(workspace_paths(create=True).pilot_incoming)
+        self._last_dir = str(latest_pilot_run_dir(create=True))
         self._last_frame: np.ndarray | None = None
         self._last_source_text = ""
 

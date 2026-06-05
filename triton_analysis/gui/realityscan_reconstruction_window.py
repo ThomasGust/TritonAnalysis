@@ -38,7 +38,7 @@ from triton_analysis.gui.file_dialogs import ThumbnailFileDialog as QFileDialog
 
 from triton_analysis.gui.realityscan_model_viewer_window import RealityScanModelViewerPanel
 from triton_analysis.gui.responsive import resize_to_available_screen, vertical_scroll_area
-from triton_analysis.workspace import fresh_output_subdir, safe_output_slug, workspace_paths
+from triton_analysis.workspace import fresh_output_subdir, latest_pilot_stereo_sessions_dir, safe_output_slug, workspace_paths
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -679,7 +679,7 @@ class RealityScanReconstructionWindow(QMainWindow):
             if path.exists():
                 return path.parent if path.is_file() else path
         workspace = workspace_paths(create=True)
-        synced_sessions = workspace.pilot_incoming / "stereo_sessions"
+        synced_sessions = latest_pilot_stereo_sessions_dir(create=True)
         if synced_sessions.exists():
             return synced_sessions
         if workspace.pilot_incoming.exists():
@@ -768,6 +768,9 @@ class RealityScanReconstructionWindow(QMainWindow):
         if calibration_dir.exists():
             candidates.extend(calibration_dir.glob("*_stereo_calibration.json"))
             candidates.extend(calibration_dir.glob("stereo_calibration.json"))
+        pilot_incoming = workspace_paths(create=True).pilot_incoming
+        if pilot_incoming.exists():
+            candidates.extend(pilot_incoming.glob("*/stereo_sessions/*/stereo_calibration.json"))
         for root in (self._pipeline_root() / "recordings" / "stereo_sessions", REPO_ROOT.parent / "TritonPilot" / "recordings" / "stereo_sessions"):
             if root.exists():
                 candidates.extend(root.glob("*/stereo_calibration.json"))

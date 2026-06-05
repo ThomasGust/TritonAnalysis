@@ -95,6 +95,14 @@ python -m tools.pilot_transfer_sync http://127.0.0.1:8765 --output ".\Workspace\
 
 Stop the pilot-side server with `Ctrl+C` when the simulation is finished.
 
+The unified TritonAnalysis app also supports a same-computer fallback. If the
+Pilot URL cannot be reached and a local sibling checkout such as
+`..\TritonPilot\recordings` exists, sync copies directly from that recordings
+folder into `Workspace\incoming\pilot` while preserving the same run-folder
+layout. To point it at a different local Pilot checkout, set
+`TRITON_PILOT_ROOT`; to point directly at a recordings folder, set
+`TRITON_PILOT_RECORDINGS`.
+
 ## Data Handoff From TritonPilot
 
 The normal handoff is:

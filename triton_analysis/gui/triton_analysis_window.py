@@ -467,11 +467,18 @@ class TritonAnalysisWindow(QMainWindow):
         if event in {"sync_start", "index_start"}:
             self._update_pilot_sync_label("syncing", "Requesting the file list from TritonPilot...")
             return
+        if event == "local_fallback":
+            source = self._short_transfer_path(data.get("source", ""), max_chars=72)
+            self._pilot_sync_progress_label.setText(
+                f"Pilot URL unavailable. Checking local TritonPilot recordings at {source}..."
+            )
+            return
         if event == "index_done":
             scanned = int(data.get("scanned") or 0)
             total_bytes = int(data.get("total_bytes") or 0)
+            source_label = "Local Pilot folder" if str(data.get("base_url") or "").startswith("local:") else "Pilot"
             self._pilot_sync_progress_label.setText(
-                f"Pilot advertised {scanned} file(s), {self._format_bytes(total_bytes)}. Checking local folder..."
+                f"{source_label} has {scanned} file(s), {self._format_bytes(total_bytes)}. Checking local folder..."
             )
             return
         if event == "skipped":
@@ -645,8 +652,9 @@ class TritonAnalysisWindow(QMainWindow):
             bytes_copied = int(getattr(summary, "bytes_copied", 0) or 0)
             self._pilot_sync_last_ok_ts = time.time()
             self._pilot_sync_last_error = ""
+            source = "local Pilot" if str(getattr(summary, "base_url", "") or "").startswith("local:") else "Pilot"
             detail = (
-                f"scanned {scanned}, received {copied}, already current {skipped}, "
+                f"{source}: scanned {scanned}, received {copied}, already current {skipped}, "
                 f"{self._format_bytes(bytes_copied)} transferred"
             )
             self._update_pilot_sync_label("ok", detail)
