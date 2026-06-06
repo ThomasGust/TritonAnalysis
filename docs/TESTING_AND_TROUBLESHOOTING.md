@@ -103,6 +103,25 @@ machine. Mark new tests when they leave that boundary:
 - Confirm the machine has a desktop session available.
 - On Linux, confirm the Qt platform plugin dependencies are installed.
 
+## SSH Tab Cannot Connect
+
+- Confirm the app is running from the TritonAnalysis virtual environment.
+- Confirm `paramiko` is installed:
+
+  ```powershell
+  .\.venv\Scripts\python.exe -c "import paramiko; print(paramiko.__version__)"
+  ```
+
+- On Windows, rerun setup if the import fails:
+
+  ```powershell
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\setup_windows.ps1
+  ```
+
+- The embedded SSH tab uses Python Paramiko, not the Windows `ssh.exe`
+  executable. Missing OpenSSH on the Windows `PATH` is not expected to block
+  the tab.
+
 ## Image Or Video Will Not Load
 
 - Confirm the file path exists.

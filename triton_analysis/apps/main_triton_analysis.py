@@ -24,9 +24,11 @@ TAB_CHOICES = (
     "stereo-calibration",
     "backup-coral-measurement",
     "backup-iceberg-measurement",
+    "ssh",
     "crab",
     "iceberg-measurement",
     "edna",
+    "terminal",
 )
 
 

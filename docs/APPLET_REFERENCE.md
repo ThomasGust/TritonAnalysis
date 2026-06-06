@@ -29,12 +29,50 @@ Tabs:
 - Stereo Calibration
 - Backup Coral Measurement
 - Backup Iceberg Measurement
+- SSH
 
 Primary modules:
 
 - `triton_analysis/apps/main_triton_analysis.py`
 - `triton_analysis/gui/triton_analysis_window.py`
 - The same window modules used by the standalone applets
+
+## SSH Console
+
+Launch:
+
+```powershell
+python -m triton_analysis.apps.main_triton_analysis --tab ssh
+python main_triton_analysis.py --tab ssh
+```
+
+Purpose:
+
+- Provide a field setup shell without leaving the unified TritonAnalysis app.
+- Connect to the Pilot analysis link, a routed ROV address, or localhost using
+  saved presets.
+- Support password, SSH agent, and private-key authentication.
+
+Primary modules:
+
+- `triton_analysis/gui/ssh_console_window.py`
+- `triton_analysis/gui/triton_analysis_window.py`
+
+Inputs:
+
+- Host, port, username, and optional password or private key path
+- Trust-host setting for accepting newly seen host keys
+
+Outputs:
+
+- Interactive terminal output inside the SSH tab
+- Connection status and command history for the current app session
+
+Setup notes:
+
+- Requires `paramiko`, installed by `requirements.txt` and verified by
+  `setup_windows.ps1`.
+- Does not require the Windows OpenSSH client executable to be installed.
 
 ## Crab Detection
 

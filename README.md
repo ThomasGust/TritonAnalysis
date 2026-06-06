@@ -28,6 +28,7 @@ applets, and task-focused analysis modules:
 - Stereo segment measurement presets for generic, iceberg, and coral lengths
 - RealityScan stereo photogrammetry reconstruction wrapper
 - Three.js OBJ viewport and distance measurement for reconstructed models
+- Embedded SSH console for analysis-link shell access during field setup
 
 Each applet can be launched directly with `python -m ...` from the repository
 root.
@@ -87,13 +88,13 @@ docs/                                  Maintained user and maintainer docs
 On Windows:
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python -m pip install pytest
+powershell -NoProfile -ExecutionPolicy Bypass -File .\setup_windows.ps1 -IncludeDev
+.\.venv\Scripts\Activate.ps1
 python -m pytest
 ```
+
+The Windows setup script installs `requirements-windows.txt` and verifies that
+the unified app's `SSH` tab can import `paramiko`.
 
 On macOS or Linux:
 
@@ -120,8 +121,8 @@ python -m triton_analysis.apps.main_triton_analysis --workspace D:\TritonAnalysi
 
 The unified window opens with Coral Reconstruction, then Crab Detection, Stereo
 Iceberg Length, Iceberg Tracking, eDNA Analysis, Stereo Calibration, Backup
-Coral Measurement, and Backup Iceberg Measurement. The standalone applets below
-remain available as backups.
+Coral Measurement, Backup Iceberg Measurement, and SSH. The standalone applets
+below remain available as backups.
 The status bar includes automatic TritonPilot media sync status and the active
 destination folder.
 

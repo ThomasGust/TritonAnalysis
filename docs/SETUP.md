@@ -14,9 +14,11 @@ OpenCV/NumPy for image work, and small pure-Python modules for task logic.
 The base dependency list is in `requirements.txt`:
 
 - `PyQt6`
+- `PyQt6-WebEngine`
 - `matplotlib`
 - `numpy`
 - `opencv-python`
+- `paramiko` for the embedded SSH console
 - `scipy`
 - `ultralytics` for optional YOLO crab fine tuning and inference
 
@@ -28,20 +30,36 @@ same base file.
 From the TritonAnalysis repository root:
 
 ```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\setup_windows.ps1
+```
+
+The setup script creates or reuses `.\.venv`, installs
+`requirements-windows.txt`, and verifies that the SSH console can import
+`paramiko`.
+
+Manual equivalent:
+
+```powershell
 python -m venv .venv
 .\.venv\Scripts\activate
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+python -m pip install -r requirements-windows.txt
 ```
 
 Run tests:
 
 ```powershell
-python -m pip install pytest
+python -m pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-Launch an applet:
+Launch the unified app:
+
+```powershell
+python .\main_triton_analysis.py
+```
+
+Launch a standalone applet:
 
 ```powershell
 python -m triton_analysis.apps.main_crab_detection
@@ -88,6 +106,25 @@ python -m triton_analysis.apps.color_corr
 
 Close each window before launching the next one if the machine is resource
 constrained.
+
+## SSH Console Check
+
+The unified app includes an `SSH` tab for shell access to the Pilot analysis
+link, routed ROV address, or localhost. It does not require OpenSSH to be on the
+Windows `PATH`; it uses the Python `paramiko` package installed by the
+requirements.
+
+Verify the installed environment directly:
+
+```powershell
+.\.venv\Scripts\python.exe -c "import paramiko; from triton_analysis.gui.ssh_console_window import default_analysis_ssh_presets; print(default_analysis_ssh_presets())"
+```
+
+If this fails, rerun:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\setup_windows.ps1
+```
 
 ## Optional Local Data
 
