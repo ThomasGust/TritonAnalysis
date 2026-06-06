@@ -10,7 +10,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from triton_analysis.workspace import workspace_paths
 
@@ -51,6 +51,19 @@ class PilotTransferSummary:
             self.copied_paths = []
         if self.skipped_paths is None:
             self.skipped_paths = []
+
+
+@dataclass(frozen=True)
+class PilotTransferEvent:
+    """Visible-index change notification from TritonPilot."""
+
+    base_url: str
+    event_id: int
+    changed: bool
+    file_count: int = 0
+    total_bytes: int = 0
+    generated_at: float = 0.0
+    stable_seconds: float = 0.0
 
 
 def _safe_relative_path(raw_path: str) -> PurePosixPath:
@@ -111,6 +124,40 @@ def fetch_pilot_index(base_url: str = DEFAULT_PILOT_TRANSFER_URL, *, timeout: fl
     files.sort(key=lambda item: item.path.lower())
     files.sort(key=lambda item: _run_group_sort_key(item.path, item.mtime_ns), reverse=True)
     return files
+
+
+def wait_for_pilot_change(
+    base_url: str = DEFAULT_PILOT_TRANSFER_URL,
+    *,
+    since_event_id: int = 0,
+    timeout: float = 20.0,
+    request_timeout: float | None = None,
+) -> PilotTransferEvent:
+    """Wait for TritonPilot's visible transfer index to change.
+
+    TritonPilot serves this as a pull-friendly long-poll endpoint. Analysis
+    initiates the HTTP request, so the analysis computer does not need to expose
+    a listener or accept inbound connections.
+    """
+    base_url = str(base_url).rstrip("/")
+    wait_timeout = max(0.0, float(timeout))
+    if request_timeout is None:
+        request_timeout = wait_timeout + 3.0
+    query = urlencode({"since": int(since_event_id or 0), "timeout": f"{wait_timeout:.3f}"})
+    url = f"{base_url}/events?{query}"
+    with urllib.request.urlopen(url, timeout=float(request_timeout)) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    if payload.get("type") != "triton-analysis-transfer-event":
+        raise RuntimeError("Pilot transfer endpoint did not return a Triton event")
+    return PilotTransferEvent(
+        base_url=base_url,
+        event_id=int(payload.get("event_id") or 0),
+        changed=bool(payload.get("changed")),
+        file_count=int(payload.get("file_count") or 0),
+        total_bytes=int(payload.get("total_bytes") or 0),
+        generated_at=float(payload.get("generated_at") or 0.0),
+        stable_seconds=float(payload.get("stable_seconds") or 0.0),
+    )
 
 
 def file_is_current(path: Path, source: PilotTransferFile) -> bool:

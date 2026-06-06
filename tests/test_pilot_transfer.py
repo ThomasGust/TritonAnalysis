@@ -3,15 +3,17 @@ import shutil
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote, urlparse
 
 import pytest
 
 import triton_analysis.sync.pilot_transfer as pilot_transfer
 from triton_analysis.sync.pilot_transfer import (
+    PilotTransferEvent,
     PilotTransferSummary,
     fetch_pilot_index,
     sync_from_pilot,
+    wait_for_pilot_change,
 )
 
 
@@ -22,7 +24,8 @@ class _TransferHandler(BaseHTTPRequestHandler):
         return
 
     def do_GET(self) -> None:
-        if self.path == "/index.json":
+        parsed = urlparse(self.path)
+        if parsed.path == "/index.json":
             payload = {
                 "type": "triton-analysis-transfer-index",
                 "version": 1,
@@ -38,8 +41,30 @@ class _TransferHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
-        if self.path.startswith("/files/"):
-            rel = unquote(self.path[len("/files/") :])
+        if parsed.path == "/events":
+            query = parse_qs(parsed.query)
+            since = int((query.get("since") or ["0"])[0] or "0")
+            event_id = len(self.files) + 1
+            total_bytes = sum(len(data) for data in self.files.values())
+            payload = {
+                "type": "triton-analysis-transfer-event",
+                "version": 1,
+                "event_id": event_id,
+                "changed": event_id != since,
+                "file_count": len(self.files),
+                "total_bytes": total_bytes,
+                "generated_at": 1_700_000_000.0,
+                "stable_seconds": 0.75,
+            }
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if parsed.path.startswith("/files/"):
+            rel = unquote(parsed.path[len("/files/") :])
             data = self.files.get(rel)
             if data is None:
                 self.send_error(404)
@@ -93,6 +118,27 @@ def test_fetch_pilot_index_and_sync(tmp_path: Path):
         assert third.copied == 2
         assert third.skipped == 0
         assert (incoming / "run_01" / "frame.txt").read_text(encoding="utf-8") == "hello\n"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=1.0)
+
+
+def test_wait_for_pilot_change_reads_event_endpoint():
+    server, thread, base_url = _serve({"run_01/frame.txt": b"hello\n"})
+    try:
+        event = wait_for_pilot_change(base_url, since_event_id=0, timeout=0.1)
+
+        assert event.base_url == base_url
+        assert event.changed is True
+        assert event.event_id == 2
+        assert event.file_count == 1
+        assert event.total_bytes == len(b"hello\n")
+        assert event.stable_seconds == 0.75
+
+        unchanged = wait_for_pilot_change(base_url, since_event_id=event.event_id, timeout=0.1)
+        assert unchanged.changed is False
+        assert unchanged.event_id == event.event_id
     finally:
         server.shutdown()
         server.server_close()
@@ -217,3 +263,69 @@ def test_pilot_transfer_sync_worker_reports_success(tmp_path: Path):
     assert payloads[0]["ok"] is True
     assert payloads[0]["summary"].copied == 1
     assert [payload["event"] for payload in progress_payloads] == ["sync_start", "copy_start"]
+
+
+def test_pilot_transfer_sync_worker_skips_sync_when_watch_has_no_change(tmp_path: Path):
+    pytest.importorskip("PyQt6")
+    from triton_analysis.gui.pilot_transfer_sync import PilotTransferSyncWorker
+
+    payloads = []
+    progress_payloads = []
+
+    def _fake_event(base_url, *, since_event_id=0, timeout=20.0, request_timeout=None):
+        assert base_url == "http://pilot.test:8765"
+        assert since_event_id == 7
+        return PilotTransferEvent(base_url=base_url, event_id=7, changed=False)
+
+    def _unexpected_sync(*_args, **_kwargs):
+        raise AssertionError("sync should not run when Pilot reports no change")
+
+    worker = PilotTransferSyncWorker(
+        base_url="http://pilot.test:8765",
+        destination=tmp_path / "incoming",
+        watch_for_changes=True,
+        since_event_id=7,
+        event_timeout=0.1,
+        event_fn=_fake_event,
+        sync_fn=_unexpected_sync,
+    )
+    worker.finished.connect(payloads.append)
+    worker.progress.connect(progress_payloads.append)
+    worker.run()
+
+    assert payloads[0]["ok"] is True
+    assert payloads[0]["no_change"] is True
+    assert payloads[0]["event_id"] == 7
+    assert [payload["event"] for payload in progress_payloads] == ["watch_start", "watch_done"]
+
+
+def test_pilot_transfer_sync_worker_syncs_after_watch_change(tmp_path: Path):
+    pytest.importorskip("PyQt6")
+    from triton_analysis.gui.pilot_transfer_sync import PilotTransferSyncWorker
+
+    payloads = []
+    progress_payloads = []
+
+    def _fake_event(base_url, *, since_event_id=0, timeout=20.0, request_timeout=None):
+        return PilotTransferEvent(base_url=base_url, event_id=8, changed=True, file_count=1, total_bytes=42)
+
+    def _fake_sync(base_url, destination, *, overwrite=False, timeout=10.0, progress_callback=None):
+        return PilotTransferSummary(base_url=base_url, destination=destination, scanned=1, copied=1, bytes_copied=42)
+
+    worker = PilotTransferSyncWorker(
+        base_url="http://pilot.test:8765",
+        destination=tmp_path / "incoming",
+        watch_for_changes=True,
+        since_event_id=7,
+        event_timeout=0.1,
+        event_fn=_fake_event,
+        sync_fn=_fake_sync,
+    )
+    worker.finished.connect(payloads.append)
+    worker.progress.connect(progress_payloads.append)
+    worker.run()
+
+    assert payloads[0]["ok"] is True
+    assert payloads[0]["event_id"] == 8
+    assert payloads[0]["summary"].copied == 1
+    assert [payload["event"] for payload in progress_payloads][:2] == ["watch_start", "watch_done"]

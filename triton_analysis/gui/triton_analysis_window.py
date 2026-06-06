@@ -135,9 +135,17 @@ class TritonAnalysisWindow(QMainWindow):
         self._pilot_sync_enabled = bool(pilot_transfer_auto_sync)
         self._pilot_sync_timeout_s = float(os.environ.get("TRITON_ANALYSIS_SYNC_TIMEOUT_S", "2.0") or "2.0")
         self._pilot_sync_interval_ms = max(
-            1000,
-            int(float(os.environ.get("TRITON_ANALYSIS_SYNC_INTERVAL_S", "10.0") or "10.0") * 1000),
+            250,
+            int(float(os.environ.get("TRITON_ANALYSIS_SYNC_INTERVAL_S", "1.0") or "1.0") * 1000),
         )
+        self._pilot_sync_watch_enabled = self._setting_truthy(
+            os.environ.get("TRITON_ANALYSIS_SYNC_WATCH", "1"),
+            default=True,
+        )
+        self._pilot_sync_event_timeout_s = float(
+            os.environ.get("TRITON_ANALYSIS_SYNC_EVENT_TIMEOUT_S", "20.0") or "20.0"
+        )
+        self._pilot_sync_last_event_id = 0
         self._pilot_sync_busy = False
         self._pilot_sync_thread: QThread | None = None
         self._pilot_sync_worker: PilotTransferSyncWorker | None = None
@@ -467,6 +475,18 @@ class TritonAnalysisWindow(QMainWindow):
         if event in {"sync_start", "index_start"}:
             self._update_pilot_sync_label("syncing", "Requesting the file list from TritonPilot...")
             return
+        if event == "watch_start":
+            self._update_pilot_sync_label("syncing", "Waiting for new Pilot recordings...")
+            return
+        if event == "watch_done":
+            if not bool(data.get("changed")):
+                self._pilot_sync_progress_label.setText("No new Pilot recordings yet.")
+            return
+        if event == "watch_error":
+            self._pilot_sync_progress_label.setText(
+                f"Pilot event watch unavailable; checking now. {data.get('error') or ''}".strip()
+            )
+            return
         if event == "index_done":
             scanned = int(data.get("scanned") or 0)
             total_bytes = int(data.get("total_bytes") or 0)
@@ -608,6 +628,13 @@ class TritonAnalysisWindow(QMainWindow):
             "base_url": self._pilot_sync_url,
             "destination": self._pilot_sync_output,
             "timeout": self._pilot_sync_timeout_s,
+            "watch_for_changes": bool(
+                self._pilot_sync_watch_enabled
+                and not force
+                and self._pilot_sync_fn is None
+            ),
+            "since_event_id": self._pilot_sync_last_event_id,
+            "event_timeout": self._pilot_sync_event_timeout_s,
         }
         if self._pilot_sync_fn is not None:
             worker_kwargs["sync_fn"] = self._pilot_sync_fn
@@ -637,7 +664,15 @@ class TritonAnalysisWindow(QMainWindow):
         self._pilot_sync_busy = False
         self._pilot_sync_worker = None
         data = payload if isinstance(payload, dict) else {}
+        event_id = int(data.get("event_id") or getattr(data.get("event"), "event_id", 0) or 0)
+        if event_id > 0:
+            self._pilot_sync_last_event_id = event_id
         if data.get("ok"):
+            if data.get("no_change"):
+                self._pilot_sync_last_error = ""
+                self._update_pilot_sync_label("ok", "Pilot: no new recordings")
+                self._pilot_sync_last_label.setText(time.strftime("Last check: %H:%M:%S"))
+                return
             summary = data.get("summary")
             copied = int(getattr(summary, "copied", 0) or 0)
             skipped = int(getattr(summary, "skipped", 0) or 0)

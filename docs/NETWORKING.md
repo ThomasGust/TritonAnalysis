@@ -51,7 +51,11 @@ networks for the dedicated analysis link.
 On the analysis computer, the unified TritonAnalysis app pulls saved files into
 `Workspace\incoming\pilot` automatically. Its top `Pilot Sync` panel shows the
 URL, connection state, exact destination folder, and whether it is checking,
-receiving, or done receiving files. The backup CLI command is:
+receiving, or done receiving files. Current TritonPilot servers expose a
+long-poll event endpoint, and TritonAnalysis uses it by default so new stable
+Pilot files sync immediately instead of waiting for the next periodic poll.
+Older Pilot servers still work; Analysis falls back to periodic index checks.
+The backup CLI command is:
 
 ```powershell
 python -m tools.pilot_transfer_sync http://10.77.0.1:8765 --output ".\Workspace\incoming\pilot"
@@ -70,6 +74,14 @@ If you delete files from `incoming\pilot`, the next manual or automatic sync
 should receive those missing files again. If they do not appear where expected,
 check the `Receiving to:` line in the `Pilot Sync` panel first; the app may be
 using a different workspace root or custom sync folder than the one you cleared.
+
+Useful sync timing overrides:
+
+```powershell
+$env:TRITON_ANALYSIS_SYNC_INTERVAL_S="1.0"
+$env:TRITON_ANALYSIS_SYNC_WATCH="1"
+$env:TRITON_ANALYSIS_SYNC_EVENT_TIMEOUT_S="20.0"
+```
 
 Inside the unified TritonAnalysis app, use the `Workspace` menu to choose the
 workspace root, and the `Pilot Sync` menu to toggle auto sync, sync now, set a
