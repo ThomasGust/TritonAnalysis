@@ -40,6 +40,7 @@ class SshPreset:
     host: str
     username: str
     port: int = 22
+    password: str = ""
 
 
 class SshSessionWorker(QObject):
@@ -113,7 +114,7 @@ class SshSessionWorker(QObject):
                 "banner_timeout": self.timeout_s,
                 "auth_timeout": self.timeout_s,
                 "look_for_keys": not bool(self.password or self.key_path),
-                "allow_agent": True,
+                "allow_agent": not bool(self.password or self.key_path),
             }
             if self.password:
                 kwargs["password"] = self.password
@@ -354,6 +355,7 @@ class SshConsolePage(QWidget):
         self.host_edit.setText(preset.host)
         self.user_edit.setText(preset.username)
         self.port_spin.setValue(int(preset.port))
+        self.password_edit.setText(preset.password)
 
     def _browse_key(self) -> None:
         path, _filter = QFileDialog.getOpenFileName(self, "Choose SSH private key", str(Path.home()))
@@ -479,6 +481,7 @@ class SshConsoleWindow(QMainWindow):
 def default_analysis_ssh_presets(*, local_user: str | None = None) -> list[SshPreset]:
     user = local_user or os.environ.get("USERNAME") or os.environ.get("USER") or "TritonRobotics"
     return [
+        SshPreset("Triton Pi", "tritonpi.local", "triton", 22, password="triton"),
         SshPreset("Pilot Link", "10.77.0.1", user, 22),
         SshPreset("ROV if Routed", "192.168.1.4", "triton", 22),
         SshPreset("Localhost", "127.0.0.1", user, 22),

@@ -106,6 +106,8 @@ machine. Mark new tests when they leave that boundary:
 ## SSH Tab Cannot Connect
 
 - Confirm the app is running from the TritonAnalysis virtual environment.
+- Use the `Triton Pi` preset for `triton@tritonpi.local`, password `triton`,
+  port `22`.
 - Confirm `paramiko` is installed:
 
   ```powershell
@@ -121,6 +123,15 @@ machine. Mark new tests when they leave that boundary:
 - The embedded SSH tab uses Python Paramiko, not the Windows `ssh.exe`
   executable. Missing OpenSSH on the Windows `PATH` is not expected to block
   the tab.
+- If name resolution is suspect, check both DNS and the SSH port:
+
+  ```powershell
+  Resolve-DnsName tritonpi.local
+  Test-NetConnection tritonpi.local -Port 22
+  ```
+
+  Windows may show a link-local IPv6 address first and an IPv4 address second;
+  Paramiko can still connect when port `22` succeeds.
 
 ## Image Or Video Will Not Load
 

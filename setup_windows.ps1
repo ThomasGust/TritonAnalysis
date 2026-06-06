@@ -225,7 +225,7 @@ if (-not (Test-Path $venvPython)) {
 }
 
 Write-Step "Upgrading pip tooling"
-& $venvPython -m pip install --upgrade pip setuptools wheel
+& $venvPython -m pip install --upgrade pip "setuptools<82" wheel
 
 Write-Step "Installing Python dependencies"
 & $venvPython -m pip install -r $requirementsFile
@@ -239,7 +239,7 @@ if ($IncludeDev) {
 }
 
 Write-Step "Verifying TritonAnalysis imports"
-& $venvPython -c "import PyQt6, cv2, matplotlib, numpy, paramiko, scipy; from triton_analysis.gui.ssh_console_window import SshConsolePage, default_analysis_ssh_presets; presets = default_analysis_ssh_presets(); assert presets; print('TritonAnalysis packages verified; SSH console and Paramiko are available')"
+& $venvPython -c "import PyQt6, cv2, matplotlib, numpy, paramiko, scipy; from triton_analysis.gui.ssh_console_window import SshConsolePage, default_analysis_ssh_presets; presets = default_analysis_ssh_presets(); pi = next((preset for preset in presets if preset.host == 'tritonpi.local'), None); assert pi and pi.username == 'triton' and pi.password == 'triton'; print('TritonAnalysis packages verified; SSH console, Paramiko, and Triton Pi preset are available')"
 
 Write-Step "Setup complete"
 Write-Host "Activate the virtual environment with:" -ForegroundColor Green
@@ -248,4 +248,4 @@ Write-Host ""
 Write-Host "Then launch the unified app with:" -ForegroundColor Green
 Write-Host "  python .\main_triton_analysis.py"
 Write-Host ""
-Write-Host "The SSH tab uses Paramiko from this virtual environment." -ForegroundColor Green
+Write-Host "The SSH tab uses Paramiko from this virtual environment and includes the Triton Pi preset." -ForegroundColor Green

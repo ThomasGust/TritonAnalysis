@@ -62,6 +62,7 @@ Inputs:
 
 - Host, port, username, and optional password or private key path
 - Trust-host setting for accepting newly seen host keys
+- `Triton Pi` preset for `triton@tritonpi.local` with password `triton`
 
 Outputs:
 
@@ -72,6 +73,8 @@ Setup notes:
 
 - Requires `paramiko`, installed by `requirements.txt` and verified by
   `setup_windows.ps1`.
+- The shared Triton Pi credential is intentionally stored as a default preset
+  for field convenience.
 - Does not require the Windows OpenSSH client executable to be installed.
 
 ## Crab Detection

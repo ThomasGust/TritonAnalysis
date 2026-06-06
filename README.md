@@ -94,7 +94,7 @@ python -m pytest
 ```
 
 The Windows setup script installs `requirements-windows.txt` and verifies that
-the unified app's `SSH` tab can import `paramiko`.
+the unified app's `SSH` tab can import `paramiko` and load the Triton Pi preset.
 
 On macOS or Linux:
 
@@ -125,6 +125,8 @@ Coral Measurement, Backup Iceberg Measurement, and SSH. The standalone applets
 below remain available as backups.
 The status bar includes automatic TritonPilot media sync status and the active
 destination folder.
+The SSH tab includes a `Triton Pi` preset for `triton@tritonpi.local` with the
+shared field password already filled.
 
 By default, synced media and generated outputs live under `.\Workspace` inside
 this checkout. The `Workspace` menu can move that root on each computer while

@@ -35,7 +35,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\setup_windows.ps1
 
 The setup script creates or reuses `.\.venv`, installs
 `requirements-windows.txt`, and verifies that the SSH console can import
-`paramiko`.
+`paramiko` and see the default Triton Pi preset.
 
 Manual equivalent:
 
@@ -113,6 +113,15 @@ The unified app includes an `SSH` tab for shell access to the Pilot analysis
 link, routed ROV address, or localhost. It does not require OpenSSH to be on the
 Windows `PATH`; it uses the Python `paramiko` package installed by the
 requirements.
+
+The default preset list includes `Triton Pi`, which fills:
+
+```text
+host: tritonpi.local
+user: triton
+password: triton
+port: 22
+```
 
 Verify the installed environment directly:
 
