@@ -323,7 +323,7 @@ class TritonAnalysisWindow(QMainWindow):
         layout.setHorizontalSpacing(10)
         layout.setVerticalSpacing(2)
 
-        self._pilot_sync_state_panel_label = QLabel("Pilot Sync: ready")
+        self._pilot_sync_state_panel_label = QLabel("Pilot Sync: READY")
         self._pilot_sync_state_panel_label.setObjectName("pilotSyncState")
         self._pilot_sync_progress_label = QLabel("No transfer running.")
         self._pilot_sync_progress_label.setObjectName("pilotSyncProgress")
@@ -408,11 +408,26 @@ class TritonAnalysisWindow(QMainWindow):
 
     def _update_pilot_sync_label(self, state: str, detail: str = "") -> None:
         destination = self._workspace.label_for(self._pilot_sync_output)
-        if state == "syncing":
-            text = f"Pilot Sync: SYNCING {self._pilot_sync_url} -> {destination}"
-            panel_state = "Pilot Sync: SYNCING"
+        if state == "watching":
+            text = f"Pilot Sync: LIVE {self._pilot_sync_url} -> {destination}"
+            panel_state = "Pilot Sync: LIVE"
+            progress = detail or "Connected. Waiting for new Pilot recordings."
+            tone = "ok"
+        elif state == "checking":
+            text = f"Pilot Sync: CHECKING {self._pilot_sync_url} -> {destination}"
+            panel_state = "Pilot Sync: CHECKING"
             progress = detail or "Checking TritonPilot for new recordings..."
-            tone = "warn"
+            tone = ""
+        elif state == "receiving":
+            text = f"Pilot Sync: RECEIVING {self._pilot_sync_url} -> {destination}"
+            panel_state = "Pilot Sync: RECEIVING"
+            progress = detail or "Receiving new Pilot files..."
+            tone = "ok"
+        elif state == "syncing":
+            text = f"Pilot Sync: CHECKING {self._pilot_sync_url} -> {destination}"
+            panel_state = "Pilot Sync: CHECKING"
+            progress = detail or "Checking TritonPilot for new recordings..."
+            tone = ""
         elif state == "ok":
             text = f"Pilot Sync: OK {detail} -> {destination}"
             panel_state = "Pilot Sync: OK"
@@ -429,8 +444,8 @@ class TritonAnalysisWindow(QMainWindow):
             progress = "Automatic sync is off. Use Sync Now to check for missing files."
             tone = "warn"
         else:
-            text = f"Pilot Sync: ready {self._pilot_sync_url} -> {destination}"
-            panel_state = "Pilot Sync: ready"
+            text = f"Pilot Sync: READY {self._pilot_sync_url} -> {destination}"
+            panel_state = "Pilot Sync: READY"
             progress = "Ready to receive recordings."
             tone = ""
         self._pilot_sync_label.setText(text)
@@ -473,14 +488,14 @@ class TritonAnalysisWindow(QMainWindow):
         path = self._short_transfer_path(data.get("path", ""))
 
         if event in {"sync_start", "index_start"}:
-            self._update_pilot_sync_label("syncing", "Requesting the file list from TritonPilot...")
+            self._update_pilot_sync_label("checking", "Requesting the file list from TritonPilot...")
             return
         if event == "watch_start":
-            self._update_pilot_sync_label("syncing", "Waiting for new Pilot recordings...")
+            self._update_pilot_sync_label("watching", "Connected. Waiting for new Pilot recordings.")
             return
         if event == "watch_done":
             if not bool(data.get("changed")):
-                self._pilot_sync_progress_label.setText("No new Pilot recordings yet.")
+                self._update_pilot_sync_label("watching", "No new Pilot recordings yet.")
             return
         if event == "watch_error":
             self._pilot_sync_progress_label.setText(
@@ -506,8 +521,9 @@ class TritonAnalysisWindow(QMainWindow):
             return
         if event == "copy_start":
             prefix = f"{index}/{total_files}: " if total_files else ""
-            self._pilot_sync_progress_label.setText(
-                f"Receiving {prefix}{path} ({self._format_bytes(data.get('size') or 0)})..."
+            self._update_pilot_sync_label(
+                "receiving",
+                f"Receiving {prefix}{path} ({self._format_bytes(data.get('size') or 0)})...",
             )
             return
         if event == "copy_progress":
@@ -622,17 +638,18 @@ class TritonAnalysisWindow(QMainWindow):
                 self._pilot_sync_progress_label.setText("A Pilot sync is already running.")
             return
         self._pilot_sync_busy = True
-        self._update_pilot_sync_label("syncing")
+        watching = bool(
+            self._pilot_sync_watch_enabled
+            and not force
+            and self._pilot_sync_fn is None
+        )
+        self._update_pilot_sync_label("watching" if watching else "checking")
 
         worker_kwargs = {
             "base_url": self._pilot_sync_url,
             "destination": self._pilot_sync_output,
             "timeout": self._pilot_sync_timeout_s,
-            "watch_for_changes": bool(
-                self._pilot_sync_watch_enabled
-                and not force
-                and self._pilot_sync_fn is None
-            ),
+            "watch_for_changes": watching,
             "since_event_id": self._pilot_sync_last_event_id,
             "event_timeout": self._pilot_sync_event_timeout_s,
         }
@@ -670,7 +687,7 @@ class TritonAnalysisWindow(QMainWindow):
         if data.get("ok"):
             if data.get("no_change"):
                 self._pilot_sync_last_error = ""
-                self._update_pilot_sync_label("ok", "Pilot: no new recordings")
+                self._update_pilot_sync_label("watching", "Connected. No new Pilot recordings yet.")
                 self._pilot_sync_last_label.setText(time.strftime("Last check: %H:%M:%S"))
                 return
             summary = data.get("summary")

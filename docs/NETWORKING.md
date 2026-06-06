@@ -51,7 +51,7 @@ networks for the dedicated analysis link.
 On the analysis computer, the unified TritonAnalysis app pulls saved files into
 `Workspace\incoming\pilot` automatically. Its top `Pilot Sync` panel shows the
 URL, connection state, exact destination folder, and whether it is checking,
-receiving, or done receiving files. Current TritonPilot servers expose a
+listening for new files, receiving, or done receiving files. Current TritonPilot servers expose a
 long-poll event endpoint, and TritonAnalysis uses it by default so new stable
 Pilot files sync immediately instead of waiting for the next periodic poll.
 Older Pilot servers still work; Analysis falls back to periodic index checks.

@@ -295,6 +295,49 @@ def test_unified_analysis_window_shows_pilot_sync_transfer_progress(tmp_path: Pa
         app.processEvents()
 
 
+def test_unified_analysis_window_uses_clear_pilot_sync_states(tmp_path: Path):
+    app = _app()
+    from triton_analysis.gui.triton_analysis_window import TritonAnalysisWindow
+
+    window = TritonAnalysisWindow(
+        pilot_transfer_auto_sync=False,
+        pilot_transfer_url="http://10.77.0.1:8765",
+        pilot_transfer_output=tmp_path / "incoming",
+    )
+    try:
+        window.show()
+        app.processEvents()
+
+        window._handle_pilot_sync_progress({"event": "watch_start"})
+        assert "Pilot Sync: LIVE" in window._pilot_sync_label.text()
+        assert window._pilot_sync_state_panel_label.text() == "Pilot Sync: LIVE"
+        assert "Waiting for new Pilot recordings" in window._pilot_sync_progress_label.text()
+        assert "SYNCING" not in window._pilot_sync_label.text()
+
+        window._handle_pilot_sync_progress({"event": "watch_done", "changed": False})
+        assert "Pilot Sync: LIVE" in window._pilot_sync_label.text()
+        assert "No new Pilot recordings" in window._pilot_sync_progress_label.text()
+
+        window._handle_pilot_sync_progress({"event": "sync_start"})
+        assert "Pilot Sync: CHECKING" in window._pilot_sync_label.text()
+
+        window._handle_pilot_sync_progress(
+            {
+                "event": "copy_start",
+                "path": "run_01/video.mp4",
+                "size": 4096,
+                "index": 1,
+                "total_files": 1,
+            }
+        )
+        assert "Pilot Sync: RECEIVING" in window._pilot_sync_label.text()
+        assert "video.mp4" in window._pilot_sync_progress_label.text()
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
 def test_unified_analysis_sync_now_finishes_from_background_worker(tmp_path: Path):
     app = _app()
     from triton_analysis.sync.pilot_transfer import PilotTransferSummary
