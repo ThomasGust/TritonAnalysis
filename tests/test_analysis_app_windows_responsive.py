@@ -135,7 +135,7 @@ def test_unified_analysis_window_contains_competition_tabs():
 
         tabs = window.findChild(QTabWidget)
         assert tabs is not None
-        assert tabs.count() == 8
+        assert tabs.count() == 9
         assert [tabs.tabText(index) for index in range(tabs.count())] == [
             "Coral Reconstruction",
             "Crab Detection",
@@ -145,11 +145,14 @@ def test_unified_analysis_window_contains_competition_tabs():
             "Stereo Calibration",
             "Backup Coral Measurement",
             "Backup Iceberg Measurement",
+            "SSH",
         ]
         assert window.focus_tab("backup-coral-measurement") is True
         assert tabs.currentIndex() == 6
         assert window.focus_tab("crab") is True
         assert tabs.currentIndex() == 1
+        assert window.focus_tab("terminal") is True
+        assert tabs.currentIndex() == 8
         assert window.focus_tab("missing") is False
     finally:
         window.close()

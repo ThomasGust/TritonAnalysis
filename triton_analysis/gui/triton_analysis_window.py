@@ -33,6 +33,7 @@ from triton_analysis.gui.multi_rect_length_measurement_window import MultiRectLe
 from triton_analysis.gui.pilot_transfer_sync import PilotTransferSyncWorker, SyncFn
 from triton_analysis.gui.realityscan_reconstruction_window import RealityScanReconstructionWindow
 from triton_analysis.gui.responsive import resize_to_available_screen
+from triton_analysis.gui.ssh_console_window import SshConsoleWindow, default_analysis_ssh_presets
 from triton_analysis.gui.stereo_calibration_window import StereoCalibrationWindow
 from triton_analysis.gui.stereo_iceberg_measurement_window import StereoIcebergMeasurementWindow
 from triton_analysis.sync.pilot_transfer import DEFAULT_PILOT_TRANSFER_URL
@@ -71,6 +72,7 @@ class TritonAnalysisWindow(QMainWindow):
         "stereo-calibration",
         "backup-coral-measurement",
         "backup-iceberg-measurement",
+        "ssh",
     )
 
     def __init__(
@@ -237,6 +239,14 @@ class TritonAnalysisWindow(QMainWindow):
                 parent=self,
             ),
         )
+        self._add_window(
+            "ssh",
+            "SSH",
+            SshConsoleWindow(
+                presets=default_analysis_ssh_presets(),
+                parent=self,
+            ),
+        )
 
         self._tab_aliases = {
             "crab": "crab-detection",
@@ -247,6 +257,7 @@ class TritonAnalysisWindow(QMainWindow):
             "multi-rect": "backup-coral-measurement",
             "multi-rect-length": "backup-coral-measurement",
             "backup-iceberg": "backup-iceberg-measurement",
+            "terminal": "ssh",
         }
 
         self._pilot_sync_label = QLabel()

@@ -20,7 +20,9 @@ The applets consume:
 This is deliberate. The pilot station should remain focused on vehicle control,
 and the analysis station should be able to keep working even if the tether,
 ROV, or pilot UI is unavailable. The optional transfer helper only copies saved
-files from TritonPilot; it does not talk to TritonOS or control the ROV.
+files from TritonPilot; it does not talk to TritonOS or control the ROV. The
+separate `SSH` tab is a diagnostic exception for operator-initiated shell
+access.
 
 ## Optional USB-Ethernet Handoff
 
@@ -86,6 +88,20 @@ $env:TRITON_ANALYSIS_SYNC_EVENT_TIMEOUT_S="20.0"
 Inside the unified TritonAnalysis app, use the `Workspace` menu to choose the
 workspace root, and the `Pilot Sync` menu to toggle auto sync, sync now, set a
 custom destination folder, or change the Pilot URL.
+
+## Optional SSH Diagnostics
+
+The unified app includes an `SSH` tab for maintenance shells. Its default
+presets are:
+
+- `Pilot Link`: `10.77.0.1:22`
+- `ROV if Routed`: `192.168.1.4:22`
+- `Localhost`: `127.0.0.1:22`
+
+The ROV preset only works from TritonAnalysis when the network route or
+forwarding path allows the analysis computer to reach the ROV SSH service.
+If that route is not present, use the TritonPilot `SSH` tab for direct ROV
+access.
 
 ## Data Handoff From TritonPilot
 
