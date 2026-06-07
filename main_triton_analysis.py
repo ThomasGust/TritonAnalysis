@@ -1,5 +1,4 @@
 """Top-level launcher for the unified TritonAnalysis GUI."""
-
 from __future__ import annotations
 
 import os
