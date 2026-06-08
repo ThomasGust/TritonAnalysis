@@ -50,8 +50,7 @@ def _isolate_unified_app_settings():
 @pytest.mark.parametrize(
     ("window_path", "min_scroll_areas"),
     [
-        ("triton_analysis.gui.triton_analysis_window.TritonAnalysisWindow", 6),
-        ("triton_analysis.gui.crab_detection_window.CrabDetectionWindow", 1),
+        ("triton_analysis.gui.triton_analysis_window.TritonAnalysisWindow", 5),
         ("triton_analysis.gui.edna_analysis_window.EDNAAnalysisWindow", 1),
         ("triton_analysis.gui.iceberg_tracking_window.IcebergTrackingWindow", 1),
         ("triton_analysis.gui.coral_garden_model_window.CoralGardenModelWindow", 0),
@@ -135,10 +134,9 @@ def test_unified_analysis_window_contains_competition_tabs():
 
         tabs = window.findChild(QTabWidget)
         assert tabs is not None
-        assert tabs.count() == 9
+        assert tabs.count() == 8
         assert [tabs.tabText(index) for index in range(tabs.count())] == [
             "Coral Reconstruction",
-            "Crab Detection",
             "Stereo Iceberg Length",
             "Iceberg Tracking",
             "eDNA Analysis",
@@ -148,11 +146,9 @@ def test_unified_analysis_window_contains_competition_tabs():
             "SSH",
         ]
         assert window.focus_tab("backup-coral-measurement") is True
-        assert tabs.currentIndex() == 6
-        assert window.focus_tab("crab") is True
-        assert tabs.currentIndex() == 1
+        assert tabs.currentIndex() == 5
         assert window.focus_tab("terminal") is True
-        assert tabs.currentIndex() == 8
+        assert tabs.currentIndex() == 7
         assert window.focus_tab("missing") is False
     finally:
         window.close()

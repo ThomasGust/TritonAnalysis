@@ -49,8 +49,6 @@ classes:
 
 - `triton_analysis/iceberg/tracking.py` handles coordinate conversion, closest-approach
   geometry, threat levels, survey sequence validation, and report generation.
-- `triton_analysis/crab/detector.py` matches the fixed crab board reference image, projects the
-  known European green crab boxes, and renders annotated images.
 - `triton_analysis/iceberg/measurement.py` measures iceberg PVC segments using affine,
   line-endpoint, and spatial calibration helpers.
 - `triton_analysis/measurement/planar.py` performs homography-based planar height and segment

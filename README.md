@@ -16,7 +16,6 @@ The repository is organized as a unified competition app, packaged backup
 applets, and task-focused analysis modules:
 
 - Unified tabbed competition-day analysis window
-- Crab detection for the fixed reference board, including European green crab boxes and synthetic YOLO data
 - Iceberg tracking and threat assessment
 - Iceberg PVC segment measurement
 - Planar height measurement
@@ -37,7 +36,6 @@ root.
 
 ```text
 main_triton_analysis.py                                  Top-level unified GUI launcher
-triton_analysis/apps/main_crab_detection.py                 Crab detection GUI entry point
 triton_analysis/apps/main_triton_analysis.py                Unified tabbed competition-day GUI
 triton_analysis/apps/main_iceberg_tracking.py               Iceberg threat-assessment GUI
 triton_analysis/apps/main_iceberg_measurement.py            Iceberg variable-segment GUI
@@ -52,9 +50,6 @@ triton_analysis/apps/main_realityscan_reconstruction.py     Stereo RealityScan r
 triton_analysis/apps/main_realityscan_model_viewer.py       Three.js OBJ measurement viewer
 triton_analysis/apps/color_corr.py                          Underwater correction/frame-export GUI
 triton_analysis/sync/pilot_transfer.py                      Pull-only TritonPilot media sync helper
-triton_analysis/crab/detector.py                       Reference-board crab detector
-tools/crab_yolo_train.py               YOLO fine-tuning helper for green crabs
-tools/crab_yolo_predict.py             YOLO image prediction helper for green crabs
 triton_analysis/iceberg/tracking.py                    Coordinate/threat-assessment logic
 triton_analysis/iceberg/measurement.py                 2D/3D measurement algorithms
 triton_analysis/measurement/planar.py                  Planar homography measurement algorithms
@@ -119,10 +114,10 @@ python -m triton_analysis.apps.main_triton_analysis --pilot-transfer-url http://
 python -m triton_analysis.apps.main_triton_analysis --workspace D:\TritonAnalysisWorkspace
 ```
 
-The unified window opens with Coral Reconstruction, then Crab Detection, Stereo
-Iceberg Length, Iceberg Tracking, eDNA Analysis, Stereo Calibration, Backup
-Coral Measurement, Backup Iceberg Measurement, and SSH. The standalone applets
-below remain available as backups.
+The unified window opens with Coral Reconstruction, Stereo Iceberg Length,
+Iceberg Tracking, eDNA Analysis, Stereo Calibration, Backup Coral Measurement,
+Backup Iceberg Measurement, and SSH. The standalone applets below remain
+available as backups.
 The status bar includes automatic TritonPilot media sync status and the active
 destination folder.
 The SSH tab includes a `Triton Pi` preset for `triton@tritonpi.local` with the
@@ -132,17 +127,6 @@ By default, synced media and generated outputs live under `.\Workspace` inside
 this checkout. The `Workspace` menu can move that root on each computer while
 keeping subfolders like `incoming\pilot`, `results`, `reports`, and
 `calibrations` consistent.
-
-Crab competition analyzer:
-
-```powershell
-python -m triton_analysis.apps.main_crab_detection [image-folder-or-file ...]
-python -m triton_analysis.apps.main_crab_detection path\to\archive --detector yolo --yolo-model Workspace\models\crab_yolo\run\weights\best.pt
-python -m tools.crab_image_detect path\to\images --output-dir path\to\results
-python -m tools.crab_generate_synthetic_dataset path\to\images --train-count 700 --val-count 180
-python -m tools.crab_yolo_train Workspace\datasets\crab_green_yolo_YYYYMMDD_HHMMSS\data.yaml
-python -m tools.crab_yolo_predict path\to\images --model Workspace\models\crab_yolo\run\weights\best.pt
-```
 
 Iceberg tracking threat applet:
 

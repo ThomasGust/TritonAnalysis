@@ -25,7 +25,6 @@ from PyQt6.QtWidgets import (
 from triton_analysis.gui.file_dialogs import ThumbnailFileDialog as QFileDialog
 
 from triton_analysis.workspace import AnalysisWorkspace, set_active_workspace_root, workspace_paths
-from triton_analysis.gui.crab_detection_window import CrabDetectionWindow
 from triton_analysis.gui.edna_analysis_window import EDNAAnalysisWindow
 from triton_analysis.gui.iceberg_measurement_window import IcebergMeasurementWindow
 from triton_analysis.gui.iceberg_tracking_window import IcebergTrackingWindow
@@ -65,7 +64,6 @@ class TritonAnalysisWindow(QMainWindow):
 
     TAB_KEYS = (
         "coral-reconstruction",
-        "crab-detection",
         "stereo-iceberg-length",
         "iceberg-tracking",
         "edna-analysis",
@@ -78,8 +76,6 @@ class TritonAnalysisWindow(QMainWindow):
     def __init__(
         self,
         *,
-        crab_paths: list[str | Path] | None = None,
-        crab_reference_image: str | Path | None = None,
         backup_coral_paths: list[str | Path] | None = None,
         backup_iceberg_paths: list[str | Path] | None = None,
         stereo_manifest_path: str | Path | None = None,
@@ -185,15 +181,6 @@ class TritonAnalysisWindow(QMainWindow):
             ),
         )
         self._add_window(
-            "crab-detection",
-            "Crab Detection",
-            CrabDetectionWindow(
-                image_paths=[str(path) for path in crab_paths or []],
-                reference_image=crab_reference_image,
-                parent=self,
-            ),
-        )
-        self._add_window(
             "stereo-iceberg-length",
             "Stereo Iceberg Length",
             StereoIcebergMeasurementWindow(
@@ -249,7 +236,6 @@ class TritonAnalysisWindow(QMainWindow):
         )
 
         self._tab_aliases = {
-            "crab": "crab-detection",
             "iceberg-measurement": "stereo-iceberg-length",
             "iceberg-length": "stereo-iceberg-length",
             "edna": "edna-analysis",

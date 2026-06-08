@@ -13,8 +13,6 @@ GUI class.
 
 ## Core Analysis Modules
 
-- `triton_analysis/crab/detector.py` owns fixed-board reference matching, European green crab
-  count/box projection, and annotated rendering.
 - `triton_analysis/iceberg/tracking.py` owns coordinate conversions, platform geometry, threat
   assessment, survey validation, and report formatting.
 - `triton_analysis/iceberg/measurement.py` owns iceberg variable-segment measurement algorithms
@@ -40,7 +38,6 @@ them from GUI code.
 The GUI package owns PyQt windows, dialogs, canvases, responsive helpers, and
 shared styling:
 
-- `crab_detection_window.py`
 - `file_dialogs.py`
 - `image_preview.py`
 - `iceberg_tracking_window.py`
@@ -63,11 +60,6 @@ from their manifest or immediate `left`/`right` subfolders without requiring
 operators to enter those subfolders first.
 
 ## `tools/`
-
-`tools/crab_image_detect.py` scans saved image files or folders, writes
-annotated European green crab images, and records `summary.csv`.
-`tools/crab_video_detect.py` remains a placeholder until video sampling is
-rebuilt on top of the image detector.
 
 Future tools should remain file-based and analysis-focused. If a tool needs
 live vehicle state, reconsider which repository should own it.

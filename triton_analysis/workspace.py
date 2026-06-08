@@ -75,10 +75,6 @@ class AnalysisWorkspace:
         return self.results / "realityscan"
 
     @property
-    def crab_results(self) -> Path:
-        return self.results / "crab_detection"
-
-    @property
     def coral_results(self) -> Path:
         return self.results / "coral_garden"
 
@@ -93,7 +89,6 @@ class AnalysisWorkspace:
             self.sources,
             self.results,
             self.realityscan_results,
-            self.crab_results,
             self.coral_results,
             self.color_correction_results,
             self.reports,

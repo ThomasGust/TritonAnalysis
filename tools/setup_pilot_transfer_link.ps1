@@ -40,7 +40,6 @@ foreach ($folder in @(
     "sources",
     "results",
     "results\realityscan",
-    "results\crab_detection",
     "results\coral_garden",
     "results\color_correction",
     "reports",

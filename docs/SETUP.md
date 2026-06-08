@@ -20,7 +20,6 @@ The base dependency list is in `requirements.txt`:
 - `opencv-python`
 - `paramiko` for the embedded SSH console
 - `scipy`
-- `ultralytics` for optional YOLO crab fine tuning and inference
 
 `requirements-windows.txt` and `requirements-macos.txt` currently include the
 same base file.
@@ -62,7 +61,7 @@ python .\main_triton_analysis.py
 Launch a standalone applet:
 
 ```powershell
-python -m triton_analysis.apps.main_crab_detection
+python -m triton_analysis.apps.main_iceberg_tracking
 ```
 
 ## macOS And Linux Setup
@@ -94,7 +93,6 @@ python -m triton_analysis.apps.main_iceberg_tracking
 These commands should at least open the GUI on a properly configured desktop:
 
 ```powershell
-python -m triton_analysis.apps.main_crab_detection
 python -m triton_analysis.apps.main_iceberg_tracking
 python -m triton_analysis.apps.main_coral_garden_model
 python -m triton_analysis.apps.main_edna_analysis --sample
@@ -140,12 +138,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\setup_windows.ps1
 The repository may include small reference/sample assets under `data/` when an
 applet needs them. Larger videos used by computer-vision tests are intentionally
 not required; those tests skip themselves when the recordings are absent.
-For crab detection, either keep the known TritonPilot reference recording
-available as a sibling checkout or set:
-
-```powershell
-$env:TRITON_CRAB_REFERENCE_IMAGE="D:\path\to\crab_board_reference.png"
-```
 
 For competition use, TritonAnalysis creates a local ignored `Workspace` folder
 inside the repo for incoming media, reports, and generated results:
@@ -156,11 +148,6 @@ python -c "from triton_analysis.workspace import workspace_paths; workspace_path
 
 Keep original captures unchanged and write applet outputs to a separate results
 folder inside that workspace.
-
-YOLO crab training uses Ultralytics on top of PyTorch. If PyTorch can use the
-local GPU, `tools.crab_yolo_train` will select it; otherwise it falls back to
-CPU. On newer GPUs, install a PyTorch build that explicitly supports that GPU
-architecture before starting long training runs.
 
 ## No Live ROV Dependencies
 

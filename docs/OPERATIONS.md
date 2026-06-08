@@ -46,9 +46,9 @@ python -m triton_analysis.apps.main_triton_analysis
 python -m triton_analysis.apps.main_triton_analysis --stereo-manifest path\to\stereo_session --calibration path\to\stereo_calibration.json
 ```
 
-The unified app includes Coral Reconstruction, Crab Detection, Stereo Iceberg
-Length, Iceberg Tracking, eDNA Analysis, Stereo Calibration, Backup Coral
-Measurement, and Backup Iceberg Measurement tabs in one window. RealityScan
+The unified app includes Coral Reconstruction, Stereo Iceberg Length, Iceberg
+Tracking, eDNA Analysis, Stereo Calibration, Backup Coral Measurement, and
+Backup Iceberg Measurement tabs in one window. RealityScan
 reconstruction runs in a `QProcess` and stereo calibration runs in a worker
 thread, so those jobs do not block the other tabs.
 
@@ -60,13 +60,6 @@ folder and the `Pilot Sync` menu to change the URL, destination folder, or
 trigger a manual sync.
 
 ## Backup Applets
-
-Crab detection:
-
-```powershell
-python -m triton_analysis.apps.main_crab_detection path\to\images
-python -m tools.crab_image_detect path\to\images --output-dir path\to\results
-```
 
 Iceberg tracking:
 
@@ -124,53 +117,6 @@ Color correction:
 ```powershell
 python -m triton_analysis.apps.color_corr
 ```
-
-## Crab Detection Workflow
-
-The rebuilt crab detector assumes the printed competition board artwork is
-fixed. It matches a known reference photo of that board into the current image,
-projects the four European green crab regions into camera coordinates, and draws
-bounding boxes around them.
-
-Use the GUI for review:
-
-```powershell
-python -m triton_analysis.apps.main_crab_detection path\to\images
-```
-
-The GUI's `Auto` detector mode uses the newest trained YOLO crab weights under
-`Workspace\models\crab_yolo` when available; otherwise it falls back to board
-projection. To force a specific YOLO model for archive review:
-
-```powershell
-python -m triton_analysis.apps.main_crab_detection path\to\archive --detector yolo --yolo-model Workspace\models\crab_yolo\run\weights\best.pt
-```
-
-Use the batch image helper when processing many still photos:
-
-```powershell
-python -m tools.crab_image_detect path\to\images --output-dir path\to\results
-```
-
-If the default local reference image is not available, pass `--reference-image`
-or set `TRITON_CRAB_REFERENCE_IMAGE` to a clear image of the same board.
-
-To build a trainable detector, generate synthetic YOLO data from verified still
-images, then fine-tune a pretrained YOLO model:
-
-```powershell
-python -m tools.crab_generate_synthetic_dataset path\to\images --train-count 700 --val-count 180
-python -m tools.crab_yolo_train Workspace\datasets\crab_green_yolo_YYYYMMDD_HHMMSS\data.yaml --epochs 50
-```
-
-Run the trained model on still photos with:
-
-```powershell
-python -m tools.crab_yolo_predict path\to\images --model Workspace\models\crab_yolo\run\weights\best.pt
-```
-
-If `--model` is omitted, the prediction helper uses the newest crab YOLO
-weights under `Workspace\models\crab_yolo`.
 
 ## Measurement Workflows
 

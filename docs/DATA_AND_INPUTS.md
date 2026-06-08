@@ -29,10 +29,9 @@ try converting it to `.mp4` with a common H.264 encoding before competition.
 
 ## Bundled Data
 
-The `data/` folder is reserved for small assets used by applets and tests. The
-crab detector can use `data/crab_board_reference.png` when present, or a path
-provided with `TRITON_CRAB_REFERENCE_IMAGE`. Large raw videos, competition
-runs, and generated result folders should remain outside git.
+The `data/` folder is reserved for small assets used by applets and tests.
+Large raw videos, competition runs, and generated result folders should remain
+outside git.
 
 ## Workspace Layout
 
@@ -61,10 +60,9 @@ Workspace/
     usb/                  manual USB-drive drops, if used
   sources/                curated source media copied from incoming
     run_01/
-    run_02/
+  run_02/
   calibrations/           stereo_calibration.json and related artifacts
   results/
-    crab_detection/       annotated crab images and CSV summaries
     coral_garden/
     realityscan/
     color_correction/
@@ -106,13 +104,6 @@ landing folder. After each pull, copy or rename the relevant files into the
 run-specific source folder you want to preserve.
 
 ## Applet Inputs
-
-Crab detection:
-
-- Source image or folder of images
-- A reference image of the fixed crab board, supplied automatically when the
-  known local TritonPilot recording exists or explicitly with
-  `TRITON_CRAB_REFERENCE_IMAGE`
 
 Iceberg tracking:
 
@@ -165,9 +156,3 @@ Depending on the applet, outputs may include:
 
 For judge-facing results, keep exported artifacts and the source media together
 so a teammate can reproduce or explain the answer later.
-
-## Crab Detection Outputs
-
-`tools.crab_image_detect` writes annotated images and `summary.csv` to a new
-timestamped folder under `Workspace/results/crab_detection` by default unless
-`--output-dir` is provided.

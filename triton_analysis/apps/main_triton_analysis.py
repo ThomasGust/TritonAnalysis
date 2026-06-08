@@ -17,7 +17,6 @@ from triton_analysis.gui.triton_analysis_window import TritonAnalysisWindow
 
 TAB_CHOICES = (
     "coral-reconstruction",
-    "crab-detection",
     "stereo-iceberg-length",
     "iceberg-tracking",
     "edna-analysis",
@@ -25,7 +24,6 @@ TAB_CHOICES = (
     "backup-coral-measurement",
     "backup-iceberg-measurement",
     "ssh",
-    "crab",
     "iceberg-measurement",
     "edna",
     "terminal",
@@ -36,18 +34,6 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the unified analysis app command-line parser."""
     parser = argparse.ArgumentParser(
         description="Unified TritonAnalysis GUI for competition-day analysis tasks.",
-    )
-    parser.add_argument(
-        "--crab",
-        nargs="*",
-        default=None,
-        metavar="PATH",
-        help="Optional image files or folders to preload in the Crab Detection tab.",
-    )
-    parser.add_argument(
-        "--crab-reference-image",
-        default=None,
-        help="Optional crab-board reference image for European green crab detection.",
     )
     parser.add_argument(
         "--backup-coral",
@@ -120,8 +106,6 @@ def main(argv: list[str] | None = None) -> int:
     apply_modern_style(app)
 
     window = TritonAnalysisWindow(
-        crab_paths=args.crab,
-        crab_reference_image=args.crab_reference_image,
         backup_coral_paths=args.backup_coral,
         backup_iceberg_paths=args.backup_iceberg,
         stereo_manifest_path=args.stereo_manifest or None,

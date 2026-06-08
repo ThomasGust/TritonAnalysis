@@ -22,7 +22,6 @@ Purpose:
 Tabs:
 
 - Coral Reconstruction
-- Crab Detection
 - Stereo Iceberg Length
 - Iceberg Tracking
 - eDNA Analysis
@@ -76,43 +75,6 @@ Setup notes:
 - The shared Triton Pi credential is intentionally stored as a default preset
   for field convenience.
 - Does not require the Windows OpenSSH client executable to be installed.
-
-## Crab Detection
-
-Launch:
-
-```powershell
-python -m triton_analysis.apps.main_crab_detection [image-folder-or-file ...]
-python -m triton_analysis.apps.main_crab_detection path\to\archive --detector yolo --yolo-model Workspace\models\crab_yolo\run\weights\best.pt
-```
-
-Purpose:
-
-- Match the fixed crab competition board from a reference image.
-- Count European green crabs with the trained YOLO model when weights are available.
-- Count the four European green crab regions with board projection when the fixed board is visible.
-- Draw bounding boxes for European green crabs in the source image.
-
-Primary modules:
-
-- `triton_analysis/apps/main_crab_detection.py`
-- `triton_analysis/gui/crab_detection_window.py`
-- `triton_analysis/crab/detector.py`
-- `tools/crab_image_detect.py`
-- `tools/crab_yolo_predict.py`
-
-Inputs:
-
-- Image files or folders of images
-- Optional YOLO model via `--yolo-model`
-- Optional reference image via `--reference-image` or
-  `TRITON_CRAB_REFERENCE_IMAGE`
-
-Useful batch helper:
-
-```powershell
-python -m tools.crab_image_detect path\to\images --output-dir path\to\results
-```
 
 ## Iceberg Tracking
 

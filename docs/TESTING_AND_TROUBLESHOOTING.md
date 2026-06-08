@@ -55,7 +55,6 @@ Environment variables work for CI or shell profiles:
 Run tests by applet area:
 
 ```powershell
-python -m pytest tests\test_crab_detector.py
 python -m pytest tests\test_iceberg_tracking.py
 python -m pytest tests\test_iceberg_measurement.py
 python -m pytest tests\test_planar_measurement.py
@@ -86,7 +85,6 @@ machine. Mark new tests when they leave that boundary:
 
 ## What The Tests Cover
 
-- Crab detector reference matching, European green count, annotations, and GUI wiring
 - eDNA frequency math, validation, GUI count updates, and reports
 - Iceberg coordinate conversion, threat thresholds, survey validation, and
   report formatting
@@ -140,15 +138,6 @@ machine. Mark new tests when they leave that boundary:
 - Confirm OpenCV can read the codec on this machine.
 - Try converting the source to a standard `.mp4` or `.jpg`.
 - Keep the original file even if a converted copy is used for analysis.
-
-## Crab Detection Looks Wrong
-
-- Confirm the image contains the same fixed board artwork as the reference.
-- Use a sharper frame with the board more fully visible.
-- Pass `--reference-image` or set `TRITON_CRAB_REFERENCE_IMAGE` if the default
-  local reference is missing or stale.
-- Treat low-confidence results as review-needed, especially on edge-on or
-  heavily cropped stereo frames.
 
 ## Measurement Applet Reports Geometry Errors
 

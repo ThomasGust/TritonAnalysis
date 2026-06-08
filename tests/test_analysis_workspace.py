@@ -30,12 +30,10 @@ def test_workspace_paths_are_stable_under_configured_root(tmp_path: Path):
 
     assert workspace.pilot_incoming == tmp_path / "analysis-root" / "incoming" / "pilot"
     assert workspace.realityscan_results == tmp_path / "analysis-root" / "results" / "realityscan"
-    assert workspace.crab_results == tmp_path / "analysis-root" / "results" / "crab_detection"
     assert workspace.reports == tmp_path / "analysis-root" / "reports"
     assert workspace.pilot_incoming.exists()
     assert workspace.results.exists()
     assert workspace.realityscan_results.exists()
-    assert workspace.crab_results.exists()
     assert workspace.coral_results.exists()
     assert workspace.color_correction_results.exists()
 
