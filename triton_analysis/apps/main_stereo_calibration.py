@@ -20,6 +20,7 @@ from triton_analysis.stereo.calibration import (
     calibrate_stereo_from_observations,
     collect_charuco_observations,
     collect_checkerboard_observations,
+    first_percent_stereo_pairs,
     load_manifest_collection,
     write_calibration_artifact,
 )
@@ -31,6 +32,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", default="", help="Output calibration JSON path.")
     parser.add_argument("--rig-id", default="", help="Rig id to store in the artifact.")
     parser.add_argument("--pair-name", default="", help="Stereo pair name to store in the artifact.")
+    parser.add_argument(
+        "--frame-percent",
+        type=float,
+        default=100.0,
+        help="Use only the first N percent of input stereo pairs, in manifest order.",
+    )
     parser.add_argument("--min-pairs", type=int, default=8, help="Minimum accepted stereo pairs required.")
     parser.add_argument("--min-corners", type=int, default=24, help="Minimum matched ChArUco corners per stereo pair.")
 
@@ -75,6 +82,10 @@ def main(argv: list[str] | None = None) -> int:
     manifest, image_pairs = load_manifest_collection([Path(source) for source in args.sources])
     if not image_pairs:
         raise SystemExit("No image pairs found in stereo manifest source(s)")
+    source_pair_count = len(image_pairs)
+    image_pairs = first_percent_stereo_pairs(image_pairs, args.frame_percent)
+    if len(image_pairs) < source_pair_count:
+        print(f"Using first {len(image_pairs)}/{source_pair_count} stereo pairs ({args.frame_percent:g}%).")
 
     if args.checkerboard:
         board = CheckerboardSpec(

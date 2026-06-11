@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QProgressBar,
     QPushButton,
     QSizePolicy,
     QSpinBox,
@@ -46,6 +47,7 @@ from triton_analysis.stereo.calibration import (
     collect_charuco_observations,
     collect_checkerboard_observations,
     detect_stereo_board,
+    first_percent_stereo_pairs,
     load_manifest_collection,
     write_calibration_artifact,
 )
@@ -68,6 +70,7 @@ class _SectionCard(QFrame):
 
 
 class _CalibrationWorker(QThread):
+    progress = pyqtSignal(int, str, bool)
     completed = pyqtSignal(dict, str)
     failed = pyqtSignal(str)
 
@@ -78,6 +81,7 @@ class _CalibrationWorker(QThread):
         output_path: Path,
         board,
         board_kind: str,
+        frame_percent: int,
         min_pairs: int,
         min_corners: int,
         rig_id: str,
@@ -89,6 +93,7 @@ class _CalibrationWorker(QThread):
         self.output_path = Path(output_path)
         self.board = board
         self.board_kind = str(board_kind)
+        self.frame_percent = int(frame_percent)
         self.min_pairs = int(min_pairs)
         self.min_corners = int(min_corners)
         self.rig_id = str(rig_id)
@@ -96,30 +101,77 @@ class _CalibrationWorker(QThread):
 
     def run(self) -> None:
         try:
+            self._emit_progress(0, "Loading stereo manifests")
             _manifest, image_pairs = load_manifest_collection(self.manifest_paths)
+            source_pair_count = len(image_pairs)
+            image_pairs = first_percent_stereo_pairs(image_pairs, self.frame_percent)
+            if len(image_pairs) < source_pair_count:
+                self._emit_progress(
+                    4,
+                    f"Using first {len(image_pairs)}/{source_pair_count} stereo pair(s) ({self.frame_percent}%)",
+                )
+            self._emit_progress(5, f"Scanning {len(image_pairs)} stereo pair(s)")
             if self.board_kind == "charuco":
                 observations = collect_charuco_observations(
                     image_pairs,
                     self.board,
                     min_pairs=self.min_pairs,
                     min_corners=self.min_corners,
+                    progress_callback=self._on_observation_progress,
                 )
             else:
                 observations = collect_checkerboard_observations(
                     image_pairs,
                     self.board,
                     min_pairs=self.min_pairs,
+                    progress_callback=self._on_observation_progress,
                 )
+            self._emit_progress(
+                78,
+                f"Solving stereo calibration from {len(observations.object_points)} accepted pair(s)",
+            )
             artifact = calibrate_stereo_from_observations(
                 observations,
                 rig_id=self.rig_id,
                 pair_name=self.pair_name,
                 board_spec=self.board,
+                progress_callback=self._on_solve_progress,
             )
+            self._emit_progress(98, "Writing calibration artifact")
             write_calibration_artifact(artifact, self.output_path)
+            self._emit_progress(100, f"Calibration saved: {self.output_path}")
             self.completed.emit(artifact, str(self.output_path))
         except Exception as exc:
             self.failed.emit(str(exc))
+
+    def _emit_progress(self, percent: int, message: str, *, busy: bool = False) -> None:
+        self.progress.emit(max(0, min(100, int(percent))), str(message), bool(busy))
+
+    def _on_observation_progress(self, event: dict) -> None:
+        event_name = str(event.get("event") or "")
+        detector = "ChArUco" if str(event.get("detector") or "").lower() == "charuco" else "checkerboard"
+        total = int(event.get("total") or 0)
+        accepted = int(event.get("accepted") or 0)
+        rejected = int(event.get("rejected") or 0)
+        if event_name == "detect_start":
+            self._emit_progress(5, f"Scanning {total} stereo pair(s) for {detector} detections")
+            return
+        if event_name == "detect_pair":
+            index = int(event.get("index") or 0)
+            span_total = max(total, 1)
+            percent = 5 + round(70 * min(index, span_total) / span_total)
+            self._emit_progress(
+                percent,
+                f"Scanned {index}/{total} pair(s) | accepted {accepted} | rejected {rejected}",
+            )
+            return
+        if event_name == "detect_complete":
+            self._emit_progress(76, f"Detection complete | accepted {accepted} | rejected {rejected}")
+
+    def _on_solve_progress(self, event: dict) -> None:
+        progress = int(event.get("progress") or 78)
+        message = str(event.get("message") or event.get("stage") or "Solving stereo calibration")
+        self._emit_progress(progress, message, busy=bool(event.get("busy")))
 
 
 class StereoCalibrationWindow(QMainWindow):
@@ -265,6 +317,8 @@ class StereoCalibrationWindow(QMainWindow):
 
         run_card = _SectionCard("Calibration")
         run_form = QFormLayout()
+        self.frame_percent_spin = self._int_spin(1, 100, 100)
+        self.frame_percent_spin.setSuffix("%")
         self.min_pairs_spin = self._int_spin(1, 500, 8)
         self.min_corners_spin = self._int_spin(4, 500, 24)
         self.output_edit = QLineEdit()
@@ -274,10 +328,21 @@ class StereoCalibrationWindow(QMainWindow):
         output_row = QHBoxLayout()
         output_row.addWidget(self.output_edit, 1)
         output_row.addWidget(self.output_btn, 0)
+        self._add_form_row(run_form, "Use First Frames", self.frame_percent_spin)
         self._add_form_row(run_form, "Min Pairs", self.min_pairs_spin)
         self._charuco_rows.append(self._add_form_row(run_form, "Min ChArUco Corners", self.min_corners_spin))
         run_form.addRow("Output", output_row)
         run_card.body.addLayout(run_form)
+        self.progress_lbl = QLabel("Ready")
+        self.progress_lbl.setObjectName("summaryHint")
+        self.progress_lbl.setWordWrap(True)
+        self.progress_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        run_card.body.addWidget(self.progress_lbl)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFormat("Ready")
+        run_card.body.addWidget(self.progress_bar)
         self.calibrate_btn = QPushButton("Run Calibration")
         self.calibrate_btn.clicked.connect(self._run_calibration)
         self.calibrate_btn.setEnabled(False)
@@ -426,6 +491,7 @@ class StereoCalibrationWindow(QMainWindow):
             f"Loaded {len(self.image_pairs)} stereo pair(s) from {source_count} manifest(s)",
             4000,
         )
+        self._set_calibration_progress(0, "Ready")
 
     def _populate_session(self) -> None:
         pair = self.manifest.get("pair") or {}
@@ -576,6 +642,7 @@ class StereoCalibrationWindow(QMainWindow):
             output_path=Path(self.output_edit.text().strip() or self._default_output_path()),
             board=board,
             board_kind=board_kind,
+            frame_percent=self.frame_percent_spin.value(),
             min_pairs=self.min_pairs_spin.value(),
             min_corners=self.min_corners_spin.value(),
             rig_id=str(pair.get("rig_id") or "stereo_rig"),
@@ -584,13 +651,29 @@ class StereoCalibrationWindow(QMainWindow):
         )
         self._worker.completed.connect(self._on_calibration_completed)
         self._worker.failed.connect(self._on_calibration_failed)
-        self._worker.finished.connect(lambda: self.calibrate_btn.setEnabled(True))
+        self._worker.progress.connect(self._set_calibration_progress)
+        self._worker.finished.connect(lambda: self.calibrate_btn.setEnabled(bool(self.image_pairs)))
         self.calibrate_btn.setEnabled(False)
+        self._set_calibration_progress(0, "Starting stereo calibration")
         self.result_lbl.setText("Running stereo calibration...")
         self.statusBar().showMessage("Stereo calibration running", 3000)
         self._worker.start()
 
+    def _set_calibration_progress(self, percent: int, message: str, busy: bool = False) -> None:
+        value = max(0, min(100, int(percent)))
+        text = str(message)
+        self.progress_lbl.setText(text)
+        self.progress_lbl.setToolTip(text)
+        if busy:
+            self.progress_bar.setRange(0, 0)
+            self.progress_bar.setFormat("Working")
+            return
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(value)
+        self.progress_bar.setFormat("Ready" if value == 0 and text == "Ready" else f"{value}%")
+
     def _on_calibration_completed(self, artifact: dict, output_path: str) -> None:
+        self._set_calibration_progress(100, f"Calibration saved: {output_path}")
         rms = artifact.get("rms") or {}
         stereo = artifact.get("stereo") or {}
         board = artifact.get("board") or {}
@@ -612,6 +695,7 @@ class StereoCalibrationWindow(QMainWindow):
         self.statusBar().showMessage(f"Calibration saved: {output_path}", 7000)
 
     def _on_calibration_failed(self, error: str) -> None:
+        self._set_calibration_progress(max(self.progress_bar.value(), 1), "Calibration failed")
         self.result_lbl.setText(f"Calibration failed: {error}")
         self.quality_table.setRowCount(0)
         self.statusBar().showMessage(f"Calibration failed: {error}", 7000)

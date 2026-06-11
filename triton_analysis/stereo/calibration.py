@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Callable, Iterable, Sequence
 
 import cv2
 import numpy as np
 
 
 PointPairs = Sequence[tuple[str | Path, str | Path]]
+ProgressCallback = Callable[[dict], None]
 DEFAULT_CHARUCO_DICTIONARY = "DICT_5X5_1000"
 DEFAULT_CHARUCO_SQUARES_X = 12
 DEFAULT_CHARUCO_SQUARES_Y = 9
@@ -106,6 +108,11 @@ def _rejection_summary(rejected: Sequence[dict], *, limit: int = 3) -> str:
     return " Rejections: " + "; ".join(parts)
 
 
+def _emit_collection_progress(callback: ProgressCallback | None, **payload) -> None:
+    if callback is not None:
+        callback(dict(payload))
+
+
 def _coerce_observation_points(
     object_points: Iterable[np.ndarray],
     left_image_points: Iterable[np.ndarray],
@@ -163,6 +170,7 @@ def collect_checkerboard_observations(
     board: CheckerboardSpec,
     *,
     min_pairs: int = 8,
+    progress_callback: ProgressCallback | None = None,
 ) -> StereoObservations:
     """Detect checkerboard corners in saved left/right image pairs."""
 
@@ -173,29 +181,73 @@ def collect_checkerboard_observations(
     rejected: list[dict] = []
     accepted: list[dict] = []
     image_size: tuple[int, int] | None = None
+    total_pairs = len(image_pairs)
+
+    _emit_collection_progress(
+        progress_callback,
+        event="detect_start",
+        detector="checkerboard",
+        total=total_pairs,
+        accepted=0,
+        rejected=0,
+    )
 
     for index, (left_path, right_path) in enumerate(image_pairs, start=1):
         left_image = _read_image(left_path)
         right_image = _read_image(right_path)
         size = (int(left_image.shape[1]), int(left_image.shape[0]))
+        reason = "accepted"
         if right_image.shape[:2] != left_image.shape[:2]:
-            rejected.append({"index": index, "reason": "left/right image sizes differ"})
+            reason = "left/right image sizes differ"
+            rejected.append({"index": index, "reason": reason})
+            _emit_collection_progress(
+                progress_callback,
+                event="detect_pair",
+                detector="checkerboard",
+                index=index,
+                total=total_pairs,
+                accepted=len(accepted),
+                rejected=len(rejected),
+                reason=reason,
+            )
             continue
         if image_size is None:
             image_size = size
         elif image_size != size:
-            rejected.append({"index": index, "reason": "image size differs from first accepted pair"})
+            reason = "image size differs from first accepted pair"
+            rejected.append({"index": index, "reason": reason})
+            _emit_collection_progress(
+                progress_callback,
+                event="detect_pair",
+                detector="checkerboard",
+                index=index,
+                total=total_pairs,
+                accepted=len(accepted),
+                rejected=len(rejected),
+                reason=reason,
+            )
             continue
 
         left_corners = find_checkerboard_corners(left_image, board)
         right_corners = find_checkerboard_corners(right_image, board)
         if left_corners is None or right_corners is None:
+            reason = "checkerboard not found in both images"
             rejected.append({
                 "index": index,
-                "reason": "checkerboard not found in both images",
+                "reason": reason,
                 "left_path": str(left_path),
                 "right_path": str(right_path),
             })
+            _emit_collection_progress(
+                progress_callback,
+                event="detect_pair",
+                detector="checkerboard",
+                index=index,
+                total=total_pairs,
+                accepted=len(accepted),
+                rejected=len(rejected),
+                reason=reason,
+            )
             continue
 
         object_points.append(obj_template.copy())
@@ -210,6 +262,26 @@ def collect_checkerboard_observations(
                 "right_path": str(right_path),
             }
         )
+        _emit_collection_progress(
+            progress_callback,
+            event="detect_pair",
+            detector="checkerboard",
+            index=index,
+            total=total_pairs,
+            accepted=len(accepted),
+            rejected=len(rejected),
+            reason=reason,
+            accepted_pair=True,
+        )
+
+    _emit_collection_progress(
+        progress_callback,
+        event="detect_complete",
+        detector="checkerboard",
+        total=total_pairs,
+        accepted=len(accepted),
+        rejected=len(rejected),
+    )
 
     if image_size is None:
         raise ValueError("No readable stereo image pairs were accepted" + _rejection_summary(rejected))
@@ -400,6 +472,7 @@ def collect_charuco_observations(
     *,
     min_corners: int = 8,
     min_pairs: int = 8,
+    progress_callback: ProgressCallback | None = None,
 ) -> StereoObservations:
     """Detect matched ChArUco corners in saved left/right image pairs."""
 
@@ -413,18 +486,51 @@ def collect_charuco_observations(
     rejected: list[dict] = []
     accepted: list[dict] = []
     image_size: tuple[int, int] | None = None
+    total_pairs = len(image_pairs)
+
+    _emit_collection_progress(
+        progress_callback,
+        event="detect_start",
+        detector="charuco",
+        total=total_pairs,
+        accepted=0,
+        rejected=0,
+    )
 
     for index, (left_path, right_path) in enumerate(image_pairs, start=1):
         left_image = _read_image(left_path)
         right_image = _read_image(right_path)
         size = (int(left_image.shape[1]), int(left_image.shape[0]))
+        reason = "accepted"
         if right_image.shape[:2] != left_image.shape[:2]:
-            rejected.append({"index": index, "reason": "left/right image sizes differ"})
+            reason = "left/right image sizes differ"
+            rejected.append({"index": index, "reason": reason})
+            _emit_collection_progress(
+                progress_callback,
+                event="detect_pair",
+                detector="charuco",
+                index=index,
+                total=total_pairs,
+                accepted=len(accepted),
+                rejected=len(rejected),
+                reason=reason,
+            )
             continue
         if image_size is None:
             image_size = size
         elif image_size != size:
-            rejected.append({"index": index, "reason": "image size differs from first accepted pair"})
+            reason = "image size differs from first accepted pair"
+            rejected.append({"index": index, "reason": reason})
+            _emit_collection_progress(
+                progress_callback,
+                event="detect_pair",
+                detector="charuco",
+                index=index,
+                total=total_pairs,
+                accepted=len(accepted),
+                rejected=len(rejected),
+                reason=reason,
+            )
             continue
 
         left_detection = _detect_charuco_board(left_image, detector)
@@ -434,12 +540,23 @@ def collect_charuco_observations(
         left_ids = left_detection["ids"]
         right_ids = right_detection["ids"]
         if left_corners is None or right_corners is None or not left_ids or not right_ids:
+            reason = _charuco_missing_reason(left_detection, right_detection)
             rejected.append(
                 {
                     "index": index,
-                    "reason": _charuco_missing_reason(left_detection, right_detection),
+                    "reason": reason,
                     **_charuco_detection_metrics(left_detection, right_detection, expected_marker_count),
                 }
+            )
+            _emit_collection_progress(
+                progress_callback,
+                event="detect_pair",
+                detector="charuco",
+                index=index,
+                total=total_pairs,
+                accepted=len(accepted),
+                rejected=len(rejected),
+                reason=reason,
             )
             continue
 
@@ -447,12 +564,23 @@ def collect_charuco_observations(
         right_by_id = {int(cid): corner.reshape(2) for cid, corner in zip(right_ids, right_corners)}
         common_ids = sorted(set(left_by_id) & set(right_by_id))
         if len(common_ids) < int(min_corners):
+            reason = f"only {len(common_ids)} matched charuco corners"
             rejected.append(
                 {
                     "index": index,
-                    "reason": f"only {len(common_ids)} matched charuco corners",
+                    "reason": reason,
                     **_charuco_detection_metrics(left_detection, right_detection, expected_marker_count),
                 }
+            )
+            _emit_collection_progress(
+                progress_callback,
+                event="detect_pair",
+                detector="charuco",
+                index=index,
+                total=total_pairs,
+                accepted=len(accepted),
+                rejected=len(rejected),
+                reason=reason,
             )
             continue
 
@@ -468,6 +596,27 @@ def collect_charuco_observations(
                 "right_path": str(right_path),
             }
         )
+        _emit_collection_progress(
+            progress_callback,
+            event="detect_pair",
+            detector="charuco",
+            index=index,
+            total=total_pairs,
+            accepted=len(accepted),
+            rejected=len(rejected),
+            reason=reason,
+            accepted_pair=True,
+            matched_corners=len(common_ids),
+        )
+
+    _emit_collection_progress(
+        progress_callback,
+        event="detect_complete",
+        detector="charuco",
+        total=total_pairs,
+        accepted=len(accepted),
+        rejected=len(rejected),
+    )
 
     if image_size is None:
         raise ValueError("No readable stereo image pairs were accepted" + _rejection_summary(rejected))
@@ -714,6 +863,7 @@ def calibrate_stereo_from_observations(
     dist_coeffs_left: np.ndarray | None = None,
     camera_matrix_right: np.ndarray | None = None,
     dist_coeffs_right: np.ndarray | None = None,
+    progress_callback: ProgressCallback | None = None,
 ) -> dict:
     """Run OpenCV stereo calibration and return a JSON-serializable artifact."""
 
@@ -725,7 +875,23 @@ def calibrate_stereo_from_observations(
     image_size = (int(observations.image_size[0]), int(observations.image_size[1]))
     criteria = (cv2.TERM_CRITERIA_MAX_ITER + cv2.TERM_CRITERIA_EPS, 100, 1e-6)
 
+    _emit_collection_progress(
+        progress_callback,
+        event="solve_start",
+        stage="prepare",
+        progress=78,
+        busy=False,
+        message=f"Preparing solve from {len(obj)} accepted pair(s)",
+    )
     if camera_matrix_left is None or dist_coeffs_left is None:
+        _emit_collection_progress(
+            progress_callback,
+            event="solve_stage",
+            stage="left_intrinsics",
+            progress=80,
+            busy=True,
+            message="Solving left camera intrinsics",
+        )
         left_rms, camera_matrix_left, dist_coeffs_left, _rvecs, _tvecs = cv2.calibrateCamera(
             obj,
             left,
@@ -733,12 +899,36 @@ def calibrate_stereo_from_observations(
             None,
             None,
         )
+        _emit_collection_progress(
+            progress_callback,
+            event="solve_stage_complete",
+            stage="left_intrinsics",
+            progress=84,
+            busy=False,
+            message="Left camera intrinsics solved",
+        )
     else:
         left_rms = None
         camera_matrix_left = np.asarray(camera_matrix_left, dtype=np.float64)
         dist_coeffs_left = np.asarray(dist_coeffs_left, dtype=np.float64)
+        _emit_collection_progress(
+            progress_callback,
+            event="solve_stage_complete",
+            stage="left_intrinsics",
+            progress=84,
+            busy=False,
+            message="Using provided left camera intrinsics",
+        )
 
     if camera_matrix_right is None or dist_coeffs_right is None:
+        _emit_collection_progress(
+            progress_callback,
+            event="solve_stage",
+            stage="right_intrinsics",
+            progress=85,
+            busy=True,
+            message="Solving right camera intrinsics",
+        )
         right_rms, camera_matrix_right, dist_coeffs_right, _rvecs, _tvecs = cv2.calibrateCamera(
             obj,
             right,
@@ -746,12 +936,36 @@ def calibrate_stereo_from_observations(
             None,
             None,
         )
+        _emit_collection_progress(
+            progress_callback,
+            event="solve_stage_complete",
+            stage="right_intrinsics",
+            progress=88,
+            busy=False,
+            message="Right camera intrinsics solved",
+        )
     else:
         right_rms = None
         camera_matrix_right = np.asarray(camera_matrix_right, dtype=np.float64)
         dist_coeffs_right = np.asarray(dist_coeffs_right, dtype=np.float64)
+        _emit_collection_progress(
+            progress_callback,
+            event="solve_stage_complete",
+            stage="right_intrinsics",
+            progress=88,
+            busy=False,
+            message="Using provided right camera intrinsics",
+        )
 
     stereo_flags = cv2.CALIB_FIX_INTRINSIC if flags is None else int(flags)
+    _emit_collection_progress(
+        progress_callback,
+        event="solve_stage",
+        stage="stereo_extrinsics",
+        progress=89,
+        busy=True,
+        message="Solving stereo extrinsics",
+    )
     (
         stereo_rms,
         camera_matrix_left,
@@ -774,6 +988,22 @@ def calibrate_stereo_from_observations(
         criteria=criteria,
         flags=stereo_flags,
     )
+    _emit_collection_progress(
+        progress_callback,
+        event="solve_stage_complete",
+        stage="stereo_extrinsics",
+        progress=93,
+        busy=False,
+        message="Stereo extrinsics solved",
+    )
+    _emit_collection_progress(
+        progress_callback,
+        event="solve_stage",
+        stage="rectification",
+        progress=94,
+        busy=True,
+        message="Computing stereo rectification",
+    )
     r1, r2, p1, p2, q, roi1, roi2 = cv2.stereoRectify(
         camera_matrix_left,
         dist_coeffs_left,
@@ -784,7 +1014,23 @@ def calibrate_stereo_from_observations(
         translation,
         flags=cv2.CALIB_ZERO_DISPARITY,
     )
+    _emit_collection_progress(
+        progress_callback,
+        event="solve_stage_complete",
+        stage="rectification",
+        progress=95,
+        busy=False,
+        message="Stereo rectification complete",
+    )
 
+    _emit_collection_progress(
+        progress_callback,
+        event="solve_stage",
+        stage="quality",
+        progress=96,
+        busy=True,
+        message="Computing calibration quality diagnostics",
+    )
     quality = {
         "accepted_observations": list(observations.accepted),
         "left_reprojection": _reprojection_quality(obj, left, camera_matrix_left, dist_coeffs_left),
@@ -849,6 +1095,14 @@ def calibrate_stereo_from_observations(
         "quality": quality,
     }
     quality["warnings"] = _build_quality_warnings(artifact, quality)
+    _emit_collection_progress(
+        progress_callback,
+        event="solve_complete",
+        stage="quality",
+        progress=97,
+        busy=False,
+        message="Calibration solve complete",
+    )
     return artifact
 
 
@@ -865,6 +1119,19 @@ def manifest_image_pairs(manifest_path: str | Path) -> list[tuple[Path, Path]]:
         if left and right:
             pairs.append((root / left, root / right))
     return pairs
+
+
+def first_percent_stereo_pairs(image_pairs: PointPairs, percent: float | int) -> list[tuple[str | Path, str | Path]]:
+    """Return the first clamped percentage of stereo pairs, preserving manifest order."""
+
+    pairs = list(image_pairs)
+    if not pairs:
+        return []
+    clamped = max(1.0, min(100.0, float(percent)))
+    if clamped >= 100.0:
+        return pairs
+    keep = max(1, int(math.ceil(len(pairs) * clamped / 100.0)))
+    return pairs[:keep]
 
 
 def discover_stereo_manifests(sources: Iterable[str | Path]) -> list[Path]:

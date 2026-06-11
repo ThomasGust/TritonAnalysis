@@ -33,6 +33,12 @@ The window lets you inspect one manifest or a combined set of manifests,
 preview left/right image pairs, choose checkerboard or ChArUco board settings,
 set minimum accepted pairs, run calibration, review rejected observations, and
 write the calibration artifact.
+Set `Use First Frames` below 100% when you want a faster calibration pass from
+the first portion of a large capture session.
+During calibration, the progress bar reports manifest loading, per-pair board
+detection counts, solve stages, and artifact writing. OpenCV does not expose
+inner iteration progress for the solve calls, so the bar switches to an
+animated working state while those blocking steps run.
 The default board settings match Triton's pool ChArUco board:
 9 rows by 12 columns, 6 cm square width, 4.5 cm marker width, and the
 calib.io default `DICT_5X5_1000` dictionary.
@@ -75,6 +81,7 @@ You can also pass several manifests or a parent folder:
 ```powershell
 python -m triton_analysis.apps.main_stereo_calibration path\to\stereo_sessions --charuco
 python -m triton_analysis.apps.main_stereo_calibration path\to\session1\manifest.json path\to\session2\manifest.json --charuco
+python -m triton_analysis.apps.main_stereo_calibration path\to\stereo_sessions --charuco --frame-percent 25
 ```
 
 Equivalent explicit values:

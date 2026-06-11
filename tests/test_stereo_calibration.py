@@ -17,8 +17,10 @@ from triton_analysis.stereo.calibration import (
     annotate_board_detection,
     calibrate_stereo_from_observations,
     checkerboard_object_points,
+    collect_checkerboard_observations,
     collect_charuco_observations,
     detect_stereo_board,
+    first_percent_stereo_pairs,
     load_manifest_collection,
     manifest_image_pairs,
     read_calibration_artifact,
@@ -103,6 +105,55 @@ def test_manifest_image_pairs_resolves_relative_paths(tmp_path: Path):
             tmp_path / "right" / "pair_000001_right.png",
         )
     ]
+
+
+def test_first_percent_stereo_pairs_preserves_manifest_order():
+    pairs = [(f"left-{index}", f"right-{index}") for index in range(10)]
+
+    assert first_percent_stereo_pairs(pairs, 100) == pairs
+    assert first_percent_stereo_pairs(pairs, 25) == pairs[:3]
+    assert first_percent_stereo_pairs(pairs, 1) == pairs[:1]
+    assert first_percent_stereo_pairs(pairs, 0) == pairs[:1]
+
+
+def test_checkerboard_collection_reports_detection_progress(tmp_path: Path):
+    board = CheckerboardSpec(columns=4, rows=3, square_size=2.5)
+    blank = np.zeros((80, 120, 3), dtype=np.uint8)
+    image_pairs = []
+    for index in range(2):
+        left_path = tmp_path / f"left_{index}.png"
+        right_path = tmp_path / f"right_{index}.png"
+        assert cv2.imwrite(str(left_path), blank)
+        assert cv2.imwrite(str(right_path), blank)
+        image_pairs.append((left_path, right_path))
+    events: list[dict] = []
+
+    with pytest.raises(ValueError, match="Only 0 valid stereo pairs"):
+        collect_checkerboard_observations(
+            image_pairs,
+            board,
+            min_pairs=1,
+            progress_callback=events.append,
+        )
+
+    assert events[0] == {
+        "event": "detect_start",
+        "detector": "checkerboard",
+        "total": 2,
+        "accepted": 0,
+        "rejected": 0,
+    }
+    pair_events = [event for event in events if event["event"] == "detect_pair"]
+    assert [event["index"] for event in pair_events] == [1, 2]
+    assert pair_events[-1]["accepted"] == 0
+    assert pair_events[-1]["rejected"] == 2
+    assert events[-1] == {
+        "event": "detect_complete",
+        "detector": "checkerboard",
+        "total": 2,
+        "accepted": 0,
+        "rejected": 2,
+    }
 
 
 def test_manifest_collection_combines_multiple_sessions(tmp_path: Path):
@@ -199,6 +250,7 @@ def test_stereo_calibration_recovers_fixed_intrinsic_baseline(tmp_path: Path):
         image_size=image_size,
         rejected=[],
     )
+    progress_events: list[dict] = []
 
     artifact = calibrate_stereo_from_observations(
         observations,
@@ -209,6 +261,7 @@ def test_stereo_calibration_recovers_fixed_intrinsic_baseline(tmp_path: Path):
         dist_coeffs_left=dist,
         camera_matrix_right=camera_matrix,
         dist_coeffs_right=dist,
+        progress_callback=progress_events.append,
     )
 
     assert artifact["stereo"]["baseline"] == pytest.approx(8.0, abs=1.0e-3)
@@ -221,6 +274,12 @@ def test_stereo_calibration_recovers_fixed_intrinsic_baseline(tmp_path: Path):
     assert artifact["quality"]["raw_distorted_epipolar"]["space"] == "distorted_pixels"
     assert artifact["quality"]["left_coverage"]["area_fraction"] > 0.0
     assert artifact["quality"]["warnings"]
+    assert [event["event"] for event in progress_events][0] == "solve_start"
+    assert any(
+        event["stage"] == "stereo_extrinsics" and event["busy"] is True
+        for event in progress_events
+    )
+    assert progress_events[-1]["event"] == "solve_complete"
 
     out_path = write_calibration_artifact(artifact, tmp_path / "calibration.json")
     loaded = read_calibration_artifact(out_path)
