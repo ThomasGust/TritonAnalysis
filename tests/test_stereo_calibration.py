@@ -26,6 +26,13 @@ from triton_analysis.stereo.calibration import (
     read_calibration_artifact,
     write_calibration_artifact,
 )
+from triton_analysis.stereo.depth import rectification_maps_from_artifact
+
+
+def _invalid_rectification_fraction(map_x: np.ndarray, map_y: np.ndarray, image_size: tuple[int, int]) -> float:
+    width, height = image_size
+    valid = (map_x >= 0) & (map_x < width) & (map_y >= 0) & (map_y < height)
+    return 1.0 - float(np.count_nonzero(valid)) / float(valid.size)
 
 
 def test_checkerboard_object_points_use_inner_corner_grid():
@@ -274,6 +281,7 @@ def test_stereo_calibration_recovers_fixed_intrinsic_baseline(tmp_path: Path):
     assert artifact["quality"]["raw_distorted_epipolar"]["space"] == "distorted_pixels"
     assert artifact["quality"]["left_coverage"]["area_fraction"] > 0.0
     assert artifact["quality"]["warnings"]
+    assert artifact["rectification"]["alpha"] == pytest.approx(0.0)
     assert [event["event"] for event in progress_events][0] == "solve_start"
     assert any(
         event["stage"] == "stereo_extrinsics" and event["busy"] is True
@@ -349,3 +357,7 @@ def test_rectified_epipolar_quality_undistorts_points_before_scoring():
     assert artifact["rms"]["stereo"] < 1.0e-3
     assert artifact["quality"]["epipolar"]["rms_px"] < 1.0e-3
     assert artifact["quality"]["raw_distorted_epipolar"]["rms_px"] > 1.0
+    assert artifact["rectification"]["alpha"] == pytest.approx(0.0)
+    maps = rectification_maps_from_artifact(artifact)
+    assert _invalid_rectification_fraction(maps.left_x, maps.left_y, image_size) < 0.01
+    assert _invalid_rectification_fraction(maps.right_x, maps.right_y, image_size) < 0.01

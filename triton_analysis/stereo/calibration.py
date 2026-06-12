@@ -30,6 +30,7 @@ CHARUCO_DICTIONARIES = [
     "DICT_6X6_250",
     "DICT_6X6_1000",
 ]
+RECTIFICATION_ALPHA = 0.0
 
 
 @dataclass(frozen=True)
@@ -1013,6 +1014,7 @@ def calibrate_stereo_from_observations(
         rotation,
         translation,
         flags=cv2.CALIB_ZERO_DISPARITY,
+        alpha=RECTIFICATION_ALPHA,
     )
     _emit_collection_progress(
         progress_callback,
@@ -1084,6 +1086,7 @@ def calibrate_stereo_from_observations(
             "fundamental": _as_list(fundamental),
         },
         "rectification": {
+            "alpha": float(RECTIFICATION_ALPHA),
             "r1": _as_list(r1),
             "r2": _as_list(r2),
             "p1": _as_list(p1),
