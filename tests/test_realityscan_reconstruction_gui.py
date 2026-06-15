@@ -68,8 +68,12 @@ def test_realityscan_gui_builds_stereo_pipeline_command(tmp_path: Path):
         assert command[command.index("--output") + 1] == str(output)
         assert command[command.index("--stereo-calibration") + 1] == str(calibration.resolve())
         assert command[command.index("--reconstruction-preset") + 1] == "max-detail"
+        assert command[command.index("--alignment-tournament") + 1] == "standard"
         assert "--metric-scale-from-stereo" in command
         assert "--metric-scale-required" in command
+        assert "--connectivity-report" in command
+        assert command[command.index("--min-good-component-ratio") + 1] == "0.12"
+        assert "--fail-on-poor-alignment" in command
     finally:
         window.close()
         window.deleteLater()

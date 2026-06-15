@@ -44,6 +44,7 @@ from triton_analysis.workspace import fresh_output_subdir, latest_pilot_stereo_s
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PIPELINE_RELATIVE_PATH = Path("tools") / "realityscan_underwater_pipeline.py"
 PRESETS = ("balanced", "high-detail", "max-detail")
+DEFAULT_MIN_GOOD_COMPONENT_RATIO = 0.12
 
 
 def default_results_dir(*, create: bool = False) -> Path:
@@ -278,6 +279,7 @@ class RealityScanReconstructionWindow(QMainWindow):
         self.alignment_combo = QComboBox()
         for label, value in (("Off", "off"), ("Standard", "standard"), ("Thorough", "thorough")):
             self.alignment_combo.addItem(label, value)
+        self.alignment_combo.setCurrentIndex(self.alignment_combo.findData("standard"))
         self.alignment_combo.currentIndexChanged.connect(self._on_alignment_changed)
         config_grid.addWidget(QLabel("Preset"), 0, 0)
         config_grid.addWidget(self.preset_combo, 0, 1)
@@ -302,8 +304,10 @@ class RealityScanReconstructionWindow(QMainWindow):
         self.large_face_filter_check.setChecked(True)
         self.clean_model_check = QCheckBox("Clean Model")
         self.connectivity_report_check = QCheckBox("Connectivity Report")
+        self.connectivity_report_check.setChecked(True)
         self.try_merge_check = QCheckBox("Try Merge Components")
         self.fail_poor_alignment_check = QCheckBox("Fail On Poor Alignment")
+        self.fail_poor_alignment_check.setChecked(True)
         flags = [
             self.metric_scale_check,
             self.metric_required_check,
@@ -352,6 +356,7 @@ class RealityScanReconstructionWindow(QMainWindow):
         self.simplify_spin = self._int_spin(0, 10000000, 1500000, 100000)
         self.timeout_spin = self._double_spin(0.1, 72.0, 1, 0.5, 8.0, " h")
         self.metric_min_pairs_spin = self._int_spin(1, 500, 3, 1)
+        self.min_component_ratio_spin = self._double_spin(0.01, 1.0, 2, 0.01, DEFAULT_MIN_GOOD_COMPONENT_RATIO, "")
 
         self.model_quality_combo = self._combo(("preview", "normal", "high"), "normal")
         self.detector_combo = self._combo(("Low", "Medium", "High", "Ultra"), "Ultra")
@@ -378,6 +383,7 @@ class RealityScanReconstructionWindow(QMainWindow):
             ("Simplify Tris", self.simplify_spin),
             ("Timeout", self.timeout_spin),
             ("Metric Min Pairs", self.metric_min_pairs_spin),
+            ("Min Component Ratio", self.min_component_ratio_spin),
             ("Model Quality", self.model_quality_combo),
             ("Detector", self.detector_combo),
             ("Overlap", self.overlap_combo),
@@ -597,6 +603,7 @@ class RealityScanReconstructionWindow(QMainWindow):
         if self.try_merge_check.isChecked():
             command.append("--try-merge-components")
         if self.fail_poor_alignment_check.isChecked():
+            command.extend(["--min-good-component-ratio", f"{self.min_component_ratio_spin.value():g}"])
             command.append("--fail-on-poor-alignment")
 
         realityscan = self._path_arg(self.realityscan_edit.text())

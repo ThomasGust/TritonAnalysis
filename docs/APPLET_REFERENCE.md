@@ -346,6 +346,9 @@ Purpose:
 - Select a TritonPilot stereo session and matching calibration artifact.
 - Configure reconstruction presets, metric scaling, alignment-tournament
   options, and advanced CLI budgets without retyping a long command.
+- Default to a Standard alignment tournament with connectivity diagnostics and
+  a component-ratio guard so fragmented runs stop before wasting time on a
+  tiny mesh island.
 - Stream pipeline/RealityScan progress into the applet and collect output
   paths for review.
 - Load the exported OBJ into the adjacent Model Viewer tab for inspection and
@@ -367,7 +370,7 @@ Inputs:
 Outputs:
 
 - New timestamped RealityScan workspace under `Workspace/results/realityscan` by default
-- Contact sheet, logs, reports, project file, and OBJ export
+- Contact sheet, logs, reports, connectivity CSVs, project file, and OBJ export
 - Metric-scaled OBJ and `metric_scale.json` when stereo scaling succeeds
 
 ## RealityScan Model Viewer
