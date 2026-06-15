@@ -346,9 +346,10 @@ Purpose:
 - Select a TritonPilot stereo session and matching calibration artifact.
 - Configure reconstruction presets, metric scaling, alignment-tournament
   options, and advanced CLI budgets without retyping a long command.
-- Default to a Standard alignment tournament with connectivity diagnostics and
-  a component-ratio guard so fragmented runs stop before wasting time on a
-  tiny mesh island.
+- Default to the fast `Flat Luma K+` single-variant path, with a
+  `Legacy Enhanced Brown4` switch for reproducing the previous default.
+- Write color texture-layer sidecars by default so RealityScan can align and
+  mesh from luma-stabilized frames while texturing the final model in color.
 - Stream pipeline/RealityScan progress into the applet and collect output
   paths for review.
 - Load the exported OBJ into the adjacent Model Viewer tab for inspection and

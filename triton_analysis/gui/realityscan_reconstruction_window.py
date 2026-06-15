@@ -45,6 +45,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PIPELINE_RELATIVE_PATH = Path("tools") / "realityscan_underwater_pipeline.py"
 PRESETS = ("balanced", "high-detail", "max-detail")
 DEFAULT_MIN_GOOD_COMPONENT_RATIO = 0.12
+FAST_VARIANTS = (
+    ("Flat Luma K+", "flat_luma_kplus"),
+    ("Legacy Enhanced Brown4", "legacy_enhanced"),
+)
 
 
 def default_results_dir(*, create: bool = False) -> Path:
@@ -279,12 +283,17 @@ class RealityScanReconstructionWindow(QMainWindow):
         self.alignment_combo = QComboBox()
         for label, value in (("Off", "off"), ("Standard", "standard"), ("Thorough", "thorough")):
             self.alignment_combo.addItem(label, value)
-        self.alignment_combo.setCurrentIndex(self.alignment_combo.findData("standard"))
         self.alignment_combo.currentIndexChanged.connect(self._on_alignment_changed)
+        self.fast_variant_combo = QComboBox()
+        for label, value in FAST_VARIANTS:
+            self.fast_variant_combo.addItem(label, value)
+        self.fast_variant_combo.currentIndexChanged.connect(self._refresh_command_preview)
         config_grid.addWidget(QLabel("Preset"), 0, 0)
         config_grid.addWidget(self.preset_combo, 0, 1)
         config_grid.addWidget(QLabel("Alignment Tournament"), 1, 0)
         config_grid.addWidget(self.alignment_combo, 1, 1)
+        config_grid.addWidget(QLabel("Fast Variant"), 2, 0)
+        config_grid.addWidget(self.fast_variant_combo, 2, 1)
         run_card.body.addLayout(config_grid)
 
         flags_grid = QGridLayout()
@@ -296,6 +305,8 @@ class RealityScanReconstructionWindow(QMainWindow):
         self.metric_required_check.setChecked(True)
         self.xmp_priors_check = QCheckBox("Stereo XMP Priors")
         self.xmp_priors_check.setChecked(True)
+        self.texture_layers_check = QCheckBox("Color Texture Layers")
+        self.texture_layers_check.setChecked(True)
         self.rig_priors_check = QCheckBox("Rig Priors")
         self.prepare_only_check = QCheckBox("Prepare Only")
         self.alignment_only_check = QCheckBox("Alignment Only")
@@ -312,6 +323,7 @@ class RealityScanReconstructionWindow(QMainWindow):
             self.metric_scale_check,
             self.metric_required_check,
             self.xmp_priors_check,
+            self.texture_layers_check,
             self.rig_priors_check,
             self.prepare_only_check,
             self.alignment_only_check,
@@ -579,6 +591,8 @@ class RealityScanReconstructionWindow(QMainWindow):
             command.extend(["--stereo-calibration", calibration])
 
         command.extend(["--reconstruction-preset", self.preset_combo.currentText()])
+        if self._combo_value(self.fast_variant_combo) == "legacy_enhanced":
+            command.append("--legacy-enhanced-default")
         alignment = self._combo_value(self.alignment_combo)
         if alignment != "off":
             command.extend(["--alignment-tournament", alignment])
@@ -590,6 +604,7 @@ class RealityScanReconstructionWindow(QMainWindow):
         if self.metric_required_check.isChecked():
             command.append("--metric-scale-required")
         command.append("--stereo-xmp-priors" if self.xmp_priors_check.isChecked() else "--no-stereo-xmp-priors")
+        command.append("--texture-layers" if self.texture_layers_check.isChecked() else "--no-texture-layers")
         if self.rig_priors_check.isChecked():
             command.append("--stereo-xmp-rig-priors")
         if self.overwrite_check.isChecked():
@@ -805,17 +820,9 @@ class RealityScanReconstructionWindow(QMainWindow):
         return candidates[1]
 
     def _on_alignment_changed(self, *_args) -> None:
-        if self.alignment_only_check.isChecked() and self._combo_value(self.alignment_combo) == "off":
-            index = self.alignment_combo.findData("standard")
-            if index >= 0:
-                self.alignment_combo.setCurrentIndex(index)
         self._refresh_command_preview()
 
     def _ensure_alignment_for_alignment_only(self, checked: bool) -> None:
-        if checked and self._combo_value(self.alignment_combo) == "off":
-            index = self.alignment_combo.findData("standard")
-            if index >= 0:
-                self.alignment_combo.setCurrentIndex(index)
         self._refresh_command_preview()
 
     def _copy_command(self) -> None:

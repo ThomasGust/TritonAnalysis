@@ -154,10 +154,12 @@ station.
    TritonPilot stereo sessions.
 4. Choose `max-detail` for final models, or a lighter preset for trial runs.
 5. Keep metric stereo scaling enabled when the output will be measured.
-6. Keep the default Standard alignment tournament, connectivity report, and
-   poor-alignment guard enabled for measurement-grade runs.
-7. Run the job and watch the live log/progress indicators.
-8. Open the metric OBJ, contact sheet, report, or `metric_scale.json` from the
+6. Use the default `Flat Luma K+` fast variant for competition-time runs, or
+   switch `Fast Variant` to `Legacy Enhanced Brown4` to reproduce the old path.
+7. Keep `Color Texture Layers` enabled so the luma geometry/alignment frames
+   are paired with color-enhanced texture sidecars for the final OBJ.
+8. Run the job and watch the live log/progress indicators.
+9. Open the metric OBJ, contact sheet, report, or `metric_scale.json` from the
    output panel.
 
 The default output workspace is a new timestamped subfolder under
@@ -171,6 +173,14 @@ RealityScan overview report, and `reports\connectivity_*.csv`. Good stereo
 pool sessions have formed one largest component of roughly 12% or more of the
 selected images; runs dominated by moving caustic light patterns tend to split
 into many tiny pair islands and export only a small fragment when meshed.
+`Alignment Only` can test the selected fast variant without meshing. Turn on a
+Standard or Thorough alignment tournament when there is time for a slower
+diagnostic comparison across multiple preprocessing variants.
+The frame metrics CSV also includes `caustic_score`; values near 1.0 mean the
+selector is seeing strong bright, low-saturation light ripples instead of
+stable scene texture. `Thorough` mode includes an experimental
+`caustic_luma` preprocessing variant, but if the component guard still fails,
+prefer recapture under flatter lighting over measuring the exported fragment.
 
 Use the `Model Viewer` tab in the reconstruction applet, the `View Metric
 Model` output button, or launch `main_realityscan_model_viewer` directly to

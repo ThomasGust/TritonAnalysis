@@ -68,9 +68,11 @@ def test_realityscan_gui_builds_stereo_pipeline_command(tmp_path: Path):
         assert command[command.index("--output") + 1] == str(output)
         assert command[command.index("--stereo-calibration") + 1] == str(calibration.resolve())
         assert command[command.index("--reconstruction-preset") + 1] == "max-detail"
-        assert command[command.index("--alignment-tournament") + 1] == "standard"
+        assert "--alignment-tournament" not in command
+        assert "--legacy-enhanced-default" not in command
         assert "--metric-scale-from-stereo" in command
         assert "--metric-scale-required" in command
+        assert "--texture-layers" in command
         assert "--connectivity-report" in command
         assert command[command.index("--min-good-component-ratio") + 1] == "0.12"
         assert "--fail-on-poor-alignment" in command
@@ -105,7 +107,7 @@ def test_realityscan_gui_blank_output_uses_fresh_subfolder(tmp_path: Path, monke
         app.processEvents()
 
 
-def test_realityscan_gui_alignment_only_enables_tournament(tmp_path: Path):
+def test_realityscan_gui_alignment_only_keeps_fast_single_variant(tmp_path: Path):
     app = _app()
     window = RealityScanReconstructionWindow()
     try:
@@ -113,7 +115,40 @@ def test_realityscan_gui_alignment_only_enables_tournament(tmp_path: Path):
         command = window.build_command(preview=True)
 
         assert "--alignment-only" in command
-        assert command[command.index("--alignment-tournament") + 1] == "standard"
+        assert "--alignment-tournament" not in command
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_realityscan_gui_can_disable_color_texture_layers(tmp_path: Path):
+    app = _app()
+    window = RealityScanReconstructionWindow()
+    try:
+        window.texture_layers_check.setChecked(False)
+        command = window.build_command(preview=True)
+
+        assert "--no-texture-layers" in command
+        assert "--texture-layers" not in command
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_realityscan_gui_legacy_fast_variant_switches_default(tmp_path: Path):
+    app = _app()
+    window = RealityScanReconstructionWindow()
+    try:
+        index = window.fast_variant_combo.findData("legacy_enhanced")
+        assert index >= 0
+        window.fast_variant_combo.setCurrentIndex(index)
+
+        command = window.build_command(preview=True)
+
+        assert "--legacy-enhanced-default" in command
+        assert "--alignment-tournament" not in command
     finally:
         window.close()
         window.deleteLater()
