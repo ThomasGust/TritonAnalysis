@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 from triton_analysis.crab.counter import (
     DEFAULT_MODEL,
     DEFAULT_REASONING_EFFORT,
+    DEFAULT_TARGET_MARGIN_THRESHOLD,
     DEFAULT_TARGET_MATCH_THRESHOLD,
     REFERENCE_CLASS_LABELS,
     REASONING_EFFORTS,
@@ -42,6 +43,7 @@ from triton_analysis.crab.counter import (
     analyze_crab_image,
     benchmark_crab_image,
     default_output_dir,
+    discover_counter_reference_atlas_paths,
     discover_counter_reference_paths,
     missing_reference_classes,
 )
@@ -134,7 +136,7 @@ class CrabCounterPreview(QWidget):
 
     def _candidate_color(self, detection) -> QColor:
         if detection.label == TARGET_CLASS:
-            if self._result and detection.target_match_confidence < self._result.target_confidence_threshold:
+            if not detection.accepted_as_target:
                 return QColor(245, 210, 60)
             return QColor(0, 255, 90)
         if detection.label == "native_rock_crab":
@@ -219,6 +221,12 @@ class CrabCounterWindow(QMainWindow):
         self.threshold_spin.setSingleStep(0.05)
         self.threshold_spin.setValue(DEFAULT_TARGET_MATCH_THRESHOLD)
         self.threshold_spin.setToolTip("Higher values reduce false positives but can miss ambiguous European green crabs.")
+        self.margin_spin = QDoubleSpinBox()
+        self.margin_spin.setRange(0.0, 0.5)
+        self.margin_spin.setDecimals(2)
+        self.margin_spin.setSingleStep(0.05)
+        self.margin_spin.setValue(DEFAULT_TARGET_MARGIN_THRESHOLD)
+        self.margin_spin.setToolTip("Higher values require European green crab to beat the closest non-target by more.")
         self.output_root_edit = QLineEdit(str(self._workspace.results / "crab_counter"))
         self.status_label = QLabel("Set OPENAI_API_KEY, choose a target image, then analyze.")
         self.status_label.setWordWrap(True)
@@ -316,6 +324,7 @@ class CrabCounterWindow(QMainWindow):
         settings_form.addRow("Model", self.model_edit)
         settings_form.addRow("Reasoning Effort", self.reasoning_effort_combo)
         settings_form.addRow("EGC Threshold", self.threshold_spin)
+        settings_form.addRow("EGC Margin", self.margin_spin)
         settings_form.addRow("Output Root", self.output_root_edit)
         layout.addLayout(settings_form)
 
@@ -450,6 +459,8 @@ class CrabCounterWindow(QMainWindow):
             model=self.model_edit.text().strip() or DEFAULT_MODEL,
             reasoning_effort=self.reasoning_effort_combo.currentText(),
             target_confidence_threshold=self.threshold_spin.value(),
+            target_margin_threshold=self.margin_spin.value(),
+            reference_atlas_paths=discover_counter_reference_atlas_paths(self._workspace.root),
         )
         self._last_outputs = None
         self._last_benchmark_outputs = None
@@ -559,7 +570,8 @@ class CrabCounterWindow(QMainWindow):
             x0, y0, x1, y1 = detection.bbox
             self.detection_list.addItem(
                 f"{index}: [{x0:.0f}, {y0:.0f}, {x1:.0f}, {y1:.0f}] "
-                f"target {detection.target_match_confidence:.2f}, visible {detection.confidence:.2f}"
+                f"target {detection.target_match_confidence:.2f}, margin {detection.decision_margin:.2f}, "
+                f"vs {detection.closest_non_target}"
             )
 
     def _preview_tab_changed(self, index: int) -> None:

@@ -42,6 +42,14 @@ class _FakeResponses:
                                 "bbox": [10, 12, 42, 46],
                                 "confidence": 0.91,
                                 "target_match_confidence": 0.93,
+                                "class_scores": {
+                                    "european_green_crab": 0.93,
+                                    "native_rock_crab": 0.12,
+                                    "jonah_crab": 0.08,
+                                },
+                                "closest_non_target": "native_rock_crab",
+                                "decision_margin": 0.81,
+                                "accepted_as_target": True,
                                 "notes": "left green crab",
                             },
                             {
@@ -49,6 +57,14 @@ class _FakeResponses:
                                 "bbox": [44, 14, 62, 39],
                                 "confidence": 0.94,
                                 "target_match_confidence": 0.12,
+                                "class_scores": {
+                                    "european_green_crab": 0.12,
+                                    "native_rock_crab": 0.94,
+                                    "jonah_crab": 0.25,
+                                },
+                                "closest_non_target": "native_rock_crab",
+                                "decision_margin": -0.82,
+                                "accepted_as_target": False,
                                 "notes": "hard negative",
                             },
                             {
@@ -56,6 +72,14 @@ class _FakeResponses:
                                 "bbox": [70, 20, 110, 62],
                                 "confidence": 0.87,
                                 "target_match_confidence": 0.88,
+                                "class_scores": {
+                                    "european_green_crab": 0.88,
+                                    "native_rock_crab": 0.18,
+                                    "jonah_crab": 0.10,
+                                },
+                                "closest_non_target": "native_rock_crab",
+                                "decision_margin": 0.70,
+                                "accepted_as_target": True,
                                 "notes": "right green crab",
                             },
                         ],
@@ -97,6 +121,21 @@ def test_result_from_payload_filters_and_clamps_to_green_crabs(tmp_path: Path):
                 "notes": "below threshold",
             },
             {
+                "label": "european_green_crab",
+                "bbox": [50, 10, 70, 30],
+                "confidence": 0.92,
+                "target_match_confidence": 0.9,
+                "class_scores": {
+                    "european_green_crab": 0.9,
+                    "native_rock_crab": 0.82,
+                    "jonah_crab": 0.2,
+                },
+                "closest_non_target": "native_rock_crab",
+                "decision_margin": 0.08,
+                "accepted_as_target": True,
+                "notes": "too close to rock crab",
+            },
+            {
                 "label": "uncertain",
                 "bbox": [30, 10, 45, 30],
                 "confidence": 0.8,
@@ -115,11 +154,13 @@ def test_result_from_payload_filters_and_clamps_to_green_crabs(tmp_path: Path):
     )
 
     assert result.count == 1
-    assert len(result.candidates) == 4
+    assert len(result.candidates) == 5
     assert [detection.label for detection in result.detections] == ["european_green_crab"]
     assert result.detections[0].bbox == (20.0, 0.0, 90.0, 70.0)
     assert result.detections[0].confidence == 1.0
     assert result.detections[0].target_match_confidence == 0.9
+    assert result.detections[0].accepted_as_target is True
+    assert result.candidates[3].accepted_as_target is False
 
 
 def test_draw_crab_count_result_writes_annotated_image(tmp_path: Path):
@@ -177,6 +218,7 @@ def test_analyze_crab_image_uses_responses_api_and_writes_outputs(tmp_path: Path
     assert outputs.result.count == 2
     assert len(outputs.result.candidates) == 3
     assert outputs.result.target_confidence_threshold == 0.85
+    assert outputs.result.target_margin_threshold == 0.15
     assert outputs.result.analysis_seconds >= 0.0
     assert outputs.result_json.exists()
     assert outputs.annotated_image.exists()
@@ -188,15 +230,24 @@ def test_analyze_crab_image_uses_responses_api_and_writes_outputs(tmp_path: Path
     assert "hard negatives" in content[0]["text"]
     assert "Species identification is more important" in content[0]["text"]
     assert "0.85" in content[0]["text"]
-    assert sum(1 for item in content if item["type"] == "input_image") == 4
+    assert "class_scores" in content[0]["text"]
+    assert "Reference atlas" in content[1]["text"]
+    assert "Target frame" in content[3]["text"]
+    assert sum(1 for item in content if item["type"] == "input_image") == 2
+    assert fake_client.responses.kwargs["prompt_cache_key"] == "triton_analysis_crab_counter_v2"
     assert fake_client.responses.kwargs["text"]["format"]["type"] == "json_schema"
+    assert fake_client.responses.kwargs["text"]["verbosity"] == "low"
     schema = fake_client.responses.kwargs["text"]["format"]["schema"]
     assert "candidates" in schema["properties"]
     candidate_schema = schema["properties"]["candidates"]["items"]["properties"]
     assert "native_rock_crab" in candidate_schema["label"]["enum"]
     assert "target_match_confidence" in candidate_schema
+    assert "class_scores" in candidate_schema
+    assert "decision_margin" in candidate_schema
+    assert "accepted_as_target" in candidate_schema
     written = json.loads(outputs.result_json.read_text(encoding="utf-8"))
     assert written["analysis_seconds"] >= 0.0
+    assert written["detections"][0]["accepted_as_target"] is True
 
 
 def test_benchmark_crab_image_runs_each_reasoning_effort_and_writes_summary(tmp_path: Path):

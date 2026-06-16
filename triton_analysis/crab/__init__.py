@@ -8,6 +8,7 @@ from triton_analysis.crab.counter import (
     CrabDetection,
     analyze_crab_image,
     benchmark_crab_image,
+    discover_counter_reference_atlas_paths,
     discover_counter_reference_paths,
     draw_crab_count_result,
 )
@@ -43,6 +44,7 @@ __all__ = [
     "benchmark_crab_image",
     "discover_background_media",
     "discover_board_images",
+    "discover_counter_reference_atlas_paths",
     "discover_counter_reference_paths",
     "discover_default_crab_template_paths",
     "draw_crab_count_result",
