@@ -50,6 +50,7 @@ from triton_analysis.crab.counter import (
     auto_preprocess_crab_target_image,
     benchmark_crab_image,
     default_output_dir,
+    discover_crab_board_reference_paths,
     discover_counter_reference_atlas_paths,
     discover_counter_reference_paths,
     missing_reference_classes,
@@ -329,6 +330,7 @@ class CrabCounterWorker(QObject):
         preprocess_output_dir: Path | None = None,
         homography_model: str = DEFAULT_HOMOGRAPHY_MODEL,
         homography_effort: str = DEFAULT_HOMOGRAPHY_REASONING_EFFORT,
+        board_reference_paths: tuple[Path, ...] = (),
     ):
         super().__init__()
         self._config = config
@@ -337,6 +339,7 @@ class CrabCounterWorker(QObject):
         self._preprocess_output_dir = preprocess_output_dir
         self._homography_model = homography_model
         self._homography_effort = homography_effort
+        self._board_reference_paths = board_reference_paths
 
     def run(self) -> None:
         preprocess_result: CrabPreprocessResult | None = None
@@ -345,22 +348,28 @@ class CrabCounterWorker(QObject):
             if self._preprocess_mode == "auto_homography":
                 output_dir = self._preprocess_output_dir or (Path(config.output_dir).expanduser() / "preprocess")
                 self.progress.emit({"event": "auto_homography_started", "effort": self._homography_effort})
-                preprocess_result = auto_preprocess_crab_target_image(
-                    config.image_path,
-                    output_dir,
-                    model=self._homography_model,
-                    reasoning_effort=self._homography_effort,
-                )
-                self.progress.emit(
-                    {
-                        "event": "auto_homography_finished",
-                        "points": preprocess_result.ordered_points or preprocess_result.selection_points,
-                        "confidence": preprocess_result.board_confidence,
-                        "seconds": preprocess_result.board_detection_seconds,
-                        "processed_image": str(preprocess_result.processed_image),
-                    }
-                )
-                config = replace(config, image_path=preprocess_result.processed_image)
+                try:
+                    preprocess_result = auto_preprocess_crab_target_image(
+                        config.image_path,
+                        output_dir,
+                        model=self._homography_model,
+                        reasoning_effort=self._homography_effort,
+                        board_reference_paths=self._board_reference_paths,
+                    )
+                except Exception as exc:
+                    self.progress.emit({"event": "auto_homography_failed", "error": str(exc)})
+                else:
+                    self.progress.emit(
+                        {
+                            "event": "auto_homography_finished",
+                            "preprocess_result": preprocess_result,
+                            "points": preprocess_result.ordered_points or preprocess_result.selection_points,
+                            "confidence": preprocess_result.board_confidence,
+                            "seconds": preprocess_result.board_detection_seconds,
+                            "processed_image": str(preprocess_result.processed_image),
+                        }
+                    )
+                    config = replace(config, image_path=preprocess_result.processed_image)
             if self._benchmark:
                 outputs = benchmark_crab_image(config, progress_callback=self.progress.emit)
             else:
@@ -875,6 +884,7 @@ class CrabCounterWindow(QMainWindow):
             preprocess_output_dir=output_dir / "preprocess",
             homography_model=DEFAULT_HOMOGRAPHY_MODEL,
             homography_effort=DEFAULT_HOMOGRAPHY_REASONING_EFFORT,
+            board_reference_paths=discover_crab_board_reference_paths(self._workspace.root),
         )
         thread = QThread(self)
         self._analysis_worker = worker
@@ -1011,8 +1021,12 @@ class CrabCounterWindow(QMainWindow):
             self._set_running_status(f"Locating board corners with OpenAI ({effort} effort)...")
             return
         if event == "auto_homography_finished":
+            preprocess_result = data.get("preprocess_result")
+            if isinstance(preprocess_result, CrabPreprocessResult):
+                self._set_preprocess_result(preprocess_result)
             points = data.get("points")
-            self.preview.set_homography_points(points)
+            if not isinstance(preprocess_result, CrabPreprocessResult):
+                self.preview.set_homography_points(points)
             confidence = data.get("confidence")
             seconds = float(data.get("seconds") or 0.0)
             confidence_text = f"{float(confidence):.2f}" if confidence is not None else "unknown"
@@ -1020,6 +1034,14 @@ class CrabCounterWindow(QMainWindow):
             self.progress_bar.setFormat("Classifying")
             self._set_running_status(
                 f"Board outline found in {seconds:.1f}s (confidence {confidence_text}). Sending rectified board to classifier..."
+            )
+            return
+        if event == "auto_homography_failed":
+            error = str(data.get("error") or "unknown error")
+            self.progress_bar.setRange(0, 0)
+            self.progress_bar.setFormat("Classifying")
+            self._set_running_status(
+                f"Auto homography could not find a usable board outline ({error}). Continuing with the original image..."
             )
             return
         if event == "request_started":

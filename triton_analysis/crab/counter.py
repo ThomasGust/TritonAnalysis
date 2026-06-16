@@ -41,6 +41,8 @@ DEFAULT_HOMOGRAPHY_MODEL = os.environ.get("TRITON_ANALYSIS_CRAB_HOMOGRAPHY_MODEL
 DEFAULT_HOMOGRAPHY_REASONING_EFFORT = (
     os.environ.get("TRITON_ANALYSIS_CRAB_HOMOGRAPHY_REASONING_EFFORT", "xhigh").strip().lower() or "xhigh"
 )
+BOARD_REFERENCE_IMAGE_ENV = "TRITON_ANALYSIS_CRAB_BOARD_REFERENCE_IMAGES"
+BOARD_REFERENCE_MAX_IMAGES = 4
 try:
     DEFAULT_TARGET_MATCH_THRESHOLD = float(os.environ.get("TRITON_ANALYSIS_CRAB_TARGET_THRESHOLD", "0.85"))
 except ValueError:
@@ -217,6 +219,22 @@ def default_output_dir(workspace_root: str | Path | None = None) -> Path:
     return fresh_output_subdir(workspace.results / "crab_counter", "crab_counter", create=True)
 
 
+def discover_crab_board_reference_paths(workspace_root: str | Path | None = None) -> tuple[Path, ...]:
+    """Return optional board-only pool reference images for the homography request."""
+
+    candidates: list[Path] = []
+    for raw in os.environ.get(BOARD_REFERENCE_IMAGE_ENV, "").split(os.pathsep):
+        candidates.extend(_discover_image_paths(Path(raw).expanduser()) if raw.strip() else [])
+    workspace = workspace_paths(workspace_root, create=False)
+    for rel in (
+        Path("data") / "crab board references",
+        Path("data") / "board references",
+        Path("data") / "blank boards",
+    ):
+        candidates.extend(_discover_image_paths(workspace.root / rel))
+    return tuple(_dedupe_paths(candidates)[:BOARD_REFERENCE_MAX_IMAGES])
+
+
 def write_reference_atlas(
     reference_paths: Mapping[str, Path | str | None],
     output_path: str | Path,
@@ -324,6 +342,7 @@ def detect_crab_board_homography(
     *,
     model: str = DEFAULT_HOMOGRAPHY_MODEL,
     reasoning_effort: str = DEFAULT_HOMOGRAPHY_REASONING_EFFORT,
+    board_reference_paths: Sequence[str | Path] | None = None,
     client: Any | None = None,
 ) -> CrabBoardOutlineResult:
     """Ask OpenAI for the board outline corners in source-image coordinates."""
@@ -340,6 +359,7 @@ def detect_crab_board_homography(
         image_size=image_size,
         model=selected_model,
         reasoning_effort=normalized_effort,
+        board_reference_paths=tuple(Path(path).expanduser() for path in board_reference_paths or ()),
         client=client,
     )
     result = _parse_board_outline_response(
@@ -358,6 +378,7 @@ def auto_preprocess_crab_target_image(
     *,
     model: str = DEFAULT_HOMOGRAPHY_MODEL,
     reasoning_effort: str = DEFAULT_HOMOGRAPHY_REASONING_EFFORT,
+    board_reference_paths: Sequence[str | Path] | None = None,
     client: Any | None = None,
 ) -> CrabPreprocessResult:
     """Detect the crab board outline with OpenAI and write a locally rectified target image."""
@@ -366,6 +387,7 @@ def auto_preprocess_crab_target_image(
         image_path,
         model=model,
         reasoning_effort=reasoning_effort,
+        board_reference_paths=board_reference_paths,
         client=client,
     )
     result = preprocess_crab_target_image(
@@ -812,6 +834,22 @@ def _dedupe_paths(paths: Sequence[Path]) -> list[Path]:
     return out
 
 
+def _discover_image_paths(path: Path) -> list[Path]:
+    expanded = path.expanduser()
+    if expanded.is_file() and expanded.suffix.lower() in IMAGE_EXTENSIONS:
+        return [expanded]
+    if not expanded.is_dir():
+        return []
+    return sorted(
+        (
+            child
+            for child in expanded.rglob("*")
+            if child.is_file() and child.suffix.lower() in IMAGE_EXTENSIONS
+        ),
+        key=lambda child: str(child).lower(),
+    )
+
+
 def _normalize_preprocess_mode(value: object) -> str:
     text = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
     aliases = {
@@ -929,6 +967,7 @@ def _create_openai_homography_response(
     image_size: tuple[int, int],
     model: str,
     reasoning_effort: str,
+    board_reference_paths: Sequence[Path],
     client: Any | None,
 ) -> Any:
     if client is None:
@@ -943,8 +982,22 @@ def _create_openai_homography_response(
     width, height = image_size
     content: list[dict[str, object]] = [
         {"type": "input_text", "text": _build_homography_prompt(width=width, height=height)},
-        {"type": "input_image", "image_url": _image_data_url(image_path), "detail": "high"},
     ]
+    references = _dedupe_paths(tuple(Path(path).expanduser() for path in board_reference_paths))[:BOARD_REFERENCE_MAX_IMAGES]
+    if references:
+        content.append(
+            {
+                "type": "input_text",
+                "text": (
+                    "Board appearance references only: these show the same kind of white board under pool lighting. "
+                    "Use them to recognize the board material and caustics, but do not return coordinates from them."
+                ),
+            }
+        )
+        for reference_path in references:
+            content.append({"type": "input_image", "image_url": _image_data_url(reference_path), "detail": "low"})
+    content.append({"type": "input_text", "text": "Target image for board-corner coordinates:"})
+    content.append({"type": "input_image", "image_url": _image_data_url(image_path), "detail": "high"})
     return client.responses.create(
         model=model,
         reasoning={"effort": reasoning_effort},
@@ -969,16 +1022,22 @@ def _create_openai_homography_response(
 
 def _build_homography_prompt(*, width: int, height: int) -> str:
     return (
-        "Locate the outer boundary of the white rectangular MATE crab board in the image. The board is the laminated "
-        "sheet containing printed crab pictures. Return exactly the four physical board corners in full-image pixel "
+        "Locate the outer boundary of the white rectangular MATE crab board or laminated white sheet in the image. "
+        "The board may contain printed crab pictures or may look mostly blank under pool lighting. Return exactly "
+        "the four physical board corners in full-image pixel "
         f"coordinates for this image, width={width}, height={height}. Use the order top_left, top_right, "
-        "bottom_right, bottom_left as the board appears in the image, not as an unrotated document. Ignore the pool "
-        "floor, grate, robot parts, gripper, shadows, glare, screw heads, crab prints, and empty background. Do not "
-        "outline the cluster of crabs; outline the sheet itself. If a corner is rounded, glared, or partly occluded, "
-        "estimate the point where the two outer board edges meet. Prefer a tight board outline over including any "
-        "surrounding water or hardware. This is only a geometric preprocessing step: do not classify crabs and do "
-        "not return crab bounding boxes. If the board is not visible enough to define four corners, set "
-        "board_visible false and still provide your best four-corner estimate with low confidence."
+        "bottom_right, bottom_left as the board appears in the image, not as an unrotated document. The full board "
+        "may be partly out of frame, clipped by the image border, covered by caustic light, or seen from a bad angle. "
+        "If only part of the board is visible but the sheet boundary is still recognizable, set board_visible true "
+        "and return the best four-corner outline for the visible board footprint; for corners outside the frame, use "
+        "the closest visible edge or image-border intersection that would make the most stable usable homography. "
+        "If a corner is rounded, glared, or partly occluded, estimate the point where the two outer board edges meet. "
+        "Ignore the pool floor, grate, robot parts, gripper, shadows, glare streaks, screw heads, crab prints, and "
+        "empty background. Do not outline the cluster of crabs; outline the sheet itself. Prefer a tight board "
+        "outline over including any surrounding water or hardware. This is only a geometric preprocessing step: do "
+        "not classify crabs and do not return crab bounding boxes. If the image is too poor, the board is too small, "
+        "or you cannot distinguish the board from the pool floor well enough for a usable transform, set "
+        "board_visible false, give low confidence, and still provide your best four-corner estimate."
     )
 
 
@@ -1028,25 +1087,39 @@ def _build_prompt(*, width: int, height: int, target_confidence_threshold: float
         "native rock crab, and Jonah crab. First locate every visible printed crab candidate in the target image. "
         "Then compare each candidate directly against the atlas examples and classify it as european_green_crab, "
         "native_rock_crab, jonah_crab, or uncertain. "
-        "Species identification is more important than finding every possible target. Native rock crab and Jonah "
-        "crab are hard negatives. Do not count a native rock crab as European green crab even if underwater lighting, "
-        "blur, compression, faded ink, or glare makes it look greenish. Do not use color tint alone as species "
-        "evidence because the pool can shift all colors. If a candidate is ambiguous between European green crab "
-        "and native rock crab, label it uncertain or native_rock_crab rather than european_green_crab. Ignore pool "
-        "tiles, glare, fasteners, the gripper, shadows, and paper edges. "
+        "Species identification is more important than finding every possible target. False positives are worse "
+        "than false negatives: a native rock crab counted as European green crab is a serious error. Native rock "
+        "crab and Jonah crab are hard negatives, and native_rock_crab is the main hard negative. Do not count a "
+        "native rock crab as European green crab even if underwater lighting, caustics, blur, compression, faded "
+        "ink, or glare makes it look greenish. Do not use color tint alone as species evidence because the pool can "
+        "shift all colors. Ignore pool tiles, glare, fasteners, the gripper, shadows, and paper edges. "
+        "Use a reject-first decision process for every candidate. First compare the candidate to native_rock_crab "
+        "and Jonah crab in the atlas, looking for any non-target match in silhouette, leg/claw layout, body "
+        "proportions, edge contour, and internal markings. Then compare to European green crab. Only after the "
+        "hard-negative check may you assign european_green_crab. If the candidate has any visible cue that matches "
+        "native_rock_crab as well as or better than European green crab, label it native_rock_crab or uncertain. "
+        "If the candidate is ambiguous between European green crab and native rock crab, label it uncertain or "
+        "native_rock_crab rather than european_green_crab. "
         "Allow real target prints to be rotated, scaled, blurred, partly glared over, or color shifted, but require "
         "the visible silhouette, leg/claw layout, body proportions, and internal markings to match the European "
         "green crab reference better than both non-target references before assigning european_green_crab. Assign "
-        "european_green_crab only when at least two independent visual cues support that class and no visible cue "
-        "matches a non-target reference as well or better. For each candidate, assign class_scores for all three "
-        "classes. The class_scores should sum loosely to your relative visual support; they do not need to add to "
-        "1.0. closest_non_target must be the better of native_rock_crab and jonah_crab. decision_margin must be "
-        "class_scores.european_green_crab minus the larger non-target score. In notes, use at most 12 words naming "
-        "the strongest cue and closest rejected class. Set target_match_confidence >= "
-        f"{target_confidence_threshold:.2f} only for clear European green crab matches; set it below "
-        f"{target_confidence_threshold:.2f} for likely-but-not-clear, ambiguous, or non-target candidates. Set "
-        "accepted_as_target true only when label is european_green_crab, target_match_confidence >= "
-        f"{target_confidence_threshold:.2f}, and decision_margin >= {target_margin_threshold:.2f}. "
+        "european_green_crab only when at least two independent non-color visual cues support that class and no "
+        "visible cue matches a non-target reference as well or better. A greenish or dark body is not one of the "
+        "two required cues. Treat small, blurry, caustic-covered, or partly hidden candidates conservatively: if "
+        "you cannot explain why it is not native_rock_crab, do not accept it as a target. "
+        "For each candidate, assign class_scores for all three classes. The class_scores should express relative "
+        "visual support from the atlas; they do not need to add to 1.0. Do not artificially suppress the native "
+        "rock crab score to make an uncertain candidate pass. If native_rock_crab is plausible, its score should "
+        "remain high enough to lower the decision_margin. closest_non_target must be the better of native_rock_crab "
+        "and jonah_crab. decision_margin must be class_scores.european_green_crab minus the larger non-target "
+        "score. In notes, use at most 12 words naming the strongest cue and closest rejected class. Set "
+        "target_match_confidence >= "
+        f"{target_confidence_threshold:.2f} only for clear European green crab matches after the native-rock veto; "
+        f"set it below {target_confidence_threshold:.2f} for likely-but-not-clear, ambiguous, small/blurred, "
+        "glare-covered, or non-target candidates. Set accepted_as_target true only when label is "
+        "european_green_crab, target_match_confidence >= "
+        f"{target_confidence_threshold:.2f}, decision_margin >= {target_margin_threshold:.2f}, and the candidate "
+        "survives the native-rock hard-negative check. "
         "Return bounding boxes in pixel coordinates for the full "
         f"target image, whose size is width={width}, height={height}. Each bbox must tightly cover the visible "
         "printed ink of one crab, including legs and claws when visible, and must use the order [x1, y1, x2, y2]. "

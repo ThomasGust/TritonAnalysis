@@ -10,6 +10,7 @@ from triton_analysis.crab.counter import (
     auto_preprocess_crab_target_image,
     benchmark_crab_image,
     detect_crab_board_homography,
+    discover_crab_board_reference_paths,
     draw_crab_count_result,
     preprocess_crab_target_image,
     result_from_payload,
@@ -432,6 +433,48 @@ def test_detect_crab_board_homography_uses_fast_outline_prompt_and_schema(tmp_pa
     assert "top_left" in schema["properties"]
     assert "bottom_right" in schema["required"]
     assert kwargs["text"]["verbosity"] == "low"
+
+
+def test_detect_crab_board_homography_can_include_board_appearance_references(tmp_path: Path):
+    target = tmp_path / "target.png"
+    reference = tmp_path / "blank_board_pool.png"
+    _write_image(target, (30, 80, 120), size=(220, 140))
+    _write_image(reference, (210, 210, 205), size=(220, 140))
+    fake_client = _FakeBoardClient()
+
+    detect_crab_board_homography(
+        target,
+        model="test-outline-model",
+        reasoning_effort="xhigh",
+        board_reference_paths=(reference,),
+        client=fake_client,
+    )
+
+    content = fake_client.responses.kwargs["input"][0]["content"]
+    assert "Board appearance references only" in content[1]["text"]
+    images = [item for item in content if item["type"] == "input_image"]
+    assert len(images) == 2
+    assert images[0]["detail"] == "low"
+    assert images[-1]["detail"] == "high"
+    assert "Target image for board-corner coordinates" in content[-2]["text"]
+
+
+def test_discover_crab_board_reference_paths_reads_workspace_and_env(tmp_path: Path, monkeypatch):
+    workspace_root = tmp_path / "Workspace"
+    workspace_ref_dir = workspace_root / "data" / "crab board references"
+    env_ref_dir = tmp_path / "env_refs"
+    workspace_ref_dir.mkdir(parents=True)
+    env_ref_dir.mkdir()
+    workspace_ref = workspace_ref_dir / "workspace_board.png"
+    env_ref = env_ref_dir / "env_board.jpg"
+    _write_image(workspace_ref)
+    _write_image(env_ref)
+    monkeypatch.setenv("TRITON_ANALYSIS_CRAB_BOARD_REFERENCE_IMAGES", str(env_ref_dir))
+
+    paths = discover_crab_board_reference_paths(workspace_root)
+
+    assert env_ref in paths
+    assert workspace_ref in paths
 
 
 def test_auto_preprocess_crab_target_image_writes_detected_homography_metadata(tmp_path: Path):
