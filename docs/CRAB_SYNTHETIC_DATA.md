@@ -273,3 +273,74 @@ The duplicate-filtered counts at same-class IoU 0.85 were identical to the raw
 counts. Based on visual inspection, this checkpoint correctly separates native
 rock crab from Jonah crab on the sample boards, which was the main failure mode
 of the earlier nano-model pass.
+
+### Plane-projected real-board run
+
+The first larger model trained from the GUI-generated real-board plane dataset
+used:
+
+- dataset: `Workspace\datasets\crab_plane_synth_20260615_190957`
+- model seed checkpoint: `Workspace\models\yolo26l.pt`
+- run:
+  `Workspace\runs\crab_yolo\plane2000_yolo26l_e60_img1280_b4`
+- best checkpoint:
+  `Workspace\runs\crab_yolo\plane2000_yolo26l_e60_img1280_b4\weights\best.pt`
+
+```powershell
+$project = Resolve-Path .\Workspace\runs\crab_yolo
+
+.\.venv\Scripts\yolo.exe detect train `
+  model=.\Workspace\models\yolo26l.pt `
+  data=.\Workspace\datasets\crab_plane_synth_20260615_190957\data.yaml `
+  epochs=60 `
+  imgsz=1280 `
+  batch=4 `
+  device=0 `
+  workers=2 `
+  patience=12 `
+  seed=60930 `
+  project="$project" `
+  name=plane2000_yolo26l_e60_img1280_b4 `
+  exist_ok=True `
+  plots=True `
+  cache=False `
+  amp=True `
+  cos_lr=True `
+  close_mosaic=12
+```
+
+The best epoch was 58. Final validation of `best.pt` on the plane-synth val
+split was:
+
+| class | precision | recall | mAP50 | mAP50-95 |
+| --- | ---: | ---: | ---: | ---: |
+| all | 0.999 | 0.998 | 0.995 | 0.988 |
+| European green crab | 0.999 | 0.995 | 0.995 | 0.985 |
+| Native rock crab | 1.000 | 1.000 | 0.995 | 0.991 |
+| Jonah crab | 0.999 | 0.999 | 0.995 | 0.989 |
+
+Use the evaluation helper to rerun the synthetic validation, MATE sample-image
+predictions, and the manually annotated real stereo/pool sanity checks:
+
+```powershell
+.\.venv\Scripts\python.exe .\tools\crab_evaluate_model.py `
+  --weights .\Workspace\runs\crab_yolo\plane2000_yolo26l_e60_img1280_b4\weights\best.pt `
+  --data .\Workspace\datasets\crab_plane_synth_20260615_190957\data.yaml `
+  --project .\Workspace\runs\crab_yolo `
+  --name-prefix plane2000_yolo26l_best `
+  --imgsz 1280 `
+  --batch 4 `
+  --device 0 `
+  --workers 2 `
+  --conf 0.25 `
+  --iou 0.45
+```
+
+The `conf=0.25` real-image summary was written to
+`Workspace\runs\crab_yolo\plane2000_yolo26l_best_evaluation\summary.md`.
+Compared with the older synthetic-only checkpoint, the full real stereo frame
+improved substantially, but it is still not field-ready: the manually annotated
+`pair_000018_right` frame matched 4 of 8 crabs at IoU 0.25 and 2 of 8 at IoU
+0.50, with rock crabs still missed. The board crop matched only 1 of 8 at
+`conf=0.25`; a `conf=0.05` rerun raised that to 2 of 8, so the cropped
+real-stereo failures are not just confidence thresholding.

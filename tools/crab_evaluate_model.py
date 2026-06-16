@@ -130,11 +130,12 @@ def main() -> int:
                 result["manual_iou_050"] = match_boxes(manual, predicted, threshold=0.50)
             predict_results[target.key] = result
 
+    val_run = project / val_name
     summary = {
         "weights": str(weights),
         "data": str(data_yaml),
         "project": str(project),
-        "val_run": str(project / val_name),
+        "val_run": str(val_run) if val_run.exists() else None,
         "predict_results": predict_results,
     }
     (summary_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
@@ -291,7 +292,7 @@ def render_markdown(summary: dict[str, object]) -> str:
         "",
         f"- weights: `{summary['weights']}`",
         f"- data: `{summary['data']}`",
-        f"- synthetic val run: `{summary['val_run']}`",
+        f"- synthetic val run: `{summary['val_run']}`" if summary.get("val_run") else "- synthetic val run: skipped",
         "",
         "## Prediction Counts",
         "",
