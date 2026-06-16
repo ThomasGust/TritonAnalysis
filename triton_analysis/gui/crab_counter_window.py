@@ -47,8 +47,10 @@ from triton_analysis.crab.counter import (
     CrabCounterOutputs,
     CrabPreprocessResult,
     analyze_crab_image,
+    analyze_crab_image_pipeline,
     auto_preprocess_crab_target_image,
     benchmark_crab_image,
+    benchmark_crab_image_pipeline,
     default_output_dir,
     discover_crab_board_reference_paths,
     discover_counter_reference_atlas_paths,
@@ -331,6 +333,7 @@ class CrabCounterWorker(QObject):
         homography_model: str = DEFAULT_HOMOGRAPHY_MODEL,
         homography_effort: str = DEFAULT_HOMOGRAPHY_REASONING_EFFORT,
         board_reference_paths: tuple[Path, ...] = (),
+        analysis_flow: str = "pipeline",
     ):
         super().__init__()
         self._config = config
@@ -340,6 +343,7 @@ class CrabCounterWorker(QObject):
         self._homography_model = homography_model
         self._homography_effort = homography_effort
         self._board_reference_paths = board_reference_paths
+        self._analysis_flow = analysis_flow
 
     def run(self) -> None:
         preprocess_result: CrabPreprocessResult | None = None
@@ -371,10 +375,16 @@ class CrabCounterWorker(QObject):
                     )
                     config = replace(config, image_path=preprocess_result.processed_image)
             if self._benchmark:
-                outputs = benchmark_crab_image(config, progress_callback=self.progress.emit)
+                if self._analysis_flow == "pipeline":
+                    outputs = benchmark_crab_image_pipeline(config, progress_callback=self.progress.emit)
+                else:
+                    outputs = benchmark_crab_image(config, progress_callback=self.progress.emit)
             else:
-                self.progress.emit({"event": "request_started", "effort": config.reasoning_effort})
-                outputs = analyze_crab_image(config)
+                if self._analysis_flow == "pipeline":
+                    outputs = analyze_crab_image_pipeline(config, progress_callback=self.progress.emit)
+                else:
+                    self.progress.emit({"event": "request_started", "effort": config.reasoning_effort})
+                    outputs = analyze_crab_image(config)
         except Exception as exc:  # pragma: no cover - surfaced in GUI
             self.finished.emit({"ok": False, "error": str(exc)})
             return
@@ -446,6 +456,9 @@ class CrabCounterWindow(QMainWindow):
         self.margin_spin.setSingleStep(0.05)
         self.margin_spin.setValue(DEFAULT_TARGET_MARGIN_THRESHOLD)
         self.margin_spin.setToolTip("Higher values require European green crab to beat the closest non-target by more.")
+        self.analysis_flow_combo = QComboBox()
+        self.analysis_flow_combo.addItem("3-Stage Pipeline", "pipeline")
+        self.analysis_flow_combo.addItem("Single Request (Legacy)", "single")
         self.output_root_edit = QLineEdit(str(self._workspace.results / "crab_counter"))
         self.status_label = QLabel("Set OPENAI_API_KEY, choose a target image, then analyze.")
         self.status_label.setWordWrap(True)
@@ -563,6 +576,7 @@ class CrabCounterWindow(QMainWindow):
         settings_form = QFormLayout()
         settings_form.addRow("Model", self.model_edit)
         settings_form.addRow("Reasoning Effort", self.reasoning_effort_combo)
+        settings_form.addRow("Flow", self.analysis_flow_combo)
         settings_form.addRow("EGC Threshold", self.threshold_spin)
         settings_form.addRow("EGC Margin", self.margin_spin)
         settings_form.addRow("Output Root", self.output_root_edit)
@@ -672,6 +686,9 @@ class CrabCounterWindow(QMainWindow):
 
     def _current_preprocess_mode(self) -> str:
         return str(self.preprocess_mode_combo.currentData() or "none")
+
+    def _current_analysis_flow(self) -> str:
+        return "single" if self.analysis_flow_combo.currentData() == "single" else "pipeline"
 
     def _preprocess_mode_changed(self) -> None:
         mode = self._current_preprocess_mode()
@@ -861,14 +878,16 @@ class CrabCounterWindow(QMainWindow):
         if benchmark:
             efforts = ", ".join(REASONING_EFFORTS)
             prep = f" via {preprocess_mode}" if preprocess_mode != "none" else ""
-            self._set_running_status(f"Benchmarking {image_path.name}{prep} with {config.model}: {efforts}...")
+            flow = "3-stage pipeline" if self._current_analysis_flow() == "pipeline" else "single request"
+            self._set_running_status(f"Benchmarking {image_path.name}{prep} with {config.model} ({flow}): {efforts}...")
             self.progress_bar.setRange(0, len(REASONING_EFFORTS))
             self.progress_bar.setValue(0)
             self.progress_bar.setFormat("0/%m efforts")
         else:
             prep = f" via {preprocess_mode}" if preprocess_mode != "none" else ""
+            flow = "3-stage pipeline" if self._current_analysis_flow() == "pipeline" else "single request"
             self._set_running_status(
-                f"Analyzing {image_path.name}{prep} with {config.model} ({config.reasoning_effort} effort)..."
+                f"Analyzing {image_path.name}{prep} with {config.model} ({config.reasoning_effort} effort, {flow})..."
             )
             self.progress_bar.setRange(0, 0)
             self.progress_bar.setFormat("Working")
@@ -885,6 +904,7 @@ class CrabCounterWindow(QMainWindow):
             homography_model=DEFAULT_HOMOGRAPHY_MODEL,
             homography_effort=DEFAULT_HOMOGRAPHY_REASONING_EFFORT,
             board_reference_paths=discover_crab_board_reference_paths(self._workspace.root),
+            analysis_flow=self._current_analysis_flow(),
         )
         thread = QThread(self)
         self._analysis_worker = worker
@@ -1043,6 +1063,30 @@ class CrabCounterWindow(QMainWindow):
             self._set_running_status(
                 f"Auto homography could not find a usable board outline ({error}). Continuing with the original image..."
             )
+            return
+        if event == "candidate_detection_started":
+            effort = str(data.get("effort") or "low")
+            self.progress_bar.setRange(0, 0)
+            self.progress_bar.setFormat("Detecting")
+            self._set_running_status(f"Detecting printed crab candidate boxes ({effort} effort)...")
+            return
+        if event == "candidate_detection_finished":
+            count = int(data.get("count") or 0)
+            seconds = float(data.get("analysis_seconds") or 0.0)
+            self.progress_bar.setRange(0, 0)
+            self.progress_bar.setFormat("Classifying")
+            self._set_running_status(f"Detected {count} candidate box(es) in {seconds:.1f}s. Building crop sheet...")
+            return
+        if event == "candidate_classification_started":
+            effort = str(data.get("effort") or self.reasoning_effort_combo.currentText())
+            count = int(data.get("candidate_count") or 0)
+            self.progress_bar.setRange(0, 0)
+            self.progress_bar.setFormat("Classifying")
+            self._set_running_status(f"Classifying {count} candidate crop(s) ({effort} effort). Waiting for model response...")
+            return
+        if event == "candidate_classification_finished":
+            seconds = float(data.get("analysis_seconds") or 0.0)
+            self._set_running_status(f"Crop classifier finished in {seconds:.1f}s. Writing results...")
             return
         if event == "request_started":
             effort = str(data.get("effort") or self.reasoning_effort_combo.currentText())

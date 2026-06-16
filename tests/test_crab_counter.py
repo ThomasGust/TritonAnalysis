@@ -7,8 +7,10 @@ import numpy as np
 from triton_analysis.crab.counter import (
     CrabCounterConfig,
     analyze_crab_image,
+    analyze_crab_image_pipeline,
     auto_preprocess_crab_target_image,
     benchmark_crab_image,
+    benchmark_crab_image_pipeline,
     detect_crab_board_homography,
     discover_crab_board_reference_paths,
     draw_crab_count_result,
@@ -99,6 +101,87 @@ class _FakeResponses:
 class _FakeClient:
     def __init__(self):
         self.responses = _FakeResponses()
+
+
+class _FakePipelineResponses:
+    def __init__(self):
+        self.calls = []
+        self.kwargs = None
+
+    def create(self, **kwargs):
+        self.kwargs = kwargs
+        self.calls.append(kwargs)
+        schema_name = kwargs["text"]["format"]["name"]
+        if schema_name == "crab_candidate_detector":
+            payload = {
+                "image_width": 120,
+                "image_height": 90,
+                "candidates": [
+                    {"candidate_id": 1, "bbox": [10, 12, 42, 46], "confidence": 0.95, "notes": "printed crab"},
+                    {"candidate_id": 2, "bbox": [44, 14, 62, 39], "confidence": 0.93, "notes": "printed crab"},
+                    {"candidate_id": 3, "bbox": [70, 20, 110, 62], "confidence": 0.91, "notes": "printed crab"},
+                ],
+                "summary": "Three printed crab candidates.",
+            }
+        elif schema_name == "crab_candidate_classifier":
+            payload = {
+                "classifications": [
+                    {
+                        "candidate_id": 1,
+                        "label": "european_green_crab",
+                        "confidence": 0.91,
+                        "target_match_confidence": 0.93,
+                        "class_scores": {
+                            "european_green_crab": 0.93,
+                            "native_rock_crab": 0.12,
+                            "jonah_crab": 0.08,
+                        },
+                        "closest_non_target": "native_rock_crab",
+                        "decision_margin": 0.81,
+                        "accepted_as_target": True,
+                        "notes": "green cue vs rock",
+                    },
+                    {
+                        "candidate_id": 2,
+                        "label": "native_rock_crab",
+                        "confidence": 0.94,
+                        "target_match_confidence": 0.16,
+                        "class_scores": {
+                            "european_green_crab": 0.16,
+                            "native_rock_crab": 0.94,
+                            "jonah_crab": 0.15,
+                        },
+                        "closest_non_target": "native_rock_crab",
+                        "decision_margin": -0.78,
+                        "accepted_as_target": False,
+                        "notes": "rock silhouette",
+                    },
+                    {
+                        "candidate_id": 3,
+                        "label": "european_green_crab",
+                        "confidence": 0.9,
+                        "target_match_confidence": 0.91,
+                        "class_scores": {
+                            "european_green_crab": 0.91,
+                            "native_rock_crab": 0.13,
+                            "jonah_crab": 0.08,
+                        },
+                        "closest_non_target": "native_rock_crab",
+                        "decision_margin": 0.78,
+                        "accepted_as_target": True,
+                        "notes": "leg layout vs rock",
+                    },
+                ],
+                "summary": "Two candidates are European green crabs.",
+            }
+        else:
+            raise AssertionError(f"unexpected schema name {schema_name}")
+        return type("FakePipelineResponse", (), {"output_text": json.dumps(payload)})()
+
+
+class _FakePipelineClient:
+    def __init__(self):
+        self.responses = _FakePipelineResponses()
 
 
 class _FakeBoardResponses:
@@ -286,6 +369,91 @@ def test_analyze_crab_image_uses_responses_api_and_writes_outputs(tmp_path: Path
     written = json.loads(outputs.result_json.read_text(encoding="utf-8"))
     assert written["analysis_seconds"] >= 0.0
     assert written["detections"][0]["accepted_as_target"] is True
+
+
+def test_analyze_crab_image_pipeline_detects_then_classifies_crops(tmp_path: Path):
+    target = tmp_path / "target.png"
+    refs = {
+        "european_green_crab": tmp_path / "green.png",
+        "native_rock_crab": tmp_path / "rock.png",
+        "jonah_crab": tmp_path / "jonah.png",
+    }
+    _write_image(target, (30, 80, 120))
+    _write_image(refs["european_green_crab"], (20, 60, 50))
+    _write_image(refs["native_rock_crab"], (80, 110, 160))
+    _write_image(refs["jonah_crab"], (90, 130, 190))
+    fake_client = _FakePipelineClient()
+
+    outputs = analyze_crab_image_pipeline(
+        CrabCounterConfig(
+            image_path=target,
+            reference_paths=refs,
+            output_dir=tmp_path / "pipeline",
+            model="test-vision-model",
+            reasoning_effort="high",
+        ),
+        client=fake_client,
+    )
+
+    assert outputs.result.count == 2
+    assert len(outputs.result.candidates) == 3
+    assert outputs.result.detections[0].bbox == (10.0, 12.0, 42.0, 46.0)
+    assert outputs.result.analysis_seconds >= 0.0
+    assert outputs.result_json.exists()
+    assert outputs.annotated_image.exists()
+    detection_json = outputs.output_dir / "pipeline" / "target_candidate_boxes.json"
+    contact_sheet = outputs.output_dir / "target_candidate_contact_sheet.png"
+    assert detection_json.exists()
+    assert contact_sheet.exists()
+    assert [call["text"]["format"]["name"] for call in fake_client.responses.calls] == [
+        "crab_candidate_detector",
+        "crab_candidate_classifier",
+    ]
+    assert fake_client.responses.calls[0]["reasoning"] == {"effort": "low"}
+    assert fake_client.responses.calls[1]["reasoning"] == {"effort": "high"}
+    classifier_content = fake_client.responses.calls[1]["input"][0]["content"]
+    assert "classification only" in classifier_content[0]["text"]
+    assert "Candidate 1" in classifier_content[0]["text"]
+    assert sum(1 for item in classifier_content if item["type"] == "input_image") == 2
+    written = json.loads(outputs.result_json.read_text(encoding="utf-8"))
+    assert written["pipeline"]["mode"] == "detect_then_classify_crops"
+    assert written["pipeline"]["detector_candidate_count"] == 3
+
+
+def test_benchmark_crab_image_pipeline_reuses_detector_stage(tmp_path: Path):
+    target = tmp_path / "target.png"
+    refs = {
+        "european_green_crab": tmp_path / "green.png",
+        "native_rock_crab": tmp_path / "rock.png",
+        "jonah_crab": tmp_path / "jonah.png",
+    }
+    _write_image(target, (30, 80, 120))
+    _write_image(refs["european_green_crab"], (20, 60, 50))
+    _write_image(refs["native_rock_crab"], (80, 110, 160))
+    _write_image(refs["jonah_crab"], (90, 130, 190))
+    fake_client = _FakePipelineClient()
+
+    outputs = benchmark_crab_image_pipeline(
+        CrabCounterConfig(
+            image_path=target,
+            reference_paths=refs,
+            output_dir=tmp_path / "pipeline_bench",
+            model="test-vision-model",
+        ),
+        efforts=("low", "high"),
+        client=fake_client,
+    )
+
+    assert len(outputs.runs) == 2
+    assert [call["text"]["format"]["name"] for call in fake_client.responses.calls] == [
+        "crab_candidate_detector",
+        "crab_candidate_classifier",
+        "crab_candidate_classifier",
+    ]
+    assert [call["reasoning"]["effort"] for call in fake_client.responses.calls] == ["low", "low", "high"]
+    summary = json.loads(outputs.summary_json.read_text(encoding="utf-8"))
+    assert summary["pipeline"]["detector_candidate_count"] == 3
+    assert [run["reasoning_effort"] for run in summary["runs"]] == ["low", "high"]
 
 
 def test_write_reference_atlas_writes_preview_image(tmp_path: Path):
