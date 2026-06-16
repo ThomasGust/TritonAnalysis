@@ -166,6 +166,26 @@ def default_output_dir(workspace_root: str | Path | None = None) -> Path:
     return fresh_output_subdir(workspace.results / "crab_counter", "crab_counter", create=True)
 
 
+def write_reference_atlas(
+    reference_paths: Mapping[str, Path | str | None],
+    output_path: str | Path,
+    *,
+    atlas_paths: Mapping[str, Sequence[Path]] | None = None,
+) -> Path:
+    """Write the generated crab reference atlas used by OpenAI requests."""
+
+    normalized_refs = _normalize_reference_paths(reference_paths)
+    merged_refs = _merge_reference_atlas_paths(normalized_refs, atlas_paths)
+    missing = [class_name for class_name in CRAB_CLASS_NAMES if not merged_refs.get(class_name)]
+    if missing:
+        labels = ", ".join(REFERENCE_CLASS_LABELS.get(name, name) for name in missing)
+        raise ValueError(f"missing crab reference image(s): {labels}")
+    output = Path(output_path).expanduser()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    _write_image(output, _build_reference_atlas(merged_refs))
+    return output
+
+
 def analyze_crab_image(config: CrabCounterConfig, *, client: Any | None = None) -> CrabCounterOutputs:
     """Analyze one target image and write JSON plus an annotated copy."""
 

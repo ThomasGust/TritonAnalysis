@@ -11,6 +11,7 @@ from triton_analysis.crab.counter import (
     discover_counter_reference_atlas_paths,
     discover_counter_reference_paths,
     draw_crab_count_result,
+    write_reference_atlas,
 )
 from triton_analysis.crab.synthetic import (
     CRAB_CLASS_NAMES,
@@ -52,4 +53,5 @@ __all__ = [
     "generate_synthetic_dataset",
     "load_board_plane_annotations",
     "save_board_plane_annotations",
+    "write_reference_atlas",
 ]

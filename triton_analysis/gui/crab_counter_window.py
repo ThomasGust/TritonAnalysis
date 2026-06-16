@@ -10,6 +10,7 @@ from PyQt6.QtCore import QObject, QRectF, Qt, QThread, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QColor, QDesktopServices, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QComboBox,
+    QDialog,
     QDoubleSpinBox,
     QFormLayout,
     QHBoxLayout,
@@ -46,6 +47,7 @@ from triton_analysis.crab.counter import (
     discover_counter_reference_atlas_paths,
     discover_counter_reference_paths,
     missing_reference_classes,
+    write_reference_atlas,
 )
 from triton_analysis.crab.synthetic import CRAB_CLASS_NAMES, IMAGE_EXTENSIONS
 from triton_analysis.gui.file_dialogs import ThumbnailFileDialog as QFileDialog
@@ -316,7 +318,10 @@ class CrabCounterWindow(QMainWindow):
         reference_row = QHBoxLayout()
         autofill_btn = QPushButton("Auto-fill")
         autofill_btn.clicked.connect(self._load_default_references)
+        preview_atlas_btn = QPushButton("Preview Atlas")
+        preview_atlas_btn.clicked.connect(self._preview_reference_atlas)
         reference_row.addWidget(autofill_btn)
+        reference_row.addWidget(preview_atlas_btn)
         reference_row.addStretch(1)
         layout.addLayout(reference_row)
 
@@ -385,6 +390,51 @@ class CrabCounterWindow(QMainWindow):
         if path:
             edit.setText(path)
 
+    def _current_reference_paths(self) -> dict[str, Path | None]:
+        return {
+            class_name: Path(edit.text().strip()).expanduser() if edit.text().strip() else None
+            for class_name, edit in self.reference_edits.items()
+        }
+
+    def _preview_reference_atlas(self) -> None:
+        references = self._current_reference_paths()
+        missing = missing_reference_classes(references)
+        if missing:
+            self.status_label.setText("Missing reference images: " + ", ".join(REFERENCE_CLASS_LABELS[name] for name in missing))
+            return
+        try:
+            output_root = Path(self.output_root_edit.text().strip()).expanduser()
+            output_path = output_root / "crab_reference_atlas_preview.png"
+            atlas_path = write_reference_atlas(
+                references,
+                output_path,
+                atlas_paths=discover_counter_reference_atlas_paths(self._workspace.root),
+            )
+        except Exception as exc:
+            self.status_label.setText(f"Could not build reference atlas: {exc}")
+            return
+        self.status_label.setText(f"Wrote reference atlas preview: {atlas_path}")
+        self.statusBar().showMessage(f"Reference atlas preview: {atlas_path}", 8000)
+        self._show_reference_atlas_dialog(atlas_path)
+
+    def _show_reference_atlas_dialog(self, atlas_path: Path) -> None:
+        pixmap = QPixmap(str(atlas_path))
+        if pixmap.isNull():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(atlas_path)))
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Crab Reference Atlas")
+        layout = QVBoxLayout(dialog)
+        label = QLabel()
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setPixmap(pixmap)
+        scroll = QScrollArea()
+        scroll.setWidget(label)
+        scroll.setWidgetResizable(False)
+        layout.addWidget(scroll, 1)
+        dialog.resize(min(980, max(520, pixmap.width() + 48)), min(680, max(360, pixmap.height() + 72)))
+        dialog.exec()
+
     def _target_start_dir(self) -> Path:
         text = self.target_edit.text().strip()
         if text:
@@ -440,10 +490,7 @@ class CrabCounterWindow(QMainWindow):
         if not image_path.is_file():
             self.status_label.setText("Choose a target image first.")
             return
-        references = {
-            class_name: Path(edit.text().strip()).expanduser() if edit.text().strip() else None
-            for class_name, edit in self.reference_edits.items()
-        }
+        references = self._current_reference_paths()
         missing = missing_reference_classes(references)
         if missing:
             self.status_label.setText("Missing reference images: " + ", ".join(REFERENCE_CLASS_LABELS[name] for name in missing))

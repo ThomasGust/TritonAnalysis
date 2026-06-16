@@ -10,6 +10,7 @@ from triton_analysis.crab.counter import (
     benchmark_crab_image,
     draw_crab_count_result,
     result_from_payload,
+    write_reference_atlas,
 )
 
 
@@ -248,6 +249,33 @@ def test_analyze_crab_image_uses_responses_api_and_writes_outputs(tmp_path: Path
     written = json.loads(outputs.result_json.read_text(encoding="utf-8"))
     assert written["analysis_seconds"] >= 0.0
     assert written["detections"][0]["accepted_as_target"] is True
+
+
+def test_write_reference_atlas_writes_preview_image(tmp_path: Path):
+    refs = {
+        "european_green_crab": tmp_path / "green.png",
+        "native_rock_crab": tmp_path / "rock.png",
+        "jonah_crab": tmp_path / "jonah.png",
+    }
+    extra = {
+        "european_green_crab": [tmp_path / "green_pool.png"],
+        "native_rock_crab": [tmp_path / "rock_pool.png"],
+        "jonah_crab": [tmp_path / "jonah_pool.png"],
+    }
+    _write_image(refs["european_green_crab"], (20, 60, 50))
+    _write_image(refs["native_rock_crab"], (80, 110, 160))
+    _write_image(refs["jonah_crab"], (90, 130, 190))
+    _write_image(extra["european_green_crab"][0], (35, 55, 55))
+    _write_image(extra["native_rock_crab"][0], (75, 100, 145))
+    _write_image(extra["jonah_crab"][0], (95, 125, 180))
+
+    output = write_reference_atlas(refs, tmp_path / "atlas.png", atlas_paths=extra)
+
+    assert output.exists()
+    atlas = cv2.imread(str(output), cv2.IMREAD_COLOR)
+    assert atlas is not None
+    assert atlas.shape[0] > 100
+    assert atlas.shape[1] > 300
 
 
 def test_benchmark_crab_image_runs_each_reasoning_effort_and_writes_summary(tmp_path: Path):
