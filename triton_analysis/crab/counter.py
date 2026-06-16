@@ -37,6 +37,10 @@ DEFAULT_MODEL = os.environ.get("TRITON_ANALYSIS_CRAB_MODEL", "gpt-5.5")
 REASONING_EFFORTS = ("none", "low", "medium", "high", "xhigh")
 REFERENCE_ATLAS_MAX_EXAMPLES_PER_CLASS = 4
 DEFAULT_REASONING_EFFORT = os.environ.get("TRITON_ANALYSIS_CRAB_REASONING_EFFORT", "high").strip().lower() or "high"
+DEFAULT_HOMOGRAPHY_MODEL = os.environ.get("TRITON_ANALYSIS_CRAB_HOMOGRAPHY_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
+DEFAULT_HOMOGRAPHY_REASONING_EFFORT = (
+    os.environ.get("TRITON_ANALYSIS_CRAB_HOMOGRAPHY_REASONING_EFFORT", "xhigh").strip().lower() or "xhigh"
+)
 try:
     DEFAULT_TARGET_MATCH_THRESHOLD = float(os.environ.get("TRITON_ANALYSIS_CRAB_TARGET_THRESHOLD", "0.85"))
 except ValueError:
@@ -115,6 +119,53 @@ class CrabBenchmarkOutputs:
 
 
 @dataclass(frozen=True)
+class CrabBoardOutlineResult:
+    """OpenAI-selected board corners for one source image."""
+
+    image_path: Path
+    image_size: tuple[int, int]
+    points: tuple[tuple[float, float], ...]
+    confidence: float
+    board_visible: bool
+    model: str
+    reasoning_effort: str
+    analysis_seconds: float = 0.0
+    notes: str = ""
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "image_path": str(self.image_path),
+            "image_size": list(self.image_size),
+            "points": [[round(float(x), 3), round(float(y), 3)] for x, y in self.points],
+            "confidence": round(float(self.confidence), 4),
+            "board_visible": bool(self.board_visible),
+            "model": self.model,
+            "reasoning_effort": self.reasoning_effort,
+            "analysis_seconds": round(float(self.analysis_seconds), 3),
+            "notes": self.notes,
+        }
+
+
+@dataclass(frozen=True)
+class CrabPreprocessResult:
+    """Files written for one target-image preprocessing operation."""
+
+    mode: str
+    source_image: Path
+    processed_image: Path
+    metadata_json: Path
+    source_size: tuple[int, int]
+    output_size: tuple[int, int]
+    selection_points: tuple[tuple[float, float], ...] = ()
+    ordered_points: tuple[tuple[float, float], ...] = ()
+    board_confidence: float | None = None
+    board_detection_seconds: float | None = None
+    board_notes: str = ""
+    board_model: str = ""
+    board_reasoning_effort: str = ""
+
+
+@dataclass(frozen=True)
 class CrabCounterConfig:
     """Inputs for one OpenAI crab-counter request."""
 
@@ -184,6 +235,159 @@ def write_reference_atlas(
     output.parent.mkdir(parents=True, exist_ok=True)
     _write_image(output, _build_reference_atlas(merged_refs))
     return output
+
+
+def preprocess_crab_target_image(
+    image_path: str | Path,
+    output_dir: str | Path,
+    *,
+    mode: str,
+    crop_rect: Sequence[float] | None = None,
+    homography_points: Sequence[Sequence[float]] | None = None,
+) -> CrabPreprocessResult:
+    """Write a cropped or rectified target image for crab analysis."""
+
+    source_path = Path(image_path).expanduser()
+    image = _read_image(source_path)
+    if image is None:
+        raise OSError(f"could not read image: {source_path}")
+    height, width = image.shape[:2]
+    output_root = Path(output_dir).expanduser()
+    output_root.mkdir(parents=True, exist_ok=True)
+    mode_name = _normalize_preprocess_mode(mode)
+    stem = source_path.stem
+
+    if mode_name == "manual_crop":
+        if crop_rect is None:
+            raise ValueError("manual crop requires a crop rectangle")
+        x0, y0, x1, y1 = _clamp_bbox(crop_rect, (width, height))
+        x0_i, y0_i = int(round(x0)), int(round(y0))
+        x1_i, y1_i = int(round(x1)), int(round(y1))
+        if x1_i - x0_i < 8 or y1_i - y0_i < 8:
+            raise ValueError("manual crop is too small")
+        processed = image[y0_i:y1_i, x0_i:x1_i].copy()
+        source_to_processed = np.array([[1.0, 0.0, -x0_i], [0.0, 1.0, -y0_i], [0.0, 0.0, 1.0]], dtype=np.float64)
+        processed_to_source = np.array([[1.0, 0.0, x0_i], [0.0, 1.0, y0_i], [0.0, 0.0, 1.0]], dtype=np.float64)
+        output_path = output_root / f"{stem}_manual_crop.png"
+        metadata: dict[str, object] = {
+            "mode": mode_name,
+            "crop_bbox": [x0_i, y0_i, x1_i, y1_i],
+        }
+    elif mode_name in {"manual_homography", "auto_homography"}:
+        if homography_points is None or len(homography_points) != 4:
+            raise ValueError(f"{mode_name.replace('_', ' ')} requires four points")
+        points = np.array([[float(point[0]), float(point[1])] for point in homography_points], dtype=np.float32)
+        ordered = _order_quad_points(points)
+        out_w, out_h = _homography_output_size(ordered)
+        destination = np.array([[0, 0], [out_w - 1, 0], [out_w - 1, out_h - 1], [0, out_h - 1]], dtype=np.float32)
+        source_to_processed = cv2.getPerspectiveTransform(ordered.astype(np.float32), destination)
+        processed_to_source = np.linalg.inv(source_to_processed)
+        processed = cv2.warpPerspective(image, source_to_processed, (out_w, out_h), flags=cv2.INTER_LINEAR)
+        output_path = output_root / f"{stem}_{mode_name}.png"
+        point_key = "clicked_points" if mode_name == "manual_homography" else "detected_points"
+        metadata = {
+            "mode": mode_name,
+            point_key: [[round(float(x), 3), round(float(y), 3)] for x, y in points],
+            "ordered_points": [[round(float(x), 3), round(float(y), 3)] for x, y in ordered],
+        }
+    else:
+        raise ValueError(f"unsupported preprocessing mode: {mode}")
+
+    _write_image(output_path, processed)
+    out_h, out_w = processed.shape[:2]
+    metadata.update(
+        {
+            "source_image": str(source_path),
+            "processed_image": str(output_path),
+            "source_size": [width, height],
+            "output_size": [out_w, out_h],
+            "source_to_processed_matrix": _matrix_to_lists(source_to_processed),
+            "processed_to_source_matrix": _matrix_to_lists(processed_to_source),
+        }
+    )
+    metadata_json = output_root / f"{stem}_{mode_name}_preprocess.json"
+    metadata_json.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+    return CrabPreprocessResult(
+        mode=mode_name,
+        source_image=source_path,
+        processed_image=output_path,
+        metadata_json=metadata_json,
+        source_size=(width, height),
+        output_size=(out_w, out_h),
+        selection_points=tuple((float(x), float(y)) for x, y in points) if mode_name.endswith("homography") else (),
+        ordered_points=tuple((float(x), float(y)) for x, y in ordered) if mode_name.endswith("homography") else (),
+    )
+
+
+def detect_crab_board_homography(
+    image_path: str | Path,
+    *,
+    model: str = DEFAULT_HOMOGRAPHY_MODEL,
+    reasoning_effort: str = DEFAULT_HOMOGRAPHY_REASONING_EFFORT,
+    client: Any | None = None,
+) -> CrabBoardOutlineResult:
+    """Ask OpenAI for the board outline corners in source-image coordinates."""
+
+    source_path = Path(image_path).expanduser()
+    if not source_path.is_file():
+        raise FileNotFoundError(source_path)
+    image_size = image_dimensions(source_path)
+    normalized_effort = _normalize_reasoning_effort(reasoning_effort)
+    selected_model = str(model or DEFAULT_HOMOGRAPHY_MODEL)
+    start = time.perf_counter()
+    response = _create_openai_homography_response(
+        image_path=source_path,
+        image_size=image_size,
+        model=selected_model,
+        reasoning_effort=normalized_effort,
+        client=client,
+    )
+    result = _parse_board_outline_response(
+        response,
+        image_path=source_path,
+        image_size=image_size,
+        model=selected_model,
+        reasoning_effort=normalized_effort,
+    )
+    return replace(result, analysis_seconds=time.perf_counter() - start)
+
+
+def auto_preprocess_crab_target_image(
+    image_path: str | Path,
+    output_dir: str | Path,
+    *,
+    model: str = DEFAULT_HOMOGRAPHY_MODEL,
+    reasoning_effort: str = DEFAULT_HOMOGRAPHY_REASONING_EFFORT,
+    client: Any | None = None,
+) -> CrabPreprocessResult:
+    """Detect the crab board outline with OpenAI and write a locally rectified target image."""
+
+    outline = detect_crab_board_homography(
+        image_path,
+        model=model,
+        reasoning_effort=reasoning_effort,
+        client=client,
+    )
+    result = preprocess_crab_target_image(
+        image_path,
+        output_dir,
+        mode="auto_homography",
+        homography_points=outline.points,
+    )
+    metadata = json.loads(result.metadata_json.read_text(encoding="utf-8"))
+    metadata["board_outline"] = outline.to_dict()
+    metadata["auto_board_confidence"] = round(float(outline.confidence), 4)
+    metadata["auto_board_detection_seconds"] = round(float(outline.analysis_seconds), 3)
+    metadata["auto_board_notes"] = outline.notes
+    result.metadata_json.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+    return replace(
+        result,
+        board_confidence=outline.confidence,
+        board_detection_seconds=outline.analysis_seconds,
+        board_notes=outline.notes,
+        board_model=outline.model,
+        board_reasoning_effort=outline.reasoning_effort,
+    )
 
 
 def analyze_crab_image(config: CrabCounterConfig, *, client: Any | None = None) -> CrabCounterOutputs:
@@ -338,6 +542,35 @@ def draw_crab_count_result(image_path: str | Path, result: CrabCountResult, outp
     output.parent.mkdir(parents=True, exist_ok=True)
     _write_image(output, out)
     return output
+
+
+def transform_crab_count_result(
+    result: CrabCountResult,
+    processed_to_source_matrix: Sequence[Sequence[float]],
+    *,
+    source_image_path: str | Path,
+    source_size: tuple[int, int],
+) -> CrabCountResult:
+    """Map result boxes from a processed target image back into source-image coordinates."""
+
+    matrix = np.array(processed_to_source_matrix, dtype=np.float64)
+    if matrix.shape != (3, 3):
+        raise ValueError("processed_to_source_matrix must be 3x3")
+    transformed_candidates = tuple(
+        replace(detection, bbox=_transform_bbox(detection.bbox, matrix, source_size))
+        for detection in result.candidates
+    )
+    transformed_detections = tuple(
+        replace(detection, bbox=_transform_bbox(detection.bbox, matrix, source_size))
+        for detection in result.detections
+    )
+    return replace(
+        result,
+        image_path=Path(source_image_path).expanduser(),
+        image_size=source_size,
+        detections=transformed_detections,
+        candidates=transformed_candidates,
+    )
 
 
 def image_dimensions(path: str | Path) -> tuple[int, int]:
@@ -579,6 +812,56 @@ def _dedupe_paths(paths: Sequence[Path]) -> list[Path]:
     return out
 
 
+def _normalize_preprocess_mode(value: object) -> str:
+    text = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "auto": "auto_homography",
+        "auto_homography": "auto_homography",
+        "autohomography": "auto_homography",
+        "auto_rectify": "auto_homography",
+        "autorectify": "auto_homography",
+        "intelligent_homography": "auto_homography",
+        "crop": "manual_crop",
+        "manualcrop": "manual_crop",
+        "homography": "manual_homography",
+        "rectify": "manual_homography",
+        "manualhomography": "manual_homography",
+    }
+    return aliases.get(text, text)
+
+
+def _order_quad_points(points: np.ndarray) -> np.ndarray:
+    if points.shape != (4, 2):
+        raise ValueError("expected four 2D points")
+    sums = points.sum(axis=1)
+    diffs = np.diff(points, axis=1).reshape(-1)
+    top_left = points[int(np.argmin(sums))]
+    bottom_right = points[int(np.argmax(sums))]
+    top_right = points[int(np.argmin(diffs))]
+    bottom_left = points[int(np.argmax(diffs))]
+    ordered = np.array([top_left, top_right, bottom_right, bottom_left], dtype=np.float32)
+    if abs(float(cv2.contourArea(ordered))) < 100.0:
+        raise ValueError("homography points are nearly collinear")
+    return ordered
+
+
+def _homography_output_size(points: np.ndarray) -> tuple[int, int]:
+    top_left, top_right, bottom_right, bottom_left = points
+    width_a = np.linalg.norm(bottom_right - bottom_left)
+    width_b = np.linalg.norm(top_right - top_left)
+    height_a = np.linalg.norm(top_right - bottom_right)
+    height_b = np.linalg.norm(top_left - bottom_left)
+    width = int(round(max(width_a, width_b)))
+    height = int(round(max(height_a, height_b)))
+    if width < 32 or height < 32:
+        raise ValueError("homography output would be too small")
+    return width, height
+
+
+def _matrix_to_lists(matrix: np.ndarray) -> list[list[float]]:
+    return [[round(float(value), 6) for value in row] for row in matrix.tolist()]
+
+
 def _create_openai_response(
     *,
     image_path: Path,
@@ -638,6 +921,103 @@ def _create_openai_response(
             "verbosity": "low",
         },
     )
+
+
+def _create_openai_homography_response(
+    *,
+    image_path: Path,
+    image_size: tuple[int, int],
+    model: str,
+    reasoning_effort: str,
+    client: Any | None,
+) -> Any:
+    if client is None:
+        try:
+            from openai import OpenAI
+        except ImportError as exc:  # pragma: no cover - exercised through GUI messaging
+            raise RuntimeError("OpenAI Python package is not installed. Run setup_windows.ps1 again.") from exc
+        client = OpenAI()
+    if not hasattr(client, "responses"):
+        raise RuntimeError("OpenAI client does not expose the Responses API. Install openai>=2.0.0.")
+
+    width, height = image_size
+    content: list[dict[str, object]] = [
+        {"type": "input_text", "text": _build_homography_prompt(width=width, height=height)},
+        {"type": "input_image", "image_url": _image_data_url(image_path), "detail": "high"},
+    ]
+    return client.responses.create(
+        model=model,
+        reasoning={"effort": reasoning_effort},
+        prompt_cache_key="triton_analysis_crab_board_homography_v1",
+        input=[
+            {
+                "role": "user",
+                "content": content,
+            }
+        ],
+        text={
+            "format": {
+                "type": "json_schema",
+                "name": "crab_board_outline",
+                "strict": True,
+                "schema": _board_outline_json_schema(),
+            },
+            "verbosity": "low",
+        },
+    )
+
+
+def _build_homography_prompt(*, width: int, height: int) -> str:
+    return (
+        "Locate the outer boundary of the white rectangular MATE crab board in the image. The board is the laminated "
+        "sheet containing printed crab pictures. Return exactly the four physical board corners in full-image pixel "
+        f"coordinates for this image, width={width}, height={height}. Use the order top_left, top_right, "
+        "bottom_right, bottom_left as the board appears in the image, not as an unrotated document. Ignore the pool "
+        "floor, grate, robot parts, gripper, shadows, glare, screw heads, crab prints, and empty background. Do not "
+        "outline the cluster of crabs; outline the sheet itself. If a corner is rounded, glared, or partly occluded, "
+        "estimate the point where the two outer board edges meet. Prefer a tight board outline over including any "
+        "surrounding water or hardware. This is only a geometric preprocessing step: do not classify crabs and do "
+        "not return crab bounding boxes. If the board is not visible enough to define four corners, set "
+        "board_visible false and still provide your best four-corner estimate with low confidence."
+    )
+
+
+def _board_outline_json_schema() -> dict[str, object]:
+    point_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "x": {"type": "number"},
+            "y": {"type": "number"},
+        },
+        "required": ["x", "y"],
+    }
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "image_width": {"type": "integer"},
+            "image_height": {"type": "integer"},
+            "board_visible": {"type": "boolean"},
+            "confidence": {"type": "number"},
+            "top_left": point_schema,
+            "top_right": point_schema,
+            "bottom_right": point_schema,
+            "bottom_left": point_schema,
+            "notes": {"type": "string"},
+        },
+        "required": [
+            "image_width",
+            "image_height",
+            "board_visible",
+            "confidence",
+            "top_left",
+            "top_right",
+            "bottom_right",
+            "bottom_left",
+            "notes",
+        ],
+    }
 
 
 def _build_prompt(*, width: int, height: int, target_confidence_threshold: float, target_margin_threshold: float) -> str:
@@ -760,6 +1140,55 @@ def _parse_response(
         reasoning_effort=reasoning_effort,
         target_confidence_threshold=target_confidence_threshold,
         target_margin_threshold=target_margin_threshold,
+    )
+
+
+def _parse_board_outline_response(
+    response: Any,
+    *,
+    image_path: Path,
+    image_size: tuple[int, int],
+    model: str,
+    reasoning_effort: str,
+) -> CrabBoardOutlineResult:
+    text = _response_text(response)
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"OpenAI board-outline response was not valid JSON: {text[:500]}") from exc
+    if not isinstance(payload, Mapping):
+        raise RuntimeError("OpenAI board-outline response JSON was not an object.")
+
+    width, height = image_size
+    names = ("top_left", "top_right", "bottom_right", "bottom_left")
+    raw_points: list[tuple[float, float]] = []
+    for name in names:
+        point = payload.get(name)
+        if not isinstance(point, Mapping):
+            raise RuntimeError(f"OpenAI board-outline response missing {name}.")
+        try:
+            x = float(point["x"])
+            y = float(point["y"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError(f"OpenAI board-outline response had invalid {name}.") from exc
+        raw_points.append((max(0.0, min(float(width), x)), max(0.0, min(float(height), y))))
+
+    ordered = _order_quad_points(np.array(raw_points, dtype=np.float32))
+    board_visible = bool(payload.get("board_visible", True))
+    confidence = _clamp01(payload.get("confidence", 0.0))
+    if not board_visible:
+        raise RuntimeError("OpenAI did not find a usable crab board outline in the image.")
+    if confidence < 0.2:
+        raise RuntimeError(f"OpenAI board-outline confidence was too low ({confidence:.2f}).")
+    return CrabBoardOutlineResult(
+        image_path=image_path,
+        image_size=image_size,
+        points=tuple((float(x), float(y)) for x, y in ordered),
+        confidence=confidence,
+        board_visible=board_visible,
+        model=str(model),
+        reasoning_effort=_normalize_reasoning_effort(reasoning_effort),
+        notes=str(payload.get("notes") or ""),
     )
 
 
@@ -902,6 +1331,21 @@ def _clamp_bbox(
         max(0.0, min(float(width), x1)),
         max(0.0, min(float(height), y1)),
     )
+
+
+def _transform_bbox(
+    bbox: Sequence[float],
+    matrix: np.ndarray,
+    image_size: tuple[int, int],
+) -> tuple[float, float, float, float]:
+    x0, y0, x1, y1 = _clamp_bbox(bbox, (10**9, 10**9))
+    corners = np.array([[[x0, y0]], [[x1, y0]], [[x1, y1]], [[x0, y1]]], dtype=np.float32)
+    transformed = cv2.perspectiveTransform(corners, matrix.astype(np.float64)).reshape(-1, 2)
+    min_x = float(np.min(transformed[:, 0]))
+    max_x = float(np.max(transformed[:, 0]))
+    min_y = float(np.min(transformed[:, 1]))
+    max_y = float(np.max(transformed[:, 1]))
+    return _clamp_bbox((min_x, min_y, max_x, max_y), image_size)
 
 
 def _draw_label(

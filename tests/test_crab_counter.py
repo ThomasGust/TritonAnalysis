@@ -7,9 +7,13 @@ import numpy as np
 from triton_analysis.crab.counter import (
     CrabCounterConfig,
     analyze_crab_image,
+    auto_preprocess_crab_target_image,
     benchmark_crab_image,
+    detect_crab_board_homography,
     draw_crab_count_result,
+    preprocess_crab_target_image,
     result_from_payload,
+    transform_crab_count_result,
     write_reference_atlas,
 )
 
@@ -94,6 +98,38 @@ class _FakeResponses:
 class _FakeClient:
     def __init__(self):
         self.responses = _FakeResponses()
+
+
+class _FakeBoardResponses:
+    def __init__(self):
+        self.kwargs = None
+
+    def create(self, **kwargs):
+        self.kwargs = kwargs
+        return type(
+            "FakeBoardResponse",
+            (),
+            {
+                "output_text": json.dumps(
+                    {
+                        "image_width": 220,
+                        "image_height": 140,
+                        "board_visible": True,
+                        "confidence": 0.94,
+                        "top_left": {"x": 25, "y": 18},
+                        "top_right": {"x": 182, "y": 20},
+                        "bottom_right": {"x": 174, "y": 110},
+                        "bottom_left": {"x": 32, "y": 114},
+                        "notes": "clear board outline",
+                    }
+                )
+            },
+        )()
+
+
+class _FakeBoardClient:
+    def __init__(self):
+        self.responses = _FakeBoardResponses()
 
 
 def test_result_from_payload_filters_and_clamps_to_green_crabs(tmp_path: Path):
@@ -276,6 +312,156 @@ def test_write_reference_atlas_writes_preview_image(tmp_path: Path):
     assert atlas is not None
     assert atlas.shape[0] > 100
     assert atlas.shape[1] > 300
+
+
+def test_preprocess_crab_target_image_writes_manual_crop_and_metadata(tmp_path: Path):
+    target = tmp_path / "target.png"
+    _write_image(target, (30, 80, 120), size=(200, 120))
+
+    result = preprocess_crab_target_image(
+        target,
+        tmp_path / "preprocess",
+        mode="manual_crop",
+        crop_rect=(20, 15, 150, 95),
+    )
+
+    assert result.mode == "manual_crop"
+    assert result.processed_image.exists()
+    assert result.metadata_json.exists()
+    cropped = cv2.imread(str(result.processed_image), cv2.IMREAD_COLOR)
+    assert cropped is not None
+    assert cropped.shape[:2] == (80, 130)
+    metadata = json.loads(result.metadata_json.read_text(encoding="utf-8"))
+    assert metadata["crop_bbox"] == [20, 15, 150, 95]
+    assert metadata["source_size"] == [200, 120]
+    assert metadata["output_size"] == [130, 80]
+
+
+def test_transform_crab_count_result_maps_processed_boxes_to_source_coordinates(tmp_path: Path):
+    processed_result = result_from_payload(
+        {
+            "candidates": [
+                {
+                    "label": "european_green_crab",
+                    "bbox": [10, 12, 42, 46],
+                    "confidence": 0.9,
+                    "target_match_confidence": 0.9,
+                    "class_scores": {
+                        "european_green_crab": 0.9,
+                        "native_rock_crab": 0.1,
+                        "jonah_crab": 0.1,
+                    },
+                    "closest_non_target": "native_rock_crab",
+                    "decision_margin": 0.8,
+                    "accepted_as_target": True,
+                    "notes": "",
+                }
+            ],
+            "summary": "One.",
+        },
+        image_path=tmp_path / "processed.png",
+        image_size=(130, 80),
+        model="test-model",
+    )
+
+    source_result = transform_crab_count_result(
+        processed_result,
+        [[1, 0, 20], [0, 1, 15], [0, 0, 1]],
+        source_image_path=tmp_path / "source.png",
+        source_size=(200, 120),
+    )
+
+    assert source_result.image_path == tmp_path / "source.png"
+    assert source_result.image_size == (200, 120)
+    assert source_result.detections[0].bbox == (30.0, 27.0, 62.0, 61.0)
+    assert source_result.candidates[0].bbox == (30.0, 27.0, 62.0, 61.0)
+
+
+def test_preprocess_crab_target_image_writes_manual_homography_and_metadata(tmp_path: Path):
+    target = tmp_path / "target.png"
+    _write_image(target, (30, 80, 120), size=(220, 140))
+
+    result = preprocess_crab_target_image(
+        target,
+        tmp_path / "preprocess",
+        mode="manual_homography",
+        homography_points=((25, 20), (180, 18), (170, 110), (35, 115)),
+    )
+
+    assert result.mode == "manual_homography"
+    assert result.processed_image.exists()
+    assert result.metadata_json.exists()
+    warped = cv2.imread(str(result.processed_image), cv2.IMREAD_COLOR)
+    assert warped is not None
+    assert warped.shape[0] >= 80
+    assert warped.shape[1] >= 130
+    metadata = json.loads(result.metadata_json.read_text(encoding="utf-8"))
+    assert len(metadata["clicked_points"]) == 4
+    assert len(metadata["ordered_points"]) == 4
+    assert len(metadata["source_to_processed_matrix"]) == 3
+    assert len(metadata["processed_to_source_matrix"]) == 3
+
+
+def test_detect_crab_board_homography_uses_fast_outline_prompt_and_schema(tmp_path: Path):
+    target = tmp_path / "target.png"
+    _write_image(target, (30, 80, 120), size=(220, 140))
+    fake_client = _FakeBoardClient()
+
+    result = detect_crab_board_homography(
+        target,
+        model="test-outline-model",
+        reasoning_effort="xhigh",
+        client=fake_client,
+    )
+
+    assert result.image_size == (220, 140)
+    assert result.confidence == 0.94
+    assert result.board_visible is True
+    assert len(result.points) == 4
+    assert result.analysis_seconds >= 0.0
+    kwargs = fake_client.responses.kwargs
+    assert kwargs["model"] == "test-outline-model"
+    assert kwargs["reasoning"] == {"effort": "xhigh"}
+    assert kwargs["prompt_cache_key"] == "triton_analysis_crab_board_homography_v1"
+    content = kwargs["input"][0]["content"]
+    assert "Locate the outer boundary" in content[0]["text"]
+    assert "do not return crab bounding boxes" in content[0]["text"]
+    assert sum(1 for item in content if item["type"] == "input_image") == 1
+    assert kwargs["text"]["format"]["name"] == "crab_board_outline"
+    schema = kwargs["text"]["format"]["schema"]
+    assert "top_left" in schema["properties"]
+    assert "bottom_right" in schema["required"]
+    assert kwargs["text"]["verbosity"] == "low"
+
+
+def test_auto_preprocess_crab_target_image_writes_detected_homography_metadata(tmp_path: Path):
+    target = tmp_path / "target.png"
+    _write_image(target, (30, 80, 120), size=(220, 140))
+    fake_client = _FakeBoardClient()
+
+    result = auto_preprocess_crab_target_image(
+        target,
+        tmp_path / "preprocess",
+        model="test-outline-model",
+        reasoning_effort="xhigh",
+        client=fake_client,
+    )
+
+    assert result.mode == "auto_homography"
+    assert result.processed_image.exists()
+    assert result.metadata_json.exists()
+    assert result.board_confidence == 0.94
+    assert result.board_reasoning_effort == "xhigh"
+    assert len(result.ordered_points) == 4
+    warped = cv2.imread(str(result.processed_image), cv2.IMREAD_COLOR)
+    assert warped is not None
+    assert warped.shape[0] >= 80
+    assert warped.shape[1] >= 130
+    metadata = json.loads(result.metadata_json.read_text(encoding="utf-8"))
+    assert metadata["mode"] == "auto_homography"
+    assert len(metadata["detected_points"]) == 4
+    assert metadata["board_outline"]["confidence"] == 0.94
+    assert metadata["auto_board_detection_seconds"] >= 0.0
 
 
 def test_benchmark_crab_image_runs_each_reasoning_effort_and_writes_summary(tmp_path: Path):

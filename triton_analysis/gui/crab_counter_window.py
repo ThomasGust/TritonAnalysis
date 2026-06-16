@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import os
 import time
+import json
+from dataclasses import replace
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, QRectF, Qt, QThread, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QColor, QDesktopServices, QPainter, QPen, QPixmap
+from PyQt6.QtGui import QBrush, QColor, QDesktopServices, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -29,6 +31,8 @@ from PyQt6.QtWidgets import (
 )
 
 from triton_analysis.crab.counter import (
+    DEFAULT_HOMOGRAPHY_MODEL,
+    DEFAULT_HOMOGRAPHY_REASONING_EFFORT,
     DEFAULT_MODEL,
     DEFAULT_REASONING_EFFORT,
     DEFAULT_TARGET_MARGIN_THRESHOLD,
@@ -41,12 +45,16 @@ from triton_analysis.crab.counter import (
     CrabCountResult,
     CrabCounterConfig,
     CrabCounterOutputs,
+    CrabPreprocessResult,
     analyze_crab_image,
+    auto_preprocess_crab_target_image,
     benchmark_crab_image,
     default_output_dir,
     discover_counter_reference_atlas_paths,
     discover_counter_reference_paths,
     missing_reference_classes,
+    preprocess_crab_target_image,
+    transform_crab_count_result,
     write_reference_atlas,
 )
 from triton_analysis.crab.synthetic import CRAB_CLASS_NAMES, IMAGE_EXTENSIONS
@@ -58,12 +66,18 @@ from triton_analysis.workspace import fresh_output_subdir, latest_pilot_run_dir,
 class CrabCounterPreview(QWidget):
     """Scaled image preview with result boxes painted on top."""
 
+    selectionChanged = pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._pixmap = QPixmap()
         self._image_path: Path | None = None
         self._result: CrabCountResult | None = None
         self._display_mode = "accepted"
+        self._interaction_mode = "none"
+        self._crop_anchor: tuple[float, float] | None = None
+        self._crop_rect: tuple[float, float, float, float] | None = None
+        self._homography_points: list[tuple[float, float]] = []
         self.setMinimumSize(360, 280)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
@@ -71,6 +85,7 @@ class CrabCounterPreview(QWidget):
         self._image_path = Path(path).expanduser() if path else None
         self._pixmap = QPixmap(str(self._image_path)) if self._image_path else QPixmap()
         self._result = None
+        self.clear_selection()
         self.update()
 
     def set_result(self, result: CrabCountResult | None, annotated_image: str | Path | None = None) -> None:
@@ -82,6 +97,39 @@ class CrabCounterPreview(QWidget):
 
     def set_display_mode(self, mode: str) -> None:
         self._display_mode = "all" if mode == "all" else "accepted"
+        self.update()
+
+    def set_interaction_mode(self, mode: str) -> None:
+        self._interaction_mode = mode if mode in {"crop", "homography"} else "none"
+        cursor = Qt.CursorShape.CrossCursor if self._interaction_mode != "none" else Qt.CursorShape.ArrowCursor
+        self.setCursor(cursor)
+        self.update()
+
+    def clear_selection(self) -> None:
+        self._crop_anchor = None
+        self._crop_rect = None
+        self._homography_points = []
+        self.selectionChanged.emit()
+        self.update()
+
+    def crop_rect(self) -> tuple[float, float, float, float] | None:
+        return self._crop_rect
+
+    def homography_points(self) -> tuple[tuple[float, float], ...]:
+        return tuple(self._homography_points)
+
+    def set_homography_points(self, points: object) -> None:
+        parsed: list[tuple[float, float]] = []
+        if isinstance(points, (list, tuple)):
+            for raw in points[:4]:
+                try:
+                    x = float(raw[0])
+                    y = float(raw[1])
+                except (TypeError, ValueError, IndexError):
+                    continue
+                parsed.append((x, y))
+        self._homography_points = parsed[:4]
+        self.selectionChanged.emit()
         self.update()
 
     def paintEvent(self, event) -> None:
@@ -96,6 +144,7 @@ class CrabCounterPreview(QWidget):
         image_rect = self._image_rect()
         painter.drawPixmap(image_rect, self._pixmap, QRectF(self._pixmap.rect()))
         if self._result is None:
+            self._draw_selection(painter, image_rect)
             return
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         scale_x = image_rect.width() / max(1, self._result.image_size[0])
@@ -119,6 +168,52 @@ class CrabCounterPreview(QWidget):
             painter.fillRect(text_rect.adjusted(-2, -1, 2, 1), QColor(0, 0, 0, 170))
             painter.setPen(color)
             painter.drawText(text_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
+        self._draw_selection(painter, image_rect)
+
+    def mousePressEvent(self, event) -> None:
+        if self._pixmap.isNull():
+            return
+        point = self._widget_to_image_point(event.position())
+        if point is None:
+            return
+        if self._interaction_mode == "crop" and event.button() == Qt.MouseButton.LeftButton:
+            self._crop_anchor = point
+            self._crop_rect = (point[0], point[1], point[0], point[1])
+            self.selectionChanged.emit()
+            self.update()
+            return
+        if self._interaction_mode == "homography":
+            if event.button() == Qt.MouseButton.LeftButton:
+                if len(self._homography_points) >= 4:
+                    self._homography_points = []
+                self._homography_points.append(point)
+                self.selectionChanged.emit()
+                self.update()
+                return
+            if event.button() == Qt.MouseButton.RightButton and self._homography_points:
+                self._homography_points.pop()
+                self.selectionChanged.emit()
+                self.update()
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._interaction_mode != "crop" or self._crop_anchor is None:
+            return
+        point = self._widget_to_image_point(event.position())
+        if point is None:
+            return
+        self._crop_rect = self._normalized_rect((*self._crop_anchor, point[0], point[1]))
+        self.selectionChanged.emit()
+        self.update()
+
+    def mouseReleaseEvent(self, event) -> None:
+        if self._interaction_mode != "crop" or self._crop_anchor is None or event.button() != Qt.MouseButton.LeftButton:
+            return
+        point = self._widget_to_image_point(event.position())
+        if point is not None:
+            self._crop_rect = self._normalized_rect((*self._crop_anchor, point[0], point[1]))
+        self._crop_anchor = None
+        self.selectionChanged.emit()
+        self.update()
 
     def _image_rect(self) -> QRectF:
         margin = 10.0
@@ -135,6 +230,68 @@ class CrabCounterPreview(QWidget):
             width,
             height,
         )
+
+    def _widget_to_image_point(self, point) -> tuple[float, float] | None:
+        image_rect = self._image_rect()
+        if not image_rect.contains(point):
+            return None
+        x = (point.x() - image_rect.left()) / max(1.0, image_rect.width()) * max(1, self._pixmap.width())
+        y = (point.y() - image_rect.top()) / max(1.0, image_rect.height()) * max(1, self._pixmap.height())
+        return (
+            max(0.0, min(float(self._pixmap.width()), float(x))),
+            max(0.0, min(float(self._pixmap.height()), float(y))),
+        )
+
+    def _image_to_widget_point(self, point: tuple[float, float], image_rect: QRectF) -> tuple[float, float]:
+        scale_x = image_rect.width() / max(1, self._pixmap.width())
+        scale_y = image_rect.height() / max(1, self._pixmap.height())
+        return (image_rect.left() + point[0] * scale_x, image_rect.top() + point[1] * scale_y)
+
+    def _image_to_widget_rect(
+        self,
+        rect: tuple[float, float, float, float],
+        image_rect: QRectF,
+    ) -> QRectF:
+        x0, y0, x1, y1 = self._normalized_rect(rect)
+        p0 = self._image_to_widget_point((x0, y0), image_rect)
+        p1 = self._image_to_widget_point((x1, y1), image_rect)
+        return QRectF(p0[0], p0[1], max(1.0, p1[0] - p0[0]), max(1.0, p1[1] - p0[1]))
+
+    def _normalized_rect(self, rect: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+        x0, y0, x1, y1 = rect
+        return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+
+    def _draw_selection(self, painter: QPainter, image_rect: QRectF) -> None:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        if self._crop_rect is not None:
+            rect = self._image_to_widget_rect(self._crop_rect, image_rect)
+            painter.setPen(QPen(QColor(255, 255, 255), 5.0))
+            painter.drawRect(rect)
+            painter.setPen(QPen(QColor(50, 190, 255), 2.5))
+            painter.drawRect(rect)
+        if self._homography_points:
+            widget_points = [self._image_to_widget_point(point, image_rect) for point in self._homography_points]
+            painter.setPen(QPen(QColor(0, 0, 0), 5.0))
+            for first, second in zip(widget_points, widget_points[1:]):
+                painter.drawLine(int(round(first[0])), int(round(first[1])), int(round(second[0])), int(round(second[1])))
+            if len(widget_points) == 4:
+                first, last = widget_points[0], widget_points[-1]
+                painter.drawLine(int(round(last[0])), int(round(last[1])), int(round(first[0])), int(round(first[1])))
+            painter.setPen(QPen(QColor(255, 220, 70), 2.5))
+            for first, second in zip(widget_points, widget_points[1:]):
+                painter.drawLine(int(round(first[0])), int(round(first[1])), int(round(second[0])), int(round(second[1])))
+            if len(widget_points) == 4:
+                first, last = widget_points[0], widget_points[-1]
+                painter.drawLine(int(round(last[0])), int(round(last[1])), int(round(first[0])), int(round(first[1])))
+            painter.setBrush(QBrush(QColor(255, 220, 70)))
+            for index, point in enumerate(widget_points, start=1):
+                center = QRectF(point[0] - 6, point[1] - 6, 12, 12)
+                painter.setPen(QPen(QColor(0, 0, 0), 4.0))
+                painter.drawEllipse(center)
+                painter.setPen(QPen(QColor(255, 220, 70), 2.0))
+                painter.drawEllipse(center)
+                painter.setPen(QColor(255, 255, 255))
+                painter.drawText(QRectF(point[0] + 8, point[1] - 14, 24, 20), Qt.AlignmentFlag.AlignLeft, str(index))
 
     def _candidate_color(self, detection) -> QColor:
         if detection.label == TARGET_CLASS:
@@ -163,22 +320,63 @@ class CrabCounterWorker(QObject):
     progress = pyqtSignal(object)
     finished = pyqtSignal(object)
 
-    def __init__(self, config: CrabCounterConfig, *, benchmark: bool = False):
+    def __init__(
+        self,
+        config: CrabCounterConfig,
+        *,
+        benchmark: bool = False,
+        preprocess_mode: str = "none",
+        preprocess_output_dir: Path | None = None,
+        homography_model: str = DEFAULT_HOMOGRAPHY_MODEL,
+        homography_effort: str = DEFAULT_HOMOGRAPHY_REASONING_EFFORT,
+    ):
         super().__init__()
         self._config = config
         self._benchmark = benchmark
+        self._preprocess_mode = preprocess_mode
+        self._preprocess_output_dir = preprocess_output_dir
+        self._homography_model = homography_model
+        self._homography_effort = homography_effort
 
     def run(self) -> None:
+        preprocess_result: CrabPreprocessResult | None = None
         try:
+            config = self._config
+            if self._preprocess_mode == "auto_homography":
+                output_dir = self._preprocess_output_dir or (Path(config.output_dir).expanduser() / "preprocess")
+                self.progress.emit({"event": "auto_homography_started", "effort": self._homography_effort})
+                preprocess_result = auto_preprocess_crab_target_image(
+                    config.image_path,
+                    output_dir,
+                    model=self._homography_model,
+                    reasoning_effort=self._homography_effort,
+                )
+                self.progress.emit(
+                    {
+                        "event": "auto_homography_finished",
+                        "points": preprocess_result.ordered_points or preprocess_result.selection_points,
+                        "confidence": preprocess_result.board_confidence,
+                        "seconds": preprocess_result.board_detection_seconds,
+                        "processed_image": str(preprocess_result.processed_image),
+                    }
+                )
+                config = replace(config, image_path=preprocess_result.processed_image)
             if self._benchmark:
-                outputs = benchmark_crab_image(self._config, progress_callback=self.progress.emit)
+                outputs = benchmark_crab_image(config, progress_callback=self.progress.emit)
             else:
-                self.progress.emit({"event": "request_started", "effort": self._config.reasoning_effort})
-                outputs = analyze_crab_image(self._config)
+                self.progress.emit({"event": "request_started", "effort": config.reasoning_effort})
+                outputs = analyze_crab_image(config)
         except Exception as exc:  # pragma: no cover - surfaced in GUI
             self.finished.emit({"ok": False, "error": str(exc)})
             return
-        self.finished.emit({"ok": True, "outputs": outputs, "benchmark": self._benchmark})
+        self.finished.emit(
+            {
+                "ok": True,
+                "outputs": outputs,
+                "benchmark": self._benchmark,
+                "preprocess_result": preprocess_result,
+            }
+        )
 
 
 class CrabCounterWindow(QMainWindow):
@@ -198,6 +396,7 @@ class CrabCounterWindow(QMainWindow):
         self._analysis_worker: CrabCounterWorker | None = None
         self._last_outputs: CrabCounterOutputs | None = None
         self._last_benchmark_outputs: CrabBenchmarkOutputs | None = None
+        self._last_preprocess_result: CrabPreprocessResult | None = None
         self._last_output_dir: Path | None = None
         self._run_started_at = 0.0
         self._run_base_status = ""
@@ -206,12 +405,21 @@ class CrabCounterWindow(QMainWindow):
         self._run_timer.timeout.connect(self._update_running_status)
 
         self.preview = CrabCounterPreview()
+        self.preview.selectionChanged.connect(self._update_preprocess_status)
         self.preview_tabs = QTabBar()
         self.preview_tabs.addTab("European Green")
         self.preview_tabs.addTab("All Candidates")
         self.preview_tabs.currentChanged.connect(self._preview_tab_changed)
         self.target_edit = QLineEdit(str(Path(image_path).expanduser()) if image_path else "")
         self.target_edit.editingFinished.connect(self._load_target_preview)
+        self.preprocess_mode_combo = QComboBox()
+        self.preprocess_mode_combo.addItem("Auto Homography", "auto_homography")
+        self.preprocess_mode_combo.addItem("Full Frame (Legacy)", "none")
+        self.preprocess_mode_combo.addItem("Manual Crop (Legacy)", "manual_crop")
+        self.preprocess_mode_combo.addItem("Manual Homography (Legacy)", "manual_homography")
+        self.preprocess_mode_combo.currentIndexChanged.connect(self._preprocess_mode_changed)
+        self.preprocess_status_label = QLabel("OpenAI will locate and rectify the board before classification.")
+        self.preprocess_status_label.setWordWrap(True)
         self.model_edit = QLineEdit(DEFAULT_MODEL)
         self.reasoning_effort_combo = QComboBox()
         self.reasoning_effort_combo.addItems(REASONING_EFFORTS)
@@ -250,6 +458,9 @@ class CrabCounterWindow(QMainWindow):
         self.open_annotated_btn = QPushButton("Open Annotated")
         self.open_annotated_btn.clicked.connect(self._open_annotated_image)
         self.open_annotated_btn.setEnabled(False)
+        self.open_preprocessed_btn = QPushButton("Open Input")
+        self.open_preprocessed_btn.clicked.connect(self._open_preprocessed_image)
+        self.open_preprocessed_btn.setEnabled(False)
 
         central = QWidget()
         root_layout = QVBoxLayout(central)
@@ -301,6 +512,21 @@ class CrabCounterWindow(QMainWindow):
         layout.addWidget(QLabel("Target Image"))
         layout.addWidget(self.target_edit)
         layout.addLayout(target_row)
+
+        preprocess_form = QFormLayout()
+        preprocess_form.addRow("Preprocess", self.preprocess_mode_combo)
+        layout.addLayout(preprocess_form)
+        preprocess_row = QHBoxLayout()
+        clear_preprocess_btn = QPushButton("Clear Selection")
+        clear_preprocess_btn.clicked.connect(self._clear_preprocess_selection)
+        preview_preprocess_btn = QPushButton("Preview Input")
+        preview_preprocess_btn.clicked.connect(self._preview_preprocessed_target)
+        preprocess_row.addWidget(clear_preprocess_btn)
+        preprocess_row.addWidget(preview_preprocess_btn)
+        preprocess_row.addWidget(self.open_preprocessed_btn)
+        preprocess_row.addStretch(1)
+        layout.addLayout(preprocess_row)
+        layout.addWidget(self.preprocess_status_label)
 
         reference_form = QFormLayout()
         for class_name in CRAB_CLASS_NAMES:
@@ -435,6 +661,95 @@ class CrabCounterWindow(QMainWindow):
         dialog.resize(min(980, max(520, pixmap.width() + 48)), min(680, max(360, pixmap.height() + 72)))
         dialog.exec()
 
+    def _current_preprocess_mode(self) -> str:
+        return str(self.preprocess_mode_combo.currentData() or "none")
+
+    def _preprocess_mode_changed(self) -> None:
+        mode = self._current_preprocess_mode()
+        if mode == "manual_crop":
+            self.preview.set_interaction_mode("crop")
+        elif mode == "manual_homography":
+            self.preview.set_interaction_mode("homography")
+        else:
+            self.preview.set_interaction_mode("none")
+        self._update_preprocess_status()
+
+    def _clear_preprocess_selection(self) -> None:
+        self.preview.clear_selection()
+        self._update_preprocess_status()
+
+    def _update_preprocess_status(self) -> None:
+        mode = self._current_preprocess_mode()
+        if mode == "manual_crop":
+            crop_rect = self.preview.crop_rect()
+            if crop_rect is None:
+                self.preprocess_status_label.setText("Drag a rectangle on the image to crop before analysis.")
+                return
+            x0, y0, x1, y1 = crop_rect
+            self.preprocess_status_label.setText(
+                f"Manual crop: [{x0:.0f}, {y0:.0f}, {x1:.0f}, {y1:.0f}] "
+                f"({max(0.0, x1 - x0):.0f} x {max(0.0, y1 - y0):.0f}px)."
+            )
+            return
+        if mode == "manual_homography":
+            point_count = len(self.preview.homography_points())
+            self.preprocess_status_label.setText(
+                f"Click four board corners for homography ({point_count}/4). Right-click removes the last point."
+            )
+            return
+        if mode == "auto_homography":
+            details = ""
+            if self._last_preprocess_result and self._last_preprocess_result.mode == "auto_homography":
+                confidence = self._last_preprocess_result.board_confidence
+                if confidence is not None:
+                    details = f" Last outline confidence {confidence:.2f}."
+            self.preprocess_status_label.setText(
+                "Auto homography: OpenAI will choose the board corners, draw them here, "
+                f"and send a rectified board image to classification.{details}"
+            )
+            return
+        self.preprocess_status_label.setText("Full frame will be sent.")
+
+    def _preview_preprocessed_target(self) -> None:
+        image_path = Path(self.target_edit.text().strip()).expanduser()
+        if not image_path.is_file():
+            self.status_label.setText("Choose a target image first.")
+            return
+        mode = self._current_preprocess_mode()
+        if mode == "none":
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(image_path)))
+            return
+        if mode == "auto_homography":
+            if self._last_preprocess_result and self._last_preprocess_result.mode == "auto_homography":
+                self._open_preprocessed_image()
+                return
+            self.status_label.setText("Auto homography runs during Analyze/Benchmark. Use Open Input after the outline response.")
+            return
+        try:
+            preview_dir = Path(self.output_root_edit.text().strip()).expanduser() / "preprocess_preview"
+            result = self._preprocess_target_image(image_path, preview_dir)
+        except Exception as exc:
+            self.status_label.setText(f"Could not preprocess target image: {exc}")
+            return
+        self._set_preprocess_result(result)
+        self.status_label.setText(f"Wrote {result.mode} preview: {result.processed_image}")
+        self.statusBar().showMessage(f"Preprocessed target: {result.processed_image}", 8000)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(result.processed_image)))
+
+    def _preprocess_target_image(self, image_path: Path, output_dir: Path) -> CrabPreprocessResult:
+        mode = self._current_preprocess_mode()
+        if mode == "manual_crop":
+            crop_rect = self.preview.crop_rect()
+            if crop_rect is None:
+                raise ValueError("drag a crop rectangle first")
+            return preprocess_crab_target_image(image_path, output_dir, mode=mode, crop_rect=crop_rect)
+        if mode == "manual_homography":
+            points = self.preview.homography_points()
+            if len(points) != 4:
+                raise ValueError("click four board corners first")
+            return preprocess_crab_target_image(image_path, output_dir, mode=mode, homography_points=points)
+        raise ValueError(f"unsupported preprocessing mode: {mode}")
+
     def _target_start_dir(self) -> Path:
         text = self.target_edit.text().strip()
         if text:
@@ -467,6 +782,8 @@ class CrabCounterWindow(QMainWindow):
     def _load_target_preview(self) -> None:
         text = self.target_edit.text().strip()
         path = Path(text).expanduser() if text else None
+        self._last_preprocess_result = None
+        self.open_preprocessed_btn.setEnabled(False)
         if path and path.is_file():
             self.preview.set_image(path)
             self.statusBar().showMessage(f"Loaded target image: {path.name}", 4000)
@@ -499,8 +816,24 @@ class CrabCounterWindow(QMainWindow):
         output_root = Path(self.output_root_edit.text().strip()).expanduser()
         output_prefix = "crab_benchmark" if benchmark else "crab_counter"
         output_dir = fresh_output_subdir(output_root, output_prefix, create=True)
+        analysis_image_path = image_path
+        preprocess_mode = self._current_preprocess_mode()
+        worker_preprocess_mode = "none"
+        self._last_preprocess_result = None
+        self.open_preprocessed_btn.setEnabled(False)
+        if preprocess_mode != "none":
+            if preprocess_mode == "auto_homography":
+                worker_preprocess_mode = "auto_homography"
+            else:
+                try:
+                    preprocess_result = self._preprocess_target_image(image_path, output_dir / "preprocess")
+                except Exception as exc:
+                    self.status_label.setText(f"Could not preprocess target image: {exc}")
+                    return
+                self._set_preprocess_result(preprocess_result)
+                analysis_image_path = preprocess_result.processed_image
         config = CrabCounterConfig(
-            image_path=image_path,
+            image_path=analysis_image_path,
             reference_paths={name: path for name, path in references.items() if path is not None},
             output_dir=output_dir,
             model=self.model_edit.text().strip() or DEFAULT_MODEL,
@@ -518,13 +851,15 @@ class CrabCounterWindow(QMainWindow):
         self.detection_list.clear()
         if benchmark:
             efforts = ", ".join(REASONING_EFFORTS)
-            self._set_running_status(f"Benchmarking {image_path.name} with {config.model}: {efforts}...")
+            prep = f" via {preprocess_mode}" if preprocess_mode != "none" else ""
+            self._set_running_status(f"Benchmarking {image_path.name}{prep} with {config.model}: {efforts}...")
             self.progress_bar.setRange(0, len(REASONING_EFFORTS))
             self.progress_bar.setValue(0)
             self.progress_bar.setFormat("0/%m efforts")
         else:
+            prep = f" via {preprocess_mode}" if preprocess_mode != "none" else ""
             self._set_running_status(
-                f"Analyzing {image_path.name} with {config.model} ({config.reasoning_effort} effort)..."
+                f"Analyzing {image_path.name}{prep} with {config.model} ({config.reasoning_effort} effort)..."
             )
             self.progress_bar.setRange(0, 0)
             self.progress_bar.setFormat("Working")
@@ -533,7 +868,14 @@ class CrabCounterWindow(QMainWindow):
         self.benchmark_btn.setEnabled(False)
         self._start_run_timer()
 
-        worker = CrabCounterWorker(config, benchmark=benchmark)
+        worker = CrabCounterWorker(
+            config,
+            benchmark=benchmark,
+            preprocess_mode=worker_preprocess_mode,
+            preprocess_output_dir=output_dir / "preprocess",
+            homography_model=DEFAULT_HOMOGRAPHY_MODEL,
+            homography_effort=DEFAULT_HOMOGRAPHY_REASONING_EFFORT,
+        )
         thread = QThread(self)
         self._analysis_worker = worker
         self._analysis_thread = thread
@@ -560,6 +902,9 @@ class CrabCounterWindow(QMainWindow):
             self.statusBar().showMessage(message, 8000)
             return
         outputs = data.get("outputs")
+        preprocess_result = data.get("preprocess_result")
+        if isinstance(preprocess_result, CrabPreprocessResult):
+            self._set_preprocess_result(preprocess_result)
         if isinstance(outputs, CrabBenchmarkOutputs):
             self._finish_benchmark(outputs)
             return
@@ -569,13 +914,16 @@ class CrabCounterWindow(QMainWindow):
         self._last_outputs = outputs
         self._last_output_dir = outputs.output_dir
         result = outputs.result
+        display_result = self._preview_result_for_current_run(result)
         self.count_label.setText(f"Count: {result.count}")
+        mapping_note = " Preview boxes are mapped back to the original frame." if self._last_preprocess_result else ""
         self.status_label.setText(
             f"Accepted {result.count} of {len(result.candidates)} crab candidate(s) in {result.analysis_seconds:.1f}s. "
             f"Wrote {outputs.annotated_image.name} and {outputs.result_json.name} under {outputs.output_dir}."
+            f"{mapping_note}"
         )
-        self._populate_detection_list(result)
-        self.preview.set_result(result)
+        self._populate_detection_list(display_result)
+        self.preview.set_result(display_result)
         self.open_output_btn.setEnabled(True)
         self.open_annotated_btn.setEnabled(True)
         self.progress_bar.setVisible(False)
@@ -587,6 +935,7 @@ class CrabCounterWindow(QMainWindow):
         selected = self._benchmark_selected_run(outputs)
         self._last_outputs = selected
         result = selected.result
+        display_result = self._preview_result_for_current_run(result)
         self.count_label.setText(f"Count: {result.count}")
         self.status_label.setText(
             f"Benchmark complete. Wrote {outputs.summary_csv.name} and {outputs.summary_json.name} under {outputs.output_dir}."
@@ -598,11 +947,19 @@ class CrabCounterWindow(QMainWindow):
                 f"{run_result.reasoning_effort}: {run_result.count}/{len(run_result.candidates)} "
                 f"candidate(s) accepted in {run_result.analysis_seconds:.1f}s"
             )
-        self.preview.set_result(result)
+        self.preview.set_result(display_result)
         self.open_output_btn.setEnabled(True)
         self.open_annotated_btn.setEnabled(True)
         self.progress_bar.setVisible(False)
         self.statusBar().showMessage(f"Benchmark complete: {outputs.output_dir}", 8000)
+
+    def _set_preprocess_result(self, result: CrabPreprocessResult) -> None:
+        self._last_preprocess_result = result
+        self.open_preprocessed_btn.setEnabled(True)
+        points = result.ordered_points or result.selection_points
+        if points:
+            self.preview.set_homography_points(points)
+        self._update_preprocess_status()
 
     def _benchmark_selected_run(self, outputs: CrabBenchmarkOutputs) -> CrabCounterOutputs:
         preferred = self.reasoning_effort_combo.currentText()
@@ -610,6 +967,26 @@ class CrabCounterWindow(QMainWindow):
             if run.result.reasoning_effort == preferred:
                 return run
         return outputs.runs[-1]
+
+    def _preview_result_for_current_run(self, result: CrabCountResult) -> CrabCountResult:
+        preprocess_result = self._last_preprocess_result
+        if preprocess_result is None:
+            return result
+        try:
+            metadata = json.loads(preprocess_result.metadata_json.read_text(encoding="utf-8"))
+            matrix = metadata["processed_to_source_matrix"]
+            source_size_values = metadata["source_size"]
+            source_size = (int(source_size_values[0]), int(source_size_values[1]))
+            source_image = metadata.get("source_image") or preprocess_result.source_image
+            return transform_crab_count_result(
+                result,
+                matrix,
+                source_image_path=source_image,
+                source_size=source_size,
+            )
+        except Exception as exc:
+            self.statusBar().showMessage(f"Could not map boxes to original frame: {exc}", 8000)
+            return result
 
     def _populate_detection_list(self, result: CrabCountResult) -> None:
         self.detection_list.clear()
@@ -627,6 +1004,24 @@ class CrabCounterWindow(QMainWindow):
     def _handle_worker_progress(self, payload: object) -> None:
         data = payload if isinstance(payload, dict) else {}
         event = str(data.get("event") or "")
+        if event == "auto_homography_started":
+            effort = str(data.get("effort") or DEFAULT_HOMOGRAPHY_REASONING_EFFORT)
+            self.progress_bar.setRange(0, 0)
+            self.progress_bar.setFormat("Finding board")
+            self._set_running_status(f"Locating board corners with OpenAI ({effort} effort)...")
+            return
+        if event == "auto_homography_finished":
+            points = data.get("points")
+            self.preview.set_homography_points(points)
+            confidence = data.get("confidence")
+            seconds = float(data.get("seconds") or 0.0)
+            confidence_text = f"{float(confidence):.2f}" if confidence is not None else "unknown"
+            self.progress_bar.setRange(0, 0)
+            self.progress_bar.setFormat("Classifying")
+            self._set_running_status(
+                f"Board outline found in {seconds:.1f}s (confidence {confidence_text}). Sending rectified board to classifier..."
+            )
+            return
         if event == "request_started":
             effort = str(data.get("effort") or self.reasoning_effort_combo.currentText())
             self._set_running_status(f"OpenAI request sent ({effort} effort). Waiting for model response...")
@@ -694,3 +1089,8 @@ class CrabCounterWindow(QMainWindow):
         if self._last_outputs is None:
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._last_outputs.annotated_image)))
+
+    def _open_preprocessed_image(self) -> None:
+        if self._last_preprocess_result is None:
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._last_preprocess_result.processed_image)))
