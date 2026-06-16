@@ -26,6 +26,7 @@ from triton_analysis.gui.file_dialogs import ThumbnailFileDialog as QFileDialog
 
 from triton_analysis.workspace import AnalysisWorkspace, set_active_workspace_root, workspace_paths
 from triton_analysis.gui.edna_analysis_window import EDNAAnalysisWindow
+from triton_analysis.gui.crab_counter_window import CrabCounterWindow
 from triton_analysis.gui.crab_dataset_generator_window import CrabDatasetGeneratorWindow
 from triton_analysis.gui.iceberg_measurement_window import IcebergMeasurementWindow
 from triton_analysis.gui.iceberg_tracking_window import IcebergTrackingWindow
@@ -68,6 +69,7 @@ class TritonAnalysisWindow(QMainWindow):
         "stereo-iceberg-length",
         "iceberg-tracking",
         "edna-analysis",
+        "crab-counter",
         "crab-dataset",
         "stereo-calibration",
         "backup-coral-measurement",
@@ -165,6 +167,7 @@ class TritonAnalysisWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(False)
         self.tabs.setMovable(True)
+        self.tabs.setElideMode(Qt.TextElideMode.ElideRight)
         self.tabs.setUsesScrollButtons(True)
         central_layout.addWidget(self.tabs, 1)
         self.setCentralWidget(central)
@@ -201,6 +204,14 @@ class TritonAnalysisWindow(QMainWindow):
             "eDNA Analysis",
             EDNAAnalysisWindow(
                 use_sample=use_sample_edna,
+                parent=self,
+            ),
+        )
+        self._add_window(
+            "crab-counter",
+            "Crab Counter",
+            CrabCounterWindow(
+                workspace_root=self._workspace.root,
                 parent=self,
             ),
         )
@@ -249,7 +260,9 @@ class TritonAnalysisWindow(QMainWindow):
             "iceberg-measurement": "stereo-iceberg-length",
             "iceberg-length": "stereo-iceberg-length",
             "edna": "edna-analysis",
-            "crab": "crab-dataset",
+            "crab": "crab-counter",
+            "crab-count": "crab-counter",
+            "crab-counter-openai": "crab-counter",
             "crab-dataset-generator": "crab-dataset",
             "backup-coral": "backup-coral-measurement",
             "multi-rect": "backup-coral-measurement",

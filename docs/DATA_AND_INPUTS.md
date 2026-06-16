@@ -64,6 +64,7 @@ Workspace/
   calibrations/           stereo_calibration.json and related artifacts
   results/
     coral_garden/
+    crab_counter/
     realityscan/
     color_correction/
   reports/
@@ -133,6 +134,12 @@ Coral garden:
 eDNA:
 
 - Species counts
+
+Crab counter:
+
+- Target crab-board image
+- European green crab, native rock crab, and Jonah crab reference images
+- OpenAI API key in `OPENAI_API_KEY`
 
 Color correction:
 

@@ -1,5 +1,14 @@
 """Crab vision helpers for the MATE ROV invasive species task."""
 
+from triton_analysis.crab.counter import (
+    CrabCountResult,
+    CrabCounterConfig,
+    CrabCounterOutputs,
+    CrabDetection,
+    analyze_crab_image,
+    discover_counter_reference_paths,
+    draw_crab_count_result,
+)
 from triton_analysis.crab.synthetic import (
     CRAB_CLASS_NAMES,
     SyntheticDatasetConfig,
@@ -20,12 +29,19 @@ from triton_analysis.crab.plane_dataset import (
 __all__ = [
     "BoardPlaneAnnotation",
     "CRAB_CLASS_NAMES",
+    "CrabCountResult",
+    "CrabCounterConfig",
+    "CrabCounterOutputs",
+    "CrabDetection",
     "PlaneProjectedDatasetConfig",
     "SyntheticDatasetConfig",
     "SyntheticDatasetResult",
+    "analyze_crab_image",
     "discover_background_media",
     "discover_board_images",
+    "discover_counter_reference_paths",
     "discover_default_crab_template_paths",
+    "draw_crab_count_result",
     "generate_plane_projected_dataset",
     "generate_synthetic_dataset",
     "load_board_plane_annotations",

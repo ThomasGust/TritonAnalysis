@@ -20,6 +20,7 @@ TAB_CHOICES = (
     "stereo-iceberg-length",
     "iceberg-tracking",
     "edna-analysis",
+    "crab-counter",
     "crab-dataset",
     "stereo-calibration",
     "backup-coral-measurement",
@@ -28,6 +29,7 @@ TAB_CHOICES = (
     "iceberg-measurement",
     "edna",
     "crab",
+    "crab-count",
     "terminal",
 )
 

@@ -18,6 +18,7 @@ The base dependency list is in `requirements.txt`:
 - `matplotlib`
 - `numpy`
 - `opencv-python`
+- `openai` for the Crab Counter tab
 - `paramiko` for the embedded SSH console
 - `scipy`
 
@@ -34,7 +35,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\setup_windows.ps1
 
 The setup script creates or reuses `.\.venv`, installs
 `requirements-windows.txt`, and verifies that the SSH console can import
-`paramiko` and see the default Triton Pi preset.
+`paramiko`, that the Crab Counter can import the OpenAI SDK, and that the
+default Triton Pi preset is available.
 
 Manual equivalent:
 
@@ -96,6 +98,7 @@ These commands should at least open the GUI on a properly configured desktop:
 python -m triton_analysis.apps.main_iceberg_tracking
 python -m triton_analysis.apps.main_coral_garden_model
 python -m triton_analysis.apps.main_edna_analysis --sample
+python -m triton_analysis.apps.main_crab_counter
 python -m triton_analysis.apps.main_iceberg_measurement
 python -m triton_analysis.apps.main_planar_height_measurement
 python -m triton_analysis.apps.main_multi_rect_length_measurement

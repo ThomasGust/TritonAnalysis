@@ -27,6 +27,7 @@ applets, and task-focused analysis modules:
 - Stereo segment measurement presets for generic, iceberg, and coral lengths
 - RealityScan stereo photogrammetry reconstruction wrapper
 - Three.js OBJ viewport and distance measurement for reconstructed models
+- OpenAI-assisted European green crab counter for saved board images
 - Embedded SSH console for analysis-link shell access during field setup
 
 Each applet can be launched directly with `python -m ...` from the repository
@@ -48,6 +49,7 @@ triton_analysis/apps/main_stereo_segment_measurement.py     Stereo segment measu
 triton_analysis/apps/main_stereo_iceberg_measurement.py     Iceberg preset shortcut
 triton_analysis/apps/main_realityscan_reconstruction.py     Stereo RealityScan reconstruction GUI
 triton_analysis/apps/main_realityscan_model_viewer.py       Three.js OBJ measurement viewer
+triton_analysis/apps/main_crab_counter.py                   European green crab counting GUI
 triton_analysis/apps/color_corr.py                          Underwater correction/frame-export GUI
 triton_analysis/sync/pilot_transfer.py                      Pull-only TritonPilot media sync helper
 triton_analysis/iceberg/tracking.py                    Coordinate/threat-assessment logic
@@ -115,8 +117,8 @@ python -m triton_analysis.apps.main_triton_analysis --workspace D:\TritonAnalysi
 ```
 
 The unified window opens with Coral Reconstruction, Stereo Iceberg Length,
-Iceberg Tracking, eDNA Analysis, Stereo Calibration, Backup Coral Measurement,
-Backup Iceberg Measurement, and SSH. The standalone applets below remain
+Iceberg Tracking, eDNA Analysis, Crab Counter, Crab Dataset, Stereo Calibration,
+Backup Coral Measurement, Backup Iceberg Measurement, and SSH. The standalone applets below remain
 available as backups.
 The status bar includes automatic TritonPilot media sync status and the active
 destination folder.
@@ -146,6 +148,18 @@ eDNA frequency analysis applet:
 python -m triton_analysis.apps.main_edna_analysis
 python -m triton_analysis.apps.main_edna_analysis --sample
 ```
+
+European green crab counter:
+
+```powershell
+$env:OPENAI_API_KEY="sk-..."
+python -m triton_analysis.apps.main_crab_counter path\to\arm_camera_snapshot.png
+python -m triton_analysis.apps.main_triton_analysis --tab crab
+```
+
+The crab counter auto-fills the three MATE crab reference images when they are
+available in `Downloads` or `Workspace\data\real crabs`, then writes JSON and an
+annotated image under `Workspace\results\crab_counter`.
 
 Measurement applets:
 

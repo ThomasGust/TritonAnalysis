@@ -25,6 +25,8 @@ Tabs:
 - Stereo Iceberg Length
 - Iceberg Tracking
 - eDNA Analysis
+- Crab Counter
+- Crab Dataset
 - Stereo Calibration
 - Backup Coral Measurement
 - Backup Iceberg Measurement
@@ -75,6 +77,45 @@ Setup notes:
 - The shared Triton Pi credential is intentionally stored as a default preset
   for field convenience.
 - Does not require the Windows OpenSSH client executable to be installed.
+
+## Crab Counter
+
+Launch:
+
+```powershell
+python -m triton_analysis.apps.main_triton_analysis --tab crab
+python -m triton_analysis.apps.main_crab_counter path\to\arm_camera_snapshot.png
+```
+
+Purpose:
+
+- Count European green crabs in a saved MATE crab-board image.
+- Use the three fixed crab reference images as OpenAI vision context.
+- Export both machine-readable JSON and a boxed image for review.
+
+Primary modules:
+
+- `triton_analysis/apps/main_crab_counter.py`
+- `triton_analysis/gui/crab_counter_window.py`
+- `triton_analysis/crab/counter.py`
+
+Inputs:
+
+- Target image from TritonPilot or another saved source
+- European green crab, native rock crab, and Jonah crab reference images
+- `OPENAI_API_KEY` in the process environment before pressing Analyze
+
+Outputs:
+
+- Timestamped run folder under `Workspace/results/crab_counter`
+- `<target>_crab_count.json`
+- `<target>_crab_count_annotated.png`
+
+Setup notes:
+
+- Requires the `openai` Python package installed by `requirements.txt`.
+- The UI auto-fills reference images from `Downloads` and
+  `Workspace/data/real crabs` when those files are present.
 
 ## Iceberg Tracking
 
