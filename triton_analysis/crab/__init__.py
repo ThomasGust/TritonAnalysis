@@ -2,10 +2,12 @@
 
 from triton_analysis.crab.counter import (
     CrabCountResult,
+    CrabBenchmarkOutputs,
     CrabCounterConfig,
     CrabCounterOutputs,
     CrabDetection,
     analyze_crab_image,
+    benchmark_crab_image,
     discover_counter_reference_paths,
     draw_crab_count_result,
 )
@@ -29,6 +31,7 @@ from triton_analysis.crab.plane_dataset import (
 __all__ = [
     "BoardPlaneAnnotation",
     "CRAB_CLASS_NAMES",
+    "CrabBenchmarkOutputs",
     "CrabCountResult",
     "CrabCounterConfig",
     "CrabCounterOutputs",
@@ -37,6 +40,7 @@ __all__ = [
     "SyntheticDatasetConfig",
     "SyntheticDatasetResult",
     "analyze_crab_image",
+    "benchmark_crab_image",
     "discover_background_media",
     "discover_board_images",
     "discover_counter_reference_paths",

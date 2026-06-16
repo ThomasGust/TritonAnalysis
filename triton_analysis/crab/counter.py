@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import base64
+import csv
 import json
 import mimetypes
 import os
-from dataclasses import asdict, dataclass
+import time
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 import cv2
 import numpy as np
@@ -19,21 +21,34 @@ from triton_analysis.workspace import fresh_output_subdir, workspace_paths
 
 
 TARGET_CLASS = "european_green_crab"
+UNCERTAIN_CLASS = "uncertain"
 REFERENCE_CLASS_LABELS = {
     "european_green_crab": "European green crab",
     "native_rock_crab": "Native rock crab",
     "jonah_crab": "Jonah crab",
 }
+CANDIDATE_CLASS_LABELS = {
+    **REFERENCE_CLASS_LABELS,
+    UNCERTAIN_CLASS: "Uncertain crab",
+}
+CANDIDATE_CLASSES = tuple(CRAB_CLASS_NAMES) + (UNCERTAIN_CLASS,)
 DEFAULT_MODEL = os.environ.get("TRITON_ANALYSIS_CRAB_MODEL", "gpt-5.5")
+REASONING_EFFORTS = ("none", "low", "medium", "high", "xhigh")
+DEFAULT_REASONING_EFFORT = os.environ.get("TRITON_ANALYSIS_CRAB_REASONING_EFFORT", "high").strip().lower() or "high"
+try:
+    DEFAULT_TARGET_MATCH_THRESHOLD = float(os.environ.get("TRITON_ANALYSIS_CRAB_TARGET_THRESHOLD", "0.85"))
+except ValueError:
+    DEFAULT_TARGET_MATCH_THRESHOLD = 0.85
 
 
 @dataclass(frozen=True)
 class CrabDetection:
-    """One European green crab detection in target-image pixel coordinates."""
+    """One crab candidate in target-image pixel coordinates."""
 
     label: str
     bbox: tuple[float, float, float, float]
     confidence: float
+    target_match_confidence: float = 0.0
     notes: str = ""
 
 
@@ -45,23 +60,26 @@ class CrabCountResult:
     image_size: tuple[int, int]
     count: int
     detections: tuple[CrabDetection, ...]
+    candidates: tuple[CrabDetection, ...]
     model: str
+    reasoning_effort: str
+    target_confidence_threshold: float
+    analysis_seconds: float = 0.0
     summary: str = ""
 
     def to_dict(self) -> dict[str, object]:
-        data = asdict(self)
-        data["image_path"] = str(self.image_path)
-        data["image_size"] = list(self.image_size)
-        data["detections"] = [
-            {
-                "label": detection.label,
-                "bbox": [round(float(value), 2) for value in detection.bbox],
-                "confidence": round(float(detection.confidence), 4),
-                "notes": detection.notes,
-            }
-            for detection in self.detections
-        ]
-        return data
+        return {
+            "image_path": str(self.image_path),
+            "image_size": list(self.image_size),
+            "count": int(self.count),
+            "detections": [_detection_to_dict(detection) for detection in self.detections],
+            "candidates": [_detection_to_dict(candidate) for candidate in self.candidates],
+            "model": self.model,
+            "reasoning_effort": self.reasoning_effort,
+            "target_confidence_threshold": round(float(self.target_confidence_threshold), 4),
+            "analysis_seconds": round(float(self.analysis_seconds), 3),
+            "summary": self.summary,
+        }
 
 
 @dataclass(frozen=True)
@@ -75,6 +93,16 @@ class CrabCounterOutputs:
 
 
 @dataclass(frozen=True)
+class CrabBenchmarkOutputs:
+    """Files written for a reasoning-effort benchmark run."""
+
+    output_dir: Path
+    summary_json: Path
+    summary_csv: Path
+    runs: tuple[CrabCounterOutputs, ...]
+
+
+@dataclass(frozen=True)
 class CrabCounterConfig:
     """Inputs for one OpenAI crab-counter request."""
 
@@ -82,6 +110,8 @@ class CrabCounterConfig:
     reference_paths: Mapping[str, Path]
     output_dir: Path
     model: str = DEFAULT_MODEL
+    reasoning_effort: str = DEFAULT_REASONING_EFFORT
+    target_confidence_threshold: float = DEFAULT_TARGET_MATCH_THRESHOLD
 
 
 def discover_counter_reference_paths(workspace_root: str | Path | None = None) -> dict[str, Path | None]:
@@ -126,15 +156,28 @@ def analyze_crab_image(config: CrabCounterConfig, *, client: Any | None = None) 
     if missing:
         labels = ", ".join(REFERENCE_CLASS_LABELS.get(name, name) for name in missing)
         raise ValueError(f"missing crab reference image(s): {labels}")
+    reasoning_effort = _normalize_reasoning_effort(config.reasoning_effort)
+    target_confidence_threshold = _clamp01(config.target_confidence_threshold)
 
+    analysis_start = time.perf_counter()
     response = _create_openai_response(
         image_path=image_path,
         image_size=image_size,
         reference_paths={name: path for name, path in normalized_refs.items() if path is not None},
         model=str(config.model or DEFAULT_MODEL),
+        reasoning_effort=reasoning_effort,
+        target_confidence_threshold=target_confidence_threshold,
         client=client,
     )
-    result = _parse_response(response, image_path=image_path, image_size=image_size, model=str(config.model or DEFAULT_MODEL))
+    result = _parse_response(
+        response,
+        image_path=image_path,
+        image_size=image_size,
+        model=str(config.model or DEFAULT_MODEL),
+        reasoning_effort=reasoning_effort,
+        target_confidence_threshold=target_confidence_threshold,
+    )
+    result = replace(result, analysis_seconds=time.perf_counter() - analysis_start)
 
     output_dir = Path(config.output_dir).expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -147,6 +190,76 @@ def analyze_crab_image(config: CrabCounterConfig, *, client: Any | None = None) 
         output_dir=output_dir,
         result_json=result_json,
         annotated_image=annotated_image,
+    )
+
+
+def benchmark_crab_image(
+    config: CrabCounterConfig,
+    *,
+    efforts: Iterable[str] | None = None,
+    client: Any | None = None,
+    progress_callback: Any | None = None,
+) -> CrabBenchmarkOutputs:
+    """Run the same image/reference setup across reasoning efforts and save a summary."""
+
+    selected_efforts = tuple(_normalize_reasoning_effort(effort) for effort in (efforts or REASONING_EFFORTS))
+    if not selected_efforts:
+        raise ValueError("at least one reasoning effort is required")
+
+    output_dir = Path(config.output_dir).expanduser()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    runs: list[CrabCounterOutputs] = []
+    total = len(selected_efforts)
+    for index, effort in enumerate(selected_efforts, start=1):
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "event": "effort_started",
+                    "effort": effort,
+                    "index": index,
+                    "total": total,
+                    "completed": index - 1,
+                }
+            )
+        run = analyze_crab_image(
+            CrabCounterConfig(
+                image_path=config.image_path,
+                reference_paths=config.reference_paths,
+                output_dir=output_dir / effort,
+                model=config.model,
+                reasoning_effort=effort,
+                target_confidence_threshold=config.target_confidence_threshold,
+            ),
+            client=client,
+        )
+        runs.append(run)
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "event": "effort_finished",
+                    "effort": effort,
+                    "index": index,
+                    "total": total,
+                    "completed": index,
+                    "analysis_seconds": run.result.analysis_seconds,
+                }
+            )
+
+    summary = {
+        "image_path": str(Path(config.image_path).expanduser()),
+        "model": str(config.model or DEFAULT_MODEL),
+        "target_confidence_threshold": _clamp01(config.target_confidence_threshold),
+        "runs": [_benchmark_row(run) for run in runs],
+    }
+    summary_json = output_dir / "reasoning_effort_benchmark.json"
+    summary_csv = output_dir / "reasoning_effort_benchmark.csv"
+    summary_json.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    _write_benchmark_csv(summary_csv, runs)
+    return CrabBenchmarkOutputs(
+        output_dir=output_dir,
+        summary_json=summary_json,
+        summary_csv=summary_csv,
+        runs=tuple(runs),
     )
 
 
@@ -193,16 +306,21 @@ def result_from_payload(
     image_path: str | Path,
     image_size: tuple[int, int],
     model: str,
+    reasoning_effort: str = DEFAULT_REASONING_EFFORT,
+    target_confidence_threshold: float = DEFAULT_TARGET_MATCH_THRESHOLD,
 ) -> CrabCountResult:
     """Validate a model JSON payload into a crab-count result."""
 
-    detections: list[CrabDetection] = []
+    candidates: list[CrabDetection] = []
     width, height = image_size
-    for raw in payload.get("detections", []):
+    raw_candidates = payload.get("candidates")
+    if raw_candidates is None:
+        raw_candidates = payload.get("detections", [])
+    for raw in raw_candidates:
         if not isinstance(raw, Mapping):
             continue
-        label = str(raw.get("label") or TARGET_CLASS).strip().lower()
-        if label != TARGET_CLASS:
+        label = _normalize_candidate_label(raw.get("label") or raw.get("class") or TARGET_CLASS)
+        if label not in CANDIDATE_CLASSES:
             continue
         bbox_values = raw.get("bbox")
         if not isinstance(bbox_values, Sequence) or len(bbox_values) != 4:
@@ -214,14 +332,31 @@ def result_from_payload(
         x0, y0, x1, y1 = _clamp_bbox(bbox, (width, height))
         if x1 <= x0 or y1 <= y0:
             continue
-        try:
-            confidence = float(raw.get("confidence", 0.0))
-        except (TypeError, ValueError):
-            confidence = 0.0
-        confidence = max(0.0, min(1.0, confidence))
+        confidence = _clamp01(raw.get("confidence", 0.0))
+        target_match_confidence = _clamp01(
+            raw.get(
+                "target_match_confidence",
+                confidence if label == TARGET_CLASS else 0.0,
+            )
+        )
         notes = str(raw.get("notes") or "")
-        detections.append(CrabDetection(label=TARGET_CLASS, bbox=(x0, y0, x1, y1), confidence=confidence, notes=notes))
+        candidates.append(
+            CrabDetection(
+                label=label,
+                bbox=(x0, y0, x1, y1),
+                confidence=confidence,
+                target_match_confidence=target_match_confidence,
+                notes=notes,
+            )
+        )
 
+    candidates.sort(key=lambda detection: (detection.bbox[1], detection.bbox[0]))
+    target_confidence_threshold = _clamp01(target_confidence_threshold)
+    detections = [
+        candidate
+        for candidate in candidates
+        if candidate.label == TARGET_CLASS and candidate.target_match_confidence >= target_confidence_threshold
+    ]
     detections.sort(key=lambda detection: (detection.bbox[1], detection.bbox[0]))
     summary = str(payload.get("summary") or "")
     return CrabCountResult(
@@ -229,7 +364,10 @@ def result_from_payload(
         image_size=image_size,
         count=len(detections),
         detections=tuple(detections),
+        candidates=tuple(candidates),
         model=str(model),
+        reasoning_effort=_normalize_reasoning_effort(reasoning_effort),
+        target_confidence_threshold=target_confidence_threshold,
         summary=summary,
     )
 
@@ -242,12 +380,86 @@ def _normalize_reference_paths(reference_paths: Mapping[str, Path | str | None])
     return normalized
 
 
+def _detection_to_dict(detection: CrabDetection) -> dict[str, object]:
+    return {
+        "label": detection.label,
+        "bbox": [round(float(value), 2) for value in detection.bbox],
+        "confidence": round(float(detection.confidence), 4),
+        "target_match_confidence": round(float(detection.target_match_confidence), 4),
+        "notes": detection.notes,
+    }
+
+
+def _benchmark_row(run: CrabCounterOutputs) -> dict[str, object]:
+    result = run.result
+    return {
+        "reasoning_effort": result.reasoning_effort,
+        "analysis_seconds": round(float(result.analysis_seconds), 3),
+        "count": int(result.count),
+        "candidate_count": len(result.candidates),
+        "result_json": str(run.result_json),
+        "annotated_image": str(run.annotated_image),
+        "summary": result.summary,
+    }
+
+
+def _write_benchmark_csv(path: Path, runs: Sequence[CrabCounterOutputs]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "reasoning_effort",
+        "analysis_seconds",
+        "count",
+        "candidate_count",
+        "result_json",
+        "annotated_image",
+        "summary",
+    ]
+    with path.open("w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        for run in runs:
+            writer.writerow(_benchmark_row(run))
+
+
+def _normalize_candidate_label(value: object) -> str:
+    label = str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
+    aliases = {
+        "green_crab": TARGET_CLASS,
+        "european_green": TARGET_CLASS,
+        "egc": TARGET_CLASS,
+        "rock_crab": "native_rock_crab",
+        "native_rock": "native_rock_crab",
+        "jonah": "jonah_crab",
+        "unknown": UNCERTAIN_CLASS,
+        "ambiguous": UNCERTAIN_CLASS,
+    }
+    return aliases.get(label, label)
+
+
+def _normalize_reasoning_effort(value: object) -> str:
+    effort = str(value or DEFAULT_REASONING_EFFORT).strip().lower()
+    if effort not in REASONING_EFFORTS:
+        allowed = ", ".join(REASONING_EFFORTS)
+        raise ValueError(f"unsupported reasoning effort '{effort}'. Use one of: {allowed}")
+    return effort
+
+
+def _clamp01(value: object) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = 0.0
+    return max(0.0, min(1.0, number))
+
+
 def _create_openai_response(
     *,
     image_path: Path,
     image_size: tuple[int, int],
     reference_paths: Mapping[str, Path],
     model: str,
+    reasoning_effort: str,
+    target_confidence_threshold: float,
     client: Any | None,
 ) -> Any:
     if client is None:
@@ -260,7 +472,7 @@ def _create_openai_response(
         raise RuntimeError("OpenAI client does not expose the Responses API. Install openai>=2.0.0.")
 
     width, height = image_size
-    prompt = _build_prompt(width=width, height=height)
+    prompt = _build_prompt(width=width, height=height, target_confidence_threshold=target_confidence_threshold)
     content: list[dict[str, object]] = [{"type": "input_text", "text": prompt}]
     content.append({"type": "input_image", "image_url": _image_data_url(image_path), "detail": "high"})
     for class_name in CRAB_CLASS_NAMES:
@@ -271,6 +483,7 @@ def _create_openai_response(
 
     return client.responses.create(
         model=model,
+        reasoning={"effort": reasoning_effort},
         input=[
             {
                 "role": "user",
@@ -288,18 +501,39 @@ def _create_openai_response(
     )
 
 
-def _build_prompt(*, width: int, height: int) -> str:
+def _build_prompt(*, width: int, height: int, target_confidence_threshold: float) -> str:
     return (
         "You are counting the MATE ROV invasive species board. The first image is the target frame. "
-        "The following three images are the only crab print types that may appear on the board: European green crab, "
-        "native rock crab, and Jonah crab. Identify and box only European green crab print instances in the target. "
-        "Ignore native rock crab, Jonah crab, pool tiles, glare, fasteners, the gripper, shadows, and paper edges. "
-        "Use the reference images as exact visual definitions, but allow the target crabs to be rotated, scaled, "
-        "blurred, partially glared over, or color shifted by underwater lighting. Return bounding boxes in pixel "
-        f"coordinates for the full target image, whose size is width={width}, height={height}. "
-        "Each bbox must tightly cover the visible printed crab, including legs and claws when visible, and must use "
-        "the order [x1, y1, x2, y2]. If a European green crab is small but visible, include it. "
-        "Do not include any non-European crab in detections."
+        "The following three images are the exact visual definitions for the only printed crab classes that may "
+        "appear on the board: European green crab, native rock crab, and Jonah crab. First locate every visible "
+        "printed crab candidate in the target image. Then compare each candidate directly against all three "
+        "reference images and classify it as european_green_crab, native_rock_crab, jonah_crab, or uncertain. "
+        "Species identification is more important than finding every possible target. Native rock crab and Jonah "
+        "crab are hard negatives. Do not count a native rock crab as European green crab even if underwater lighting, "
+        "blur, compression, faded ink, or glare makes it look greenish. Do not use color tint alone as species "
+        "evidence because the pool can shift all colors. If a candidate is ambiguous between European green crab "
+        "and native rock crab, label it uncertain or native_rock_crab rather than european_green_crab. Ignore pool "
+        "tiles, glare, fasteners, the gripper, shadows, and paper edges. "
+        "Allow real target prints to be rotated, scaled, blurred, partly glared over, or color shifted, but require "
+        "the visible silhouette, leg/claw layout, body proportions, and internal markings to match the European "
+        "green crab reference better than both non-target references before assigning european_green_crab. Assign "
+        "european_green_crab only when at least two independent visual cues support that class and no visible cue "
+        "matches a non-target reference as well or better. In notes, briefly name the strongest EGC cue and the "
+        "closest non-target class you rejected. Set target_match_confidence >= "
+        f"{target_confidence_threshold:.2f} only for clear European green crab matches; set it below "
+        f"{target_confidence_threshold:.2f} for likely-but-not-clear, ambiguous, or non-target candidates. "
+        "Return bounding boxes in pixel coordinates for the full "
+        f"target image, whose size is width={width}, height={height}. Each bbox must tightly cover the visible "
+        "printed ink of one crab, including legs and claws when visible, and must use the order [x1, y1, x2, y2]. "
+        "For small crabs, zoom mentally and center the box on the visible printed crab. Do not include surrounding "
+        "white board, glare streaks, shadows, screw heads, adjacent crab prints, or empty water just to make the box "
+        "larger. Do not crop off visible legs or claws, and do not shift the box toward a shadow or reflection. "
+        "Before finalizing the JSON, review each bbox: its center should fall on the crab print, not on blank board "
+        "or a shadow, and the box should be shifted or resized if the printed crab is off center inside it. "
+        "One printed crab should have exactly one candidate box. "
+        "If only part of a crab is visible, box only the visible printed portion and say that in notes. The count "
+        "must equal only candidates classified as european_green_crab with target_match_confidence >= "
+        f"{target_confidence_threshold:.2f}."
     )
 
 
@@ -311,30 +545,39 @@ def _result_json_schema() -> dict[str, object]:
             "image_width": {"type": "integer"},
             "image_height": {"type": "integer"},
             "count": {"type": "integer"},
-            "detections": {
+            "candidates": {
                 "type": "array",
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
                     "properties": {
-                        "label": {"type": "string", "enum": [TARGET_CLASS]},
+                        "label": {"type": "string", "enum": list(CANDIDATE_CLASSES)},
                         "bbox": {
                             "type": "array",
                             "items": {"type": "number"},
                         },
                         "confidence": {"type": "number"},
+                        "target_match_confidence": {"type": "number"},
                         "notes": {"type": "string"},
                     },
-                    "required": ["label", "bbox", "confidence", "notes"],
+                    "required": ["label", "bbox", "confidence", "target_match_confidence", "notes"],
                 },
             },
             "summary": {"type": "string"},
         },
-        "required": ["image_width", "image_height", "count", "detections", "summary"],
+        "required": ["image_width", "image_height", "count", "candidates", "summary"],
     }
 
 
-def _parse_response(response: Any, *, image_path: Path, image_size: tuple[int, int], model: str) -> CrabCountResult:
+def _parse_response(
+    response: Any,
+    *,
+    image_path: Path,
+    image_size: tuple[int, int],
+    model: str,
+    reasoning_effort: str,
+    target_confidence_threshold: float,
+) -> CrabCountResult:
     text = _response_text(response)
     try:
         payload = json.loads(text)
@@ -342,7 +585,14 @@ def _parse_response(response: Any, *, image_path: Path, image_size: tuple[int, i
         raise RuntimeError(f"OpenAI response was not valid JSON: {text[:500]}") from exc
     if not isinstance(payload, Mapping):
         raise RuntimeError("OpenAI response JSON was not an object.")
-    return result_from_payload(payload, image_path=image_path, image_size=image_size, model=model)
+    return result_from_payload(
+        payload,
+        image_path=image_path,
+        image_size=image_size,
+        model=model,
+        reasoning_effort=reasoning_effort,
+        target_confidence_threshold=target_confidence_threshold,
+    )
 
 
 def _response_text(response: Any) -> str:
