@@ -967,6 +967,7 @@ def _run_candidate_detection_stage(
                 "count": len(result.candidates),
                 "analysis_seconds": result.analysis_seconds,
                 "detection_json": str(detection_json),
+                "detection_result": result,
             }
         )
     return result, detection_json
@@ -1216,7 +1217,8 @@ def _parse_candidate_classification_response(
                 "class_scores": raw.get("class_scores", {}),
                 "closest_non_target": raw.get("closest_non_target", ""),
                 "decision_margin": raw.get("decision_margin", 0.0),
-                "accepted_as_target": raw.get("accepted_as_target", False),
+                "accepted_as_target": bool(raw.get("accepted_as_target", False))
+                and bool(raw.get("visible_cues_sufficient", True)),
                 "notes": raw.get("notes", "missing crop classification"),
             }
         )
@@ -1795,19 +1797,28 @@ def _build_candidate_classification_prompt(
         "and Jonah crab in the atlas, looking for any non-target match in silhouette, leg/claw layout, body "
         "proportions, edge contour, and internal markings. Then compare to European green crab. Only after the "
         "hard-negative check may you assign european_green_crab. If any visible cue matches native_rock_crab as "
-        "well as or better than European green crab, label it native_rock_crab or uncertain. If the crop is small, "
-        "blurry, caustic-covered, or ambiguous, label it uncertain or native_rock_crab rather than "
-        "european_green_crab. Assign european_green_crab only when at least two independent non-color visual cues "
-        "support that class and no visible cue matches a non-target reference as well or better. "
+        "well as or better than European green crab, label it native_rock_crab or uncertain. Use uncertain only "
+        "when the visible class cues are genuinely insufficient or the best target and non-target explanations are "
+        "nearly tied. Do not choose uncertain merely because the crop is small, enlarged, slightly blurred, or "
+        "caustic-lit. Confidence is a species-match confidence conditional on the visible crop, not an image-quality "
+        "score. A small crop with clear European green crab silhouette, leg/claw layout, and compact carapace can "
+        "still receive target_match_confidence above the threshold. Assign european_green_crab when at least two "
+        "independent non-color visual cues support that class and no visible cue matches a non-target reference as "
+        "well or better. "
         "For each candidate, assign class_scores for all three classes. Do not artificially suppress the native "
         "rock crab score to make an uncertain crop pass. closest_non_target must be the better of native_rock_crab "
         "and jonah_crab. decision_margin must be class_scores.european_green_crab minus the larger non-target "
-        "score. In notes, use at most 12 words naming the strongest cue and closest rejected class. Set "
-        f"target_match_confidence >= {target_confidence_threshold:.2f} only for clear European green crab matches "
-        "after the native-rock veto; set it below that threshold for likely-but-not-clear, ambiguous, small/blurred, "
-        "glare-covered, or non-target crops. Set accepted_as_target true only when label is european_green_crab, "
+        "score. Fill egc_supporting_cues with the visible non-color cues supporting European green crab, and "
+        "non_target_supporting_cues with visible cues supporting native rock crab or Jonah crab. Set "
+        "visible_cues_sufficient true when the crop has enough visible shape/leg/body evidence to classify even if "
+        "the crop is small or blurry. In notes, use at most 12 words naming the strongest cue and closest rejected "
+        "class. Set "
+        f"target_match_confidence >= {target_confidence_threshold:.2f} for clear European green crab matches "
+        "after the native-rock veto; set it below that threshold for genuinely ambiguous, insufficiently visible, "
+        "or non-target crops. Set accepted_as_target true only when label is european_green_crab, "
         f"target_match_confidence >= {target_confidence_threshold:.2f}, decision_margin >= "
-        f"{target_margin_threshold:.2f}, and the crop survives the native-rock hard-negative check."
+        f"{target_margin_threshold:.2f}, visible_cues_sufficient is true, and the crop survives the native-rock "
+        "hard-negative check."
     )
 
 
@@ -1837,6 +1848,15 @@ def _candidate_classification_json_schema() -> dict[str, object]:
                         },
                         "closest_non_target": {"type": "string", "enum": list(NON_TARGET_CLASSES)},
                         "decision_margin": {"type": "number"},
+                        "egc_supporting_cues": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "non_target_supporting_cues": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "visible_cues_sufficient": {"type": "boolean"},
                         "accepted_as_target": {"type": "boolean"},
                         "notes": {"type": "string"},
                     },
@@ -1848,6 +1868,9 @@ def _candidate_classification_json_schema() -> dict[str, object]:
                         "class_scores",
                         "closest_non_target",
                         "decision_margin",
+                        "egc_supporting_cues",
+                        "non_target_supporting_cues",
+                        "visible_cues_sufficient",
                         "accepted_as_target",
                         "notes",
                     ],

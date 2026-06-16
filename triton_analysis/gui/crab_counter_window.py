@@ -42,9 +42,11 @@ from triton_analysis.crab.counter import (
     TARGET_CLASS,
     UNCERTAIN_CLASS,
     CrabBenchmarkOutputs,
+    CrabCandidateDetectionResult,
     CrabCountResult,
     CrabCounterConfig,
     CrabCounterOutputs,
+    CrabDetection,
     CrabPreprocessResult,
     analyze_crab_image,
     analyze_crab_image_pipeline,
@@ -76,8 +78,10 @@ class CrabCounterPreview(QWidget):
         self._pixmap = QPixmap()
         self._image_path: Path | None = None
         self._result: CrabCountResult | None = None
+        self._candidate_result: CrabCountResult | None = None
         self._display_mode = "accepted"
         self._interaction_mode = "none"
+        self._selection_visible = True
         self._crop_anchor: tuple[float, float] | None = None
         self._crop_rect: tuple[float, float, float, float] | None = None
         self._homography_points: list[tuple[float, float]] = []
@@ -88,13 +92,22 @@ class CrabCounterPreview(QWidget):
         self._image_path = Path(path).expanduser() if path else None
         self._pixmap = QPixmap(str(self._image_path)) if self._image_path else QPixmap()
         self._result = None
+        self._candidate_result = None
         self.clear_selection()
         self.update()
 
     def set_result(self, result: CrabCountResult | None, annotated_image: str | Path | None = None) -> None:
         self._result = result
+        self._candidate_result = None
         if annotated_image:
             self._image_path = Path(annotated_image).expanduser()
+            self._pixmap = QPixmap(str(self._image_path))
+        self.update()
+
+    def set_candidate_result(self, result: CrabCountResult | None, image_path: str | Path | None = None) -> None:
+        self._candidate_result = result
+        if image_path:
+            self._image_path = Path(image_path).expanduser()
             self._pixmap = QPixmap(str(self._image_path))
         self.update()
 
@@ -106,6 +119,10 @@ class CrabCounterPreview(QWidget):
         self._interaction_mode = mode if mode in {"crop", "homography"} else "none"
         cursor = Qt.CursorShape.CrossCursor if self._interaction_mode != "none" else Qt.CursorShape.ArrowCursor
         self.setCursor(cursor)
+        self.update()
+
+    def set_selection_visible(self, visible: bool) -> None:
+        self._selection_visible = bool(visible)
         self.update()
 
     def clear_selection(self) -> None:
@@ -146,14 +163,30 @@ class CrabCounterPreview(QWidget):
 
         image_rect = self._image_rect()
         painter.drawPixmap(image_rect, self._pixmap, QRectF(self._pixmap.rect()))
-        if self._result is None:
-            self._draw_selection(painter, image_rect)
+        draw_result = self._result or self._candidate_result
+        if draw_result is None:
+            if self._selection_visible:
+                self._draw_selection(painter, image_rect)
             return
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        scale_x = image_rect.width() / max(1, self._result.image_size[0])
-        scale_y = image_rect.height() / max(1, self._result.image_size[1])
-        detections = self._result.candidates if self._display_mode == "all" else self._result.detections
-        for detection in detections:
+        stage_candidates = self._result is None and self._candidate_result is not None
+        detections = draw_result.candidates if (self._display_mode == "all" or stage_candidates) else draw_result.detections
+        self._draw_detections(painter, image_rect, draw_result.image_size, detections, stage_candidates=stage_candidates)
+        if self._selection_visible:
+            self._draw_selection(painter, image_rect)
+
+    def _draw_detections(
+        self,
+        painter: QPainter,
+        image_rect: QRectF,
+        image_size: tuple[int, int],
+        detections,
+        *,
+        stage_candidates: bool = False,
+    ) -> None:
+        scale_x = image_rect.width() / max(1, image_size[0])
+        scale_y = image_rect.height() / max(1, image_size[1])
+        for index, detection in enumerate(detections, start=1):
             x0, y0, x1, y1 = detection.bbox
             rect = QRectF(
                 image_rect.left() + x0 * scale_x,
@@ -161,17 +194,16 @@ class CrabCounterPreview(QWidget):
                 max(1.0, (x1 - x0) * scale_x),
                 max(1.0, (y1 - y0) * scale_y),
             )
-            color = self._candidate_color(detection)
+            color = QColor(80, 210, 255) if stage_candidates else self._candidate_color(detection)
             painter.setPen(QPen(QColor(0, 0, 0), 5.0))
             painter.drawRect(rect)
             painter.setPen(QPen(color, 2.5))
             painter.drawRect(rect)
-            label = self._candidate_label(detection)
-            text_rect = QRectF(rect.left(), max(image_rect.top(), rect.top() - 18), 130, 16)
+            label = f"Cand {index}" if stage_candidates else self._candidate_label(detection)
+            text_rect = QRectF(rect.left(), max(image_rect.top(), rect.top() - 18), 145, 16)
             painter.fillRect(text_rect.adjusted(-2, -1, 2, 1), QColor(0, 0, 0, 170))
             painter.setPen(color)
             painter.drawText(text_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
-        self._draw_selection(painter, image_rect)
 
     def mousePressEvent(self, event) -> None:
         if self._pixmap.isNull():
@@ -416,6 +448,10 @@ class CrabCounterWindow(QMainWindow):
         self._last_outputs: CrabCounterOutputs | None = None
         self._last_benchmark_outputs: CrabBenchmarkOutputs | None = None
         self._last_preprocess_result: CrabPreprocessResult | None = None
+        self._last_display_result: CrabCountResult | None = None
+        self._last_projected_result: CrabCountResult | None = None
+        self._last_candidate_display_result: CrabCountResult | None = None
+        self._last_candidate_projected_result: CrabCountResult | None = None
         self._last_output_dir: Path | None = None
         self._run_started_at = 0.0
         self._run_base_status = ""
@@ -428,6 +464,7 @@ class CrabCounterWindow(QMainWindow):
         self.preview_tabs = QTabBar()
         self.preview_tabs.addTab("European Green")
         self.preview_tabs.addTab("All Candidates")
+        self.preview_tabs.addTab("Projected Board")
         self.preview_tabs.currentChanged.connect(self._preview_tab_changed)
         self.target_edit = QLineEdit(str(Path(image_path).expanduser()) if image_path else "")
         self.target_edit.editingFinished.connect(self._load_target_preview)
@@ -809,6 +846,10 @@ class CrabCounterWindow(QMainWindow):
         text = self.target_edit.text().strip()
         path = Path(text).expanduser() if text else None
         self._last_preprocess_result = None
+        self._last_display_result = None
+        self._last_projected_result = None
+        self._last_candidate_display_result = None
+        self._last_candidate_projected_result = None
         self.open_preprocessed_btn.setEnabled(False)
         if path and path.is_file():
             self.preview.set_image(path)
@@ -871,6 +912,10 @@ class CrabCounterWindow(QMainWindow):
         self._last_outputs = None
         self._last_benchmark_outputs = None
         self._last_output_dir = None
+        self._last_display_result = None
+        self._last_projected_result = None
+        self._last_candidate_display_result = None
+        self._last_candidate_projected_result = None
         self.open_output_btn.setEnabled(False)
         self.open_annotated_btn.setEnabled(False)
         self.count_label.setText("Count: ...")
@@ -945,6 +990,10 @@ class CrabCounterWindow(QMainWindow):
         self._last_output_dir = outputs.output_dir
         result = outputs.result
         display_result = self._preview_result_for_current_run(result)
+        self._last_projected_result = result
+        self._last_display_result = display_result
+        self._last_candidate_projected_result = None
+        self._last_candidate_display_result = None
         self.count_label.setText(f"Count: {result.count}")
         mapping_note = " Preview boxes are mapped back to the original frame." if self._last_preprocess_result else ""
         self.status_label.setText(
@@ -953,7 +1002,7 @@ class CrabCounterWindow(QMainWindow):
             f"{mapping_note}"
         )
         self._populate_detection_list(display_result)
-        self.preview.set_result(display_result)
+        self._refresh_preview_display()
         self.open_output_btn.setEnabled(True)
         self.open_annotated_btn.setEnabled(True)
         self.progress_bar.setVisible(False)
@@ -966,6 +1015,10 @@ class CrabCounterWindow(QMainWindow):
         self._last_outputs = selected
         result = selected.result
         display_result = self._preview_result_for_current_run(result)
+        self._last_projected_result = result
+        self._last_display_result = display_result
+        self._last_candidate_projected_result = None
+        self._last_candidate_display_result = None
         self.count_label.setText(f"Count: {result.count}")
         self.status_label.setText(
             f"Benchmark complete. Wrote {outputs.summary_csv.name} and {outputs.summary_json.name} under {outputs.output_dir}."
@@ -977,7 +1030,7 @@ class CrabCounterWindow(QMainWindow):
                 f"{run_result.reasoning_effort}: {run_result.count}/{len(run_result.candidates)} "
                 f"candidate(s) accepted in {run_result.analysis_seconds:.1f}s"
             )
-        self.preview.set_result(display_result)
+        self._refresh_preview_display()
         self.open_output_btn.setEnabled(True)
         self.open_annotated_btn.setEnabled(True)
         self.progress_bar.setVisible(False)
@@ -990,6 +1043,60 @@ class CrabCounterWindow(QMainWindow):
         if points:
             self.preview.set_homography_points(points)
         self._update_preprocess_status()
+
+    def _set_candidate_detection_result(self, result: CrabCandidateDetectionResult) -> None:
+        detections = tuple(
+            CrabDetection(
+                label=UNCERTAIN_CLASS,
+                bbox=candidate.bbox,
+                confidence=candidate.confidence,
+                target_match_confidence=0.0,
+                class_scores={class_name: 0.0 for class_name in CRAB_CLASS_NAMES},
+                closest_non_target="native_rock_crab",
+                decision_margin=0.0,
+                accepted_as_target=False,
+                notes=f"candidate {candidate.candidate_id}",
+            )
+            for candidate in result.candidates
+        )
+        projected = CrabCountResult(
+            image_path=result.image_path,
+            image_size=result.image_size,
+            count=0,
+            detections=(),
+            candidates=detections,
+            model=result.model,
+            reasoning_effort=result.reasoning_effort,
+            target_confidence_threshold=self.threshold_spin.value(),
+            target_margin_threshold=self.margin_spin.value(),
+            analysis_seconds=result.analysis_seconds,
+            summary=result.summary,
+        )
+        self._last_candidate_projected_result = projected
+        self._last_candidate_display_result = self._preview_result_for_current_run(projected)
+        self._refresh_preview_display()
+
+    def _refresh_preview_display(self) -> None:
+        projected_tab = self.preview_tabs.currentIndex() == 2
+        self.preview.set_selection_visible(not projected_tab)
+        if projected_tab:
+            projected = self._last_projected_result or self._last_candidate_projected_result
+            if projected is None:
+                return
+            image_path = self._last_preprocess_result.processed_image if self._last_preprocess_result else projected.image_path
+            if self._last_projected_result is not None:
+                self.preview.set_result(projected, image_path)
+            else:
+                self.preview.set_candidate_result(projected, image_path)
+            return
+
+        display = self._last_display_result or self._last_candidate_display_result
+        if display is None:
+            return
+        if self._last_display_result is not None:
+            self.preview.set_result(display, display.image_path)
+        else:
+            self.preview.set_candidate_result(display, display.image_path)
 
     def _benchmark_selected_run(self, outputs: CrabBenchmarkOutputs) -> CrabCounterOutputs:
         preferred = self.reasoning_effort_combo.currentText()
@@ -1029,7 +1136,8 @@ class CrabCounterWindow(QMainWindow):
             )
 
     def _preview_tab_changed(self, index: int) -> None:
-        self.preview.set_display_mode("all" if index == 1 else "accepted")
+        self.preview.set_display_mode("all" if index in (1, 2) else "accepted")
+        self._refresh_preview_display()
 
     def _handle_worker_progress(self, payload: object) -> None:
         data = payload if isinstance(payload, dict) else {}
@@ -1071,6 +1179,9 @@ class CrabCounterWindow(QMainWindow):
             self._set_running_status(f"Detecting printed crab candidate boxes ({effort} effort)...")
             return
         if event == "candidate_detection_finished":
+            detection_result = data.get("detection_result")
+            if isinstance(detection_result, CrabCandidateDetectionResult):
+                self._set_candidate_detection_result(detection_result)
             count = int(data.get("count") or 0)
             seconds = float(data.get("analysis_seconds") or 0.0)
             self.progress_bar.setRange(0, 0)

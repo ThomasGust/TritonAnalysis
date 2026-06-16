@@ -138,6 +138,9 @@ class _FakePipelineResponses:
                         },
                         "closest_non_target": "native_rock_crab",
                         "decision_margin": 0.81,
+                        "egc_supporting_cues": ["compact carapace", "thin lateral legs"],
+                        "non_target_supporting_cues": [],
+                        "visible_cues_sufficient": True,
                         "accepted_as_target": True,
                         "notes": "green cue vs rock",
                     },
@@ -153,6 +156,9 @@ class _FakePipelineResponses:
                         },
                         "closest_non_target": "native_rock_crab",
                         "decision_margin": -0.78,
+                        "egc_supporting_cues": [],
+                        "non_target_supporting_cues": ["native rock silhouette"],
+                        "visible_cues_sufficient": True,
                         "accepted_as_target": False,
                         "notes": "rock silhouette",
                     },
@@ -168,6 +174,9 @@ class _FakePipelineResponses:
                         },
                         "closest_non_target": "native_rock_crab",
                         "decision_margin": 0.78,
+                        "egc_supporting_cues": ["leg layout", "compact body"],
+                        "non_target_supporting_cues": [],
+                        "visible_cues_sufficient": True,
                         "accepted_as_target": True,
                         "notes": "leg layout vs rock",
                     },
@@ -413,8 +422,14 @@ def test_analyze_crab_image_pipeline_detects_then_classifies_crops(tmp_path: Pat
     assert fake_client.responses.calls[1]["reasoning"] == {"effort": "high"}
     classifier_content = fake_client.responses.calls[1]["input"][0]["content"]
     assert "classification only" in classifier_content[0]["text"]
+    assert "Confidence is a species-match confidence conditional on the visible crop" in classifier_content[0]["text"]
     assert "Candidate 1" in classifier_content[0]["text"]
     assert sum(1 for item in classifier_content if item["type"] == "input_image") == 2
+    classifier_schema = fake_client.responses.calls[1]["text"]["format"]["schema"]
+    classification_props = classifier_schema["properties"]["classifications"]["items"]["properties"]
+    assert "egc_supporting_cues" in classification_props
+    assert "non_target_supporting_cues" in classification_props
+    assert "visible_cues_sufficient" in classification_props
     written = json.loads(outputs.result_json.read_text(encoding="utf-8"))
     assert written["pipeline"]["mode"] == "detect_then_classify_crops"
     assert written["pipeline"]["detector_candidate_count"] == 3
