@@ -13,6 +13,7 @@ from triton_analysis.realityscan.underwater_pipeline import (
     LEGACY_DISTORTION_MODEL,
     LEGACY_GEOMETRY_MODE,
     MISSING_REALITYSCAN_OUTPUT_EXIT_CODE,
+    FrameMetric,
     VariantSpec,
     apply_legacy_enhanced_default,
     apply_reconstruction_preset,
@@ -20,6 +21,7 @@ from triton_analysis.realityscan.underwater_pipeline import (
     build_variant_specs,
     filter_obj_large_faces,
     final_reconstruction_exit_code,
+    estimate_caustic_score,
     load_stereo_calibration,
     load_stereo_session,
     make_geometry_frame,
@@ -30,6 +32,7 @@ from triton_analysis.realityscan.underwater_pipeline import (
     run_alignment_tournament,
     scale_model_from_stereo_baseline,
     selected_image_prior_commands,
+    select_frames,
     write_alignment_results,
     write_realityscan_command_file,
     write_stereo_variant_frames,
@@ -479,6 +482,83 @@ def test_raw_geometry_mode_leaves_frame_unenhanced():
     assert not np.array_equal(enhanced, frame)
 
 
+def _metric(frame_index: int, timestamp_s: float, quality: float, fingerprint_level: int, caustic: float = 0.0) -> FrameMetric:
+    fingerprint = np.full((8, 8), fingerprint_level, dtype=np.uint8)
+    return FrameMetric(
+        frame_index=frame_index,
+        timestamp_s=timestamp_s,
+        sharpness=1.0,
+        contrast=1.0,
+        brightness=128.0,
+        feature_count=100,
+        exposure_score=1.0,
+        quality=quality,
+        caustic_score=caustic,
+        fingerprint=fingerprint,
+    )
+
+
+def test_connectivity_bridge_selection_adds_mid_gap_frames():
+    metrics = [
+        _metric(0, 0.0, 1.0, 0),
+        _metric(1, 0.33, 0.52, 28),
+        _metric(2, 0.66, 0.51, 56),
+        _metric(3, 1.0, 1.0, 96),
+    ]
+
+    selected = select_frames(
+        metrics,
+        target_fps=1.0,
+        max_frames=4,
+        min_frames=2,
+        quality_quantile=0.0,
+        min_motion=0.0,
+        max_still_gap_s=2.0,
+        connectivity_bridge_selection=True,
+        bridge_max_gap_s=0.4,
+        bridge_max_delta=8.0,
+        bridge_quality_floor=0.2,
+        bridge_max_extra_fraction=1.0,
+    )
+
+    assert [metric.frame_index for metric in selected] == [0, 1, 2, 3]
+
+
+def test_connectivity_bridge_selection_can_be_disabled():
+    metrics = [
+        _metric(0, 0.0, 1.0, 0),
+        _metric(1, 0.33, 0.52, 28),
+        _metric(2, 0.66, 0.51, 56),
+        _metric(3, 1.0, 1.0, 96),
+    ]
+
+    selected = select_frames(
+        metrics,
+        target_fps=1.0,
+        max_frames=4,
+        min_frames=2,
+        quality_quantile=0.0,
+        min_motion=0.0,
+        max_still_gap_s=2.0,
+        connectivity_bridge_selection=False,
+    )
+
+    assert [metric.frame_index for metric in selected] == [0, 3]
+
+
+def test_caustic_luma_suppresses_bright_low_saturation_ripples():
+    frame = np.full((80, 120, 3), 75, dtype=np.uint8)
+    frame[:, 20:25] = 235
+    frame[:, 65:70] = 245
+
+    raw_score = estimate_caustic_score(frame)
+    stable = make_geometry_frame(frame, "caustic_luma", wb_gain=2.0, clahe_clip=2.0, sharpen=0.0)
+    flat = make_geometry_frame(frame, "flat_luma", wb_gain=2.0, clahe_clip=2.0, sharpen=0.0)
+
+    assert raw_score > 0.15
+    assert stable[:, 20:25].mean() < flat[:, 20:25].mean()
+
+
 def test_fast_default_uses_flat_luma_kplus_without_tournament():
     parser = build_arg_parser()
     args = parser.parse_args(["input.mp4"])
@@ -520,6 +600,17 @@ def test_raw_base_geometry_mode_builds_raw_variant():
     assert len(variants) == 1
     assert variants[0].name == "raw_kplus"
     assert variants[0].geometry_mode == "raw"
+
+
+def test_caustic_luma_base_geometry_mode_builds_variant():
+    parser = build_arg_parser()
+    args = parser.parse_args(["input.mp4", "--base-geometry-mode", "caustic_luma"])
+
+    variants = build_variant_specs(args)
+
+    assert len(variants) == 1
+    assert variants[0].name == "caustic_luma_kplus"
+    assert variants[0].geometry_mode == "caustic_luma"
 
 
 def _component_report(*components: tuple[str, int, int, int, float]) -> str:

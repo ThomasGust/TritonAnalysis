@@ -48,6 +48,7 @@ PRESETS = ("balanced", "high-detail", "max-detail")
 DEFAULT_MIN_GOOD_COMPONENT_RATIO = 0.12
 FAST_VARIANTS = (
     ("Flat Luma K+", "flat_luma_kplus"),
+    ("Caustic Stable Luma K+", "caustic_luma"),
     ("Legacy Enhanced Brown4", "legacy_enhanced"),
 )
 
@@ -307,6 +308,8 @@ class RealityScanReconstructionWindow(QMainWindow):
         self.xmp_priors_check.setChecked(True)
         self.texture_layers_check = QCheckBox("Color Texture Layers")
         self.texture_layers_check.setChecked(True)
+        self.bridge_frames_check = QCheckBox("Bridge Frames")
+        self.bridge_frames_check.setChecked(True)
         self.rig_priors_check = QCheckBox("Rig Priors")
         self.prepare_only_check = QCheckBox("Prepare Only")
         self.alignment_only_check = QCheckBox("Alignment Only")
@@ -325,6 +328,7 @@ class RealityScanReconstructionWindow(QMainWindow):
             self.metric_required_check,
             self.xmp_priors_check,
             self.texture_layers_check,
+            self.bridge_frames_check,
             self.rig_priors_check,
             self.prepare_only_check,
             self.alignment_only_check,
@@ -594,8 +598,11 @@ class RealityScanReconstructionWindow(QMainWindow):
             command.extend(["--stereo-calibration", calibration])
 
         command.extend(["--reconstruction-preset", self.preset_combo.currentText()])
-        if self._combo_value(self.fast_variant_combo) == "legacy_enhanced":
+        fast_variant = self._combo_value(self.fast_variant_combo)
+        if fast_variant == "legacy_enhanced":
             command.append("--legacy-enhanced-default")
+        elif fast_variant == "caustic_luma":
+            command.extend(["--base-geometry-mode", "caustic_luma"])
         alignment = self._combo_value(self.alignment_combo)
         if alignment != "off":
             command.extend(["--alignment-tournament", alignment])
@@ -608,6 +615,8 @@ class RealityScanReconstructionWindow(QMainWindow):
             command.append("--metric-scale-required")
         command.append("--stereo-xmp-priors" if self.xmp_priors_check.isChecked() else "--no-stereo-xmp-priors")
         command.append("--texture-layers" if self.texture_layers_check.isChecked() else "--no-texture-layers")
+        if not self.bridge_frames_check.isChecked():
+            command.append("--no-connectivity-bridge-selection")
         if self.rig_priors_check.isChecked():
             command.append("--stereo-xmp-rig-priors")
         if self.overwrite_check.isChecked():

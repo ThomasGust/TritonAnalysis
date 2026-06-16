@@ -155,11 +155,15 @@ station.
 4. Choose `max-detail` for final models, or a lighter preset for trial runs.
 5. Keep metric stereo scaling enabled when the output will be measured.
 6. Use the default `Flat Luma K+` fast variant for competition-time runs, or
-   switch `Fast Variant` to `Legacy Enhanced Brown4` to reproduce the old path.
+   switch `Fast Variant` to `Caustic Stable Luma K+` for a diagnostic run on
+   ripple-heavy footage. `Legacy Enhanced Brown4` reproduces the old path.
 7. Keep `Color Texture Layers` enabled so the luma geometry/alignment frames
    are paired with color-enhanced texture sidecars for the final OBJ.
-8. Run the job and watch the live log/progress indicators.
-9. Open the metric OBJ, contact sheet, report, or `metric_scale.json` from the
+8. Keep `Bridge Frames` enabled unless you are doing an A/B test. It lets the
+   selector spend part of the frame budget on temporal/appearance bridge frames
+   instead of only the highest-scoring isolated frames.
+9. Run the job and watch the live log/progress indicators.
+10. Open the metric OBJ, contact sheet, report, or `metric_scale.json` from the
    output panel.
 
 The default output workspace is a new timestamped subfolder under
@@ -184,9 +188,17 @@ meshes for each fragment. Sparse cloud export is available from the CLI as an
 extra experiment, but `.rsalign` export is the reliable default.
 The frame metrics CSV also includes `caustic_score`; values near 1.0 mean the
 selector is seeing strong bright, low-saturation light ripples instead of
-stable scene texture. `Thorough` mode includes an experimental
-`caustic_luma` preprocessing variant, but if the component guard still fails,
-prefer recapture under flatter lighting over measuring the exported fragment.
+stable scene texture. `Thorough` mode includes a `caustic_luma` preprocessing
+variant, and the fast-variant selector can run the same caustic-stable luma path
+directly for an A/B comparison. If the component guard still fails, prefer a
+looped recapture with more overlap over measuring the exported fragment.
+
+For capture, more frames can help when they create a denser pool of possible
+bridge views. Higher capture frequency is useful if the ROV is moving slowly
+enough that adjacent views still overlap; it is less useful when it only adds
+near-duplicates or motion blur. Ask the pilot for slow lateral arcs, repeated
+start/end views for loop closure, and a sweep back across the target so the
+selector can keep bridge frames between otherwise separate components.
 
 Use the `Model Viewer` tab in the reconstruction applet, the `View Metric
 Model` output button, or launch `main_realityscan_model_viewer` directly to

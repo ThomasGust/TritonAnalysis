@@ -105,6 +105,7 @@ class FrameMetric:
     exposure_score: float
     quality: float = 0.0
     motion_delta: float = 0.0
+    caustic_score: float = 0.0
     fingerprint: np.ndarray | None = None
     source_stem: str = ""
     pair_delta_ms: float = 0.0
@@ -374,6 +375,7 @@ def score_frame(frame: np.ndarray, frame_index: int, fps: float) -> FrameMetric:
     feature_count = 0 if feature_points is None else int(len(feature_points))
     exposure_score = math.exp(-((brightness - 128.0) / 88.0) ** 2)
     fingerprint = cv2.resize(gray, (96, 54), interpolation=cv2.INTER_AREA)
+    caustic_score = estimate_caustic_score(small)
     return FrameMetric(
         frame_index=frame_index,
         timestamp_s=frame_index / fps,
@@ -382,8 +384,28 @@ def score_frame(frame: np.ndarray, frame_index: int, fps: float) -> FrameMetric:
         brightness=brightness,
         feature_count=feature_count,
         exposure_score=exposure_score,
+        caustic_score=caustic_score,
         fingerprint=fingerprint,
     )
+
+
+def estimate_caustic_score(frame: np.ndarray) -> float:
+    """Estimate how strongly a frame is dominated by bright moving caustic ripples."""
+    if frame.size == 0:
+        return 0.0
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    _h, saturation, value = cv2.split(hsv)
+    bright_threshold = max(float(np.percentile(value, 88)), float(value.mean() + 0.65 * value.std()))
+    bright_low_sat = (value.astype(np.float32) >= bright_threshold) & (saturation.astype(np.float32) <= 95.0)
+    if not np.any(bright_low_sat):
+        return 0.0
+    local = cv2.GaussianBlur(gray, (0, 0), sigmaX=2.0, sigmaY=2.0)
+    local_contrast = cv2.absdiff(gray, local)
+    ripple = bright_low_sat & (local_contrast >= max(8.0, float(np.percentile(local_contrast, 70))))
+    coverage = float(np.count_nonzero(ripple)) / float(ripple.size)
+    edge_density = float(np.mean(local_contrast[ripple])) / 48.0 if np.any(ripple) else 0.0
+    return float(np.clip((coverage * 8.0) + (edge_density * 0.25), 0.0, 1.0))
 
 
 def _normalize(values: list[float]) -> list[float]:
@@ -752,6 +774,11 @@ def select_frames(
     quality_quantile: float,
     min_motion: float,
     max_still_gap_s: float,
+    connectivity_bridge_selection: bool = True,
+    bridge_max_gap_s: float = 0.55,
+    bridge_max_delta: float = 18.0,
+    bridge_quality_floor: float = 0.22,
+    bridge_max_extra_fraction: float = 0.35,
 ) -> list[FrameMetric]:
     """Choose high-quality, temporally distributed frames for reconstruction."""
     bucket_s = 1.0 / target_fps
@@ -794,6 +821,17 @@ def select_frames(
     if len(motion_filtered) < min_frames:
         motion_filtered = selected
 
+    if connectivity_bridge_selection:
+        motion_filtered = add_connectivity_bridge_frames(
+            metrics,
+            motion_filtered,
+            max_frames=max_frames,
+            bridge_max_gap_s=bridge_max_gap_s,
+            bridge_max_delta=bridge_max_delta,
+            bridge_quality_floor=bridge_quality_floor,
+            bridge_max_extra_fraction=bridge_max_extra_fraction,
+        )
+
     if len(motion_filtered) <= max_frames:
         return motion_filtered
 
@@ -808,6 +846,79 @@ def select_frames(
         if candidates:
             capped.append(max(candidates, key=lambda m: m.quality))
     return sorted(capped[:max_frames], key=lambda m: m.timestamp_s)
+
+
+def add_connectivity_bridge_frames(
+    metrics: list[FrameMetric],
+    selected: list[FrameMetric],
+    *,
+    max_frames: int,
+    bridge_max_gap_s: float,
+    bridge_max_delta: float,
+    bridge_quality_floor: float,
+    bridge_max_extra_fraction: float,
+) -> list[FrameMetric]:
+    """Keep extra frames that bridge risky temporal or appearance gaps."""
+    if len(selected) < 2 or len(selected) >= max_frames:
+        return selected
+    selected = sorted(selected, key=lambda m: m.timestamp_s)
+    metric_by_id = {m.frame_index: m for m in metrics}
+    selected_ids = {m.frame_index for m in selected}
+    quality_floor = float(np.clip(bridge_quality_floor, 0.0, 1.0))
+    extra_limit = min(
+        max_frames - len(selected),
+        max(0, int(math.ceil(len(selected) * max(0.0, bridge_max_extra_fraction)))),
+    )
+    if extra_limit <= 0:
+        return selected
+
+    additions: dict[int, FrameMetric] = {}
+    for left, right in zip(selected, selected[1:]):
+        if len(additions) >= extra_limit:
+            break
+        gap = right.timestamp_s - left.timestamp_s
+        delta = _mean_abs_delta(left.fingerprint, right.fingerprint)
+        left.motion_delta = max(left.motion_delta, delta)
+        risky_gap = bridge_max_gap_s > 0 and gap > bridge_max_gap_s
+        risky_delta = bridge_max_delta > 0 and delta > bridge_max_delta
+        if not risky_gap and not risky_delta:
+            continue
+
+        insert_count = 1
+        if bridge_max_gap_s > 0:
+            insert_count = max(insert_count, int(math.ceil(gap / bridge_max_gap_s)) - 1)
+        insert_count = min(insert_count, 3, extra_limit - len(additions))
+        candidates = [
+            metric
+            for metric in metrics
+            if left.timestamp_s < metric.timestamp_s < right.timestamp_s
+            and metric.frame_index not in selected_ids
+            and metric.frame_index not in additions
+            and metric.quality >= quality_floor
+        ]
+        if not candidates:
+            continue
+        for slot in range(insert_count):
+            if not candidates or len(additions) >= extra_limit:
+                break
+            target_t = left.timestamp_s + gap * float(slot + 1) / float(insert_count + 1)
+            best = max(
+                candidates,
+                key=lambda metric: (
+                    metric.quality
+                    - 0.25 * metric.caustic_score
+                    - 0.18 * min(abs(metric.timestamp_s - target_t) / max(gap, 1e-6), 1.0)
+                ),
+            )
+            additions[best.frame_index] = best
+            selected_ids.add(best.frame_index)
+            candidates = [metric for metric in candidates if metric.frame_index != best.frame_index]
+
+    if not additions:
+        return selected
+    bridged = [metric_by_id.get(metric.frame_index, metric) for metric in selected]
+    bridged.extend(additions.values())
+    return sorted(bridged, key=lambda m: m.timestamp_s)
 
 
 def crop_frame(frame: np.ndarray, fraction: float) -> np.ndarray:
@@ -873,6 +984,37 @@ def make_luma_geometry(
     return cv2.cvtColor(l_channel, cv2.COLOR_GRAY2BGR)
 
 
+def make_caustic_stable_luma_geometry(
+    frame: np.ndarray,
+    *,
+    wb_gain: float,
+    clahe_clip: float,
+    sharpen: float,
+) -> np.ndarray:
+    """Build luma geometry while suppressing bright low-saturation caustic ripples."""
+    balanced = gray_world_white_balance(frame, wb_gain)
+    lab = cv2.cvtColor(balanced, cv2.COLOR_BGR2LAB)
+    l_channel = lab[:, :, 0]
+    hsv = cv2.cvtColor(balanced, cv2.COLOR_BGR2HSV)
+    _h, saturation, value = cv2.split(hsv)
+    bright_threshold = max(float(np.percentile(value, 84)), float(value.mean() + 0.45 * value.std()))
+    caustic_mask = ((value.astype(np.float32) >= bright_threshold) & (saturation.astype(np.float32) <= 95.0)).astype(np.uint8) * 255
+    if np.count_nonzero(caustic_mask):
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        caustic_mask = cv2.morphologyEx(caustic_mask, cv2.MORPH_OPEN, kernel)
+        caustic_mask = cv2.dilate(caustic_mask, kernel, iterations=1)
+        local_luma = cv2.medianBlur(l_channel, 11)
+        l_channel = np.where(caustic_mask > 0, local_luma, l_channel).astype(np.uint8)
+    stabilized = cv2.cvtColor(l_channel, cv2.COLOR_GRAY2BGR)
+    return make_luma_geometry(
+        stabilized,
+        wb_gain=1.0,
+        clahe_clip=clahe_clip,
+        sharpen=sharpen,
+        flatten_turbidity=True,
+    )
+
+
 def make_geometry_frame(
     frame: np.ndarray,
     geometry_mode: str,
@@ -901,6 +1043,13 @@ def make_geometry_frame(
             clahe_clip=clahe_clip,
             sharpen=sharpen,
             flatten_turbidity=True,
+        )
+    if geometry_mode == "caustic_luma":
+        return make_caustic_stable_luma_geometry(
+            frame,
+            wb_gain=wb_gain,
+            clahe_clip=clahe_clip,
+            sharpen=sharpen,
         )
     raise ValueError(f"Unknown geometry mode: {geometry_mode}")
 
@@ -1860,6 +2009,7 @@ def write_metrics_csv(metrics: list[FrameMetric], selected: Iterable[FrameMetric
                 "brightness",
                 "feature_count",
                 "motion_delta",
+                "caustic_score",
                 "pair_delta_ms",
             ]
         )
@@ -1876,6 +2026,7 @@ def write_metrics_csv(metrics: list[FrameMetric], selected: Iterable[FrameMetric
                     f"{metric.brightness:.6f}",
                     metric.feature_count,
                     f"{metric.motion_delta:.6f}",
+                    f"{metric.caustic_score:.6f}",
                     f"{metric.pair_delta_ms:.6f}",
                 ]
             )
@@ -2042,6 +2193,14 @@ def build_variant_specs(args: argparse.Namespace) -> list[VariantSpec]:
     if args.alignment_tournament == "thorough":
         variants.extend(
             [
+                VariantSpec(
+                    name="caustic_luma_kplus_high_overlap",
+                    geometry_mode="caustic_luma",
+                    rectify_water=args.rectify_water,
+                    distortion_model=kplus,
+                    detector_sensitivity="Ultra",
+                    images_overlap="High",
+                ),
                 VariantSpec(
                     name="luma_kplus_high_overlap",
                     geometry_mode="luma",
@@ -3002,6 +3161,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--quality-quantile", type=_nonnegative_float, default=0.05, help="Drop candidate bucket winners below this quality quantile.")
     parser.add_argument("--min-motion", type=_nonnegative_float, default=0.8, help="Mean grayscale delta below which adjacent selected frames are treated as near duplicates.")
     parser.add_argument("--max-still-gap-s", type=_positive_float, default=0.9, help="Keep a frame after this gap even if motion is low.")
+    parser.add_argument("--connectivity-bridge-selection", action=argparse.BooleanOptionalAction, default=True, help="Spend part of the frame budget on lower-risk bridge frames across temporal or appearance gaps.")
+    parser.add_argument("--bridge-max-gap-s", type=_positive_float, default=0.55, help="Add bridge frames when selected-frame gaps exceed this many seconds.")
+    parser.add_argument("--bridge-max-delta", type=_positive_float, default=18.0, help="Add bridge frames when selected-frame fingerprint deltas exceed this value.")
+    parser.add_argument("--bridge-quality-floor", type=_nonnegative_float, default=0.22, help="Minimum normalized quality for bridge-frame rescue candidates.")
+    parser.add_argument("--bridge-max-extra-fraction", type=_nonnegative_float, default=0.35, help="Maximum bridge-frame additions as a fraction of the current selected set.")
     parser.add_argument("--crop-fraction", type=_nonnegative_float, default=0.04, help="Crop this fraction from each image edge before export.")
     parser.add_argument("--auto-crop-border", action=argparse.BooleanOptionalAction, default=True, help="Automatically crop fixed dark lens/housing borders before export.")
     parser.add_argument("--max-auto-crop", type=_nonnegative_float, default=0.12, help="Maximum fraction auto-crop may remove from each image edge.")
@@ -3010,7 +3174,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--wb-gain", type=_positive_float, default=2.4, help="Maximum channel gain for gray-world underwater white balance.")
     parser.add_argument("--clahe-clip", type=_positive_float, default=2.0, help="CLAHE clip limit for contrast enhancement.")
     parser.add_argument("--sharpen", type=_nonnegative_float, default=0.22, help="Unsharp-mask amount applied after contrast enhancement.")
-    parser.add_argument("--base-geometry-mode", choices=("raw", "enhanced", "luma", "flat_luma"), default=DEFAULT_FAST_GEOMETRY_MODE, help="Frame preprocessing mode for the base reconstruction variant.")
+    parser.add_argument("--base-geometry-mode", choices=("raw", "enhanced", "luma", "flat_luma", "caustic_luma"), default=DEFAULT_FAST_GEOMETRY_MODE, help="Frame preprocessing mode for the base reconstruction variant.")
     parser.add_argument("--legacy-enhanced-default", action="store_true", help="Use the previous fast default: enhanced color geometry with Brown4WithTangential2 distortion.")
     parser.add_argument("--jpeg-quality", type=int, default=96, help="JPEG quality for selected frames.")
     parser.add_argument("--texture-layers", action=argparse.BooleanOptionalAction, default=True, help="Write RealityScan color texture layers so geometry can use luma/dehazed images while texturing uses color-enhanced frames.")
@@ -3079,6 +3243,10 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--quality-quantile must be between 0 and 0.9")
     if args.min_good_component_ratio > 1.0:
         parser.error("--min-good-component-ratio must be no greater than 1.0")
+    if args.bridge_quality_floor > 1.0:
+        parser.error("--bridge-quality-floor must be no greater than 1.0")
+    if args.bridge_max_extra_fraction > 2.0:
+        parser.error("--bridge-max-extra-fraction must be no greater than 2.0")
     if args.metric_scale_min_pairs < 1:
         parser.error("--metric-scale-min-pairs must be at least 1")
     if args.mesh_large_face_min_faces < 1:
@@ -3145,6 +3313,11 @@ def main(argv: list[str] | None = None) -> int:
         quality_quantile=args.quality_quantile,
         min_motion=args.min_motion,
         max_still_gap_s=args.max_still_gap_s,
+        connectivity_bridge_selection=args.connectivity_bridge_selection,
+        bridge_max_gap_s=args.bridge_max_gap_s,
+        bridge_max_delta=args.bridge_max_delta,
+        bridge_quality_floor=args.bridge_quality_floor,
+        bridge_max_extra_fraction=args.bridge_max_extra_fraction,
     )
     if stereo_session is not None:
         print(

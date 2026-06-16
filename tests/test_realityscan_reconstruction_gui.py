@@ -137,6 +137,20 @@ def test_realityscan_gui_can_disable_color_texture_layers(tmp_path: Path):
         app.processEvents()
 
 
+def test_realityscan_gui_can_disable_bridge_frames(tmp_path: Path):
+    app = _app()
+    window = RealityScanReconstructionWindow()
+    try:
+        window.bridge_frames_check.setChecked(False)
+        command = window.build_command(preview=True)
+
+        assert "--no-connectivity-bridge-selection" in command
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
 def test_realityscan_gui_can_enable_component_diagnostics(tmp_path: Path):
     app = _app()
     window = RealityScanReconstructionWindow()
@@ -145,6 +159,24 @@ def test_realityscan_gui_can_enable_component_diagnostics(tmp_path: Path):
         command = window.build_command(preview=True)
 
         assert "--export-component-diagnostics" in command
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_realityscan_gui_caustic_fast_variant_switches_geometry_mode(tmp_path: Path):
+    app = _app()
+    window = RealityScanReconstructionWindow()
+    try:
+        index = window.fast_variant_combo.findData("caustic_luma")
+        assert index >= 0
+        window.fast_variant_combo.setCurrentIndex(index)
+
+        command = window.build_command(preview=True)
+
+        assert command[command.index("--base-geometry-mode") + 1] == "caustic_luma"
+        assert "--legacy-enhanced-default" not in command
     finally:
         window.close()
         window.deleteLater()

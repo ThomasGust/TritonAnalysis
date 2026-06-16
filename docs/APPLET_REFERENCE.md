@@ -347,7 +347,10 @@ Purpose:
 - Configure reconstruction presets, metric scaling, alignment-tournament
   options, and advanced CLI budgets without retyping a long command.
 - Default to the fast `Flat Luma K+` single-variant path, with a
-  `Legacy Enhanced Brown4` switch for reproducing the previous default.
+  `Caustic Stable Luma K+` diagnostic path and a `Legacy Enhanced Brown4`
+  switch for reproducing the previous default.
+- Keep bridge frames across temporal or appearance gaps so higher capture
+  frequency becomes a useful candidate pool instead of a pile of duplicates.
 - Write color texture-layer sidecars by default so RealityScan can align and
   mesh from luma-stabilized frames while texturing the final model in color.
 - Write ranked component summaries and optionally export top fragments as
