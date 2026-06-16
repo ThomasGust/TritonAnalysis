@@ -36,7 +36,7 @@ NON_TARGET_CLASSES = tuple(class_name for class_name in CRAB_CLASS_NAMES if clas
 DEFAULT_MODEL = os.environ.get("TRITON_ANALYSIS_CRAB_MODEL", "gpt-5.5")
 REASONING_EFFORTS = ("none", "low", "medium", "high", "xhigh")
 REFERENCE_ATLAS_MAX_EXAMPLES_PER_CLASS = 4
-DEFAULT_REASONING_EFFORT = os.environ.get("TRITON_ANALYSIS_CRAB_REASONING_EFFORT", "high").strip().lower() or "high"
+DEFAULT_REASONING_EFFORT = os.environ.get("TRITON_ANALYSIS_CRAB_REASONING_EFFORT", "xhigh").strip().lower() or "xhigh"
 DEFAULT_HOMOGRAPHY_MODEL = os.environ.get("TRITON_ANALYSIS_CRAB_HOMOGRAPHY_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
 DEFAULT_HOMOGRAPHY_REASONING_EFFORT = (
     os.environ.get("TRITON_ANALYSIS_CRAB_HOMOGRAPHY_REASONING_EFFORT", "xhigh").strip().lower() or "xhigh"
@@ -796,13 +796,21 @@ def draw_crab_count_result(image_path: str | Path, result: CrabCountResult, outp
         x0, y0, x1, y1 = _clamp_bbox(detection.bbox, (width, height))
         p0 = (int(round(x0)), int(round(y0)))
         p1 = (int(round(x1)), int(round(y1)))
-        cv2.rectangle(out, p0, p1, black, 8, lineType=cv2.LINE_AA)
-        cv2.rectangle(out, p0, p1, green, 3, lineType=cv2.LINE_AA)
+        cv2.rectangle(out, p0, p1, black, 5, lineType=cv2.LINE_AA)
+        cv2.rectangle(out, p0, p1, green, 2, lineType=cv2.LINE_AA)
         label = f"EGC {index}"
         label_origin = (p0[0], max(24, p0[1] - 8))
-        _draw_label(out, label, label_origin, green, black)
+        _draw_label(out, label, label_origin, green, black, scale=0.58, thickness=1)
 
-    _draw_label(out, f"European green crabs: {result.count}", (18, 34), green, black, scale=0.85, thickness=2)
+    count_text = f"European green crabs: {result.count}"
+    count_origin = _choose_count_label_origin(
+        count_text,
+        (width, height),
+        [detection.bbox for detection in result.detections],
+        scale=0.78,
+        thickness=2,
+    )
+    _draw_label(out, count_text, count_origin, green, black, scale=0.78, thickness=2)
     output = Path(output_path).expanduser()
     output.parent.mkdir(parents=True, exist_ok=True)
     _write_image(output, out)
@@ -2241,7 +2249,7 @@ def _draw_label(
     text: str,
     origin: tuple[int, int],
     foreground: tuple[int, int, int],
-    background: tuple[int, int, int],
+    outline: tuple[int, int, int],
     *,
     scale: float = 0.7,
     thickness: int = 2,
@@ -2251,5 +2259,43 @@ def _draw_label(
     x, y = origin
     x = max(0, min(image.shape[1] - text_w - 8, x))
     y = max(text_h + 8, min(image.shape[0] - baseline - 4, y))
-    cv2.rectangle(image, (x - 4, y - text_h - 8), (x + text_w + 4, y + baseline + 4), background, -1)
+    cv2.putText(image, text, (x, y), font, scale, outline, thickness + 2, cv2.LINE_AA)
     cv2.putText(image, text, (x, y), font, scale, foreground, thickness, cv2.LINE_AA)
+
+
+def _choose_count_label_origin(
+    text: str,
+    image_size: tuple[int, int],
+    detection_bboxes: Sequence[Sequence[float]],
+    *,
+    scale: float,
+    thickness: int,
+) -> tuple[int, int]:
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    width, height = image_size
+    (text_w, text_h), baseline = cv2.getTextSize(text, font, scale, thickness)
+    margin = 18
+    candidates = (
+        (margin, margin + text_h),
+        (max(margin, width - margin - text_w), margin + text_h),
+        (margin, max(margin + text_h, height - margin - baseline)),
+        (max(margin, width - margin - text_w), max(margin + text_h, height - margin - baseline)),
+    )
+
+    def label_bbox(origin: tuple[int, int]) -> tuple[float, float, float, float]:
+        x, y = origin
+        return (
+            float(max(0, min(width - text_w - 8, x))),
+            float(max(0, y - text_h - 6)),
+            float(min(width, x + text_w + 8)),
+            float(min(height, y + baseline + 6)),
+        )
+
+    def overlap_area(a: tuple[float, float, float, float], b: Sequence[float]) -> float:
+        ax0, ay0, ax1, ay1 = a
+        bx0, by0, bx1, by1 = _clamp_bbox(b, image_size)
+        overlap_w = max(0.0, min(ax1, bx1) - max(ax0, bx0))
+        overlap_h = max(0.0, min(ay1, by1) - max(ay0, by0))
+        return overlap_w * overlap_h
+
+    return min(candidates, key=lambda origin: sum(overlap_area(label_bbox(origin), bbox) for bbox in detection_bboxes))

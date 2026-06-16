@@ -353,7 +353,7 @@ def test_analyze_crab_image_uses_responses_api_and_writes_outputs(tmp_path: Path
     assert outputs.result_json.exists()
     assert outputs.annotated_image.exists()
     assert fake_client.responses.kwargs["model"] == "test-vision-model"
-    assert fake_client.responses.kwargs["reasoning"] == {"effort": "high"}
+    assert fake_client.responses.kwargs["reasoning"] == {"effort": "xhigh"}
     content = fake_client.responses.kwargs["input"][0]["content"]
     assert content[0]["type"] == "input_text"
     assert "European green crab" in content[0]["text"]

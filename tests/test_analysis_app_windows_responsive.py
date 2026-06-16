@@ -8,7 +8,7 @@ import pytest
 pytest.importorskip("PyQt6")
 
 from PyQt6.QtCore import QSettings, Qt
-from PyQt6.QtWidgets import QApplication, QScrollArea, QTabWidget
+from PyQt6.QtWidgets import QApplication, QScrollArea, QTabWidget, QToolButton
 
 from triton_analysis.gui.style import apply_modern_style
 from triton_analysis.workspace import set_active_workspace_root
@@ -91,6 +91,38 @@ def test_analysis_windows_fit_available_screen(window_path: str, min_scroll_area
         app.processEvents()
 
 
+def test_crab_counter_params_are_locked_by_default(tmp_path: Path):
+    app = _app()
+    from triton_analysis.gui.crab_counter_window import CrabCounterWindow
+
+    window = CrabCounterWindow(workspace_root=tmp_path / "workspace")
+    try:
+        window.show()
+        app.processEvents()
+
+        locked_widgets = (
+            window.preprocess_mode_combo,
+            window.model_edit,
+            window.reasoning_effort_combo,
+            window.analysis_flow_combo,
+            window.threshold_spin,
+            window.margin_spin,
+            window.output_root_edit,
+        )
+        assert window.unlock_params_check.isChecked() is False
+        assert all(widget.isEnabled() is False for widget in locked_widgets)
+        assert window.target_edit.isEnabled() is True
+
+        window.unlock_params_check.setChecked(True)
+        app.processEvents()
+
+        assert all(widget.isEnabled() is True for widget in locked_widgets)
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
 def test_multi_rect_actions_and_anchor_canvases_are_visible():
     app = _app()
     from triton_analysis.gui.multi_rect_length_measurement_window import MultiRectLengthMeasurementWindow
@@ -137,7 +169,7 @@ def test_unified_analysis_window_contains_competition_tabs():
         tabs = window.findChild(QTabWidget)
         assert tabs is not None
         assert tabs.count() == 10
-        assert [tabs.tabText(index) for index in range(tabs.count())] == [
+        all_tab_names = [
             "Coral Reconstruction",
             "Stereo Iceberg Length",
             "Iceberg Tracking",
@@ -149,10 +181,29 @@ def test_unified_analysis_window_contains_competition_tabs():
             "Backup Iceberg Measurement",
             "SSH",
         ]
+        competition_tab_names = all_tab_names[:5]
+        assert [tabs.tabText(index) for index in range(tabs.count())] == all_tab_names
+        assert [tabs.tabText(index) for index in range(tabs.count()) if tabs.isTabVisible(index)] == competition_tab_names
+
+        more_btn = window.findChild(QToolButton, "advancedTabsButton")
+        assert more_btn is not None
+        assert more_btn.isChecked() is False
+        more_btn.click()
+        app.processEvents()
+
+        assert more_btn.isChecked() is True
+        assert [tabs.tabText(index) for index in range(tabs.count()) if tabs.isTabVisible(index)] == all_tab_names
+
+        more_btn.click()
+        app.processEvents()
+
+        assert more_btn.isChecked() is False
+        assert [tabs.tabText(index) for index in range(tabs.count()) if tabs.isTabVisible(index)] == competition_tab_names
         assert window.focus_tab("crab") is True
         assert tabs.currentIndex() == 4
         assert window.focus_tab("crab-dataset") is True
         assert tabs.currentIndex() == 5
+        assert tabs.isTabVisible(5) is True
         assert window.focus_tab("backup-coral-measurement") is True
         assert tabs.currentIndex() == 7
         assert window.focus_tab("terminal") is True

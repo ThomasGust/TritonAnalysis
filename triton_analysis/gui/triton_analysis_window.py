@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -76,6 +77,14 @@ class TritonAnalysisWindow(QMainWindow):
         "backup-iceberg-measurement",
         "ssh",
     )
+    ADVANCED_TAB_KEYS = (
+        "crab-dataset",
+        "stereo-calibration",
+        "backup-coral-measurement",
+        "backup-iceberg-measurement",
+        "ssh",
+    )
+    DEFAULT_TAB_KEY = "coral-reconstruction"
 
     def __init__(
         self,
@@ -169,6 +178,15 @@ class TritonAnalysisWindow(QMainWindow):
         self.tabs.setMovable(True)
         self.tabs.setElideMode(Qt.TextElideMode.ElideRight)
         self.tabs.setUsesScrollButtons(True)
+        self._advanced_tabs_visible = True
+        self._advanced_tabs_button = QToolButton(self.tabs)
+        self._advanced_tabs_button.setObjectName("advancedTabsButton")
+        self._advanced_tabs_button.setText("More")
+        self._advanced_tabs_button.setCheckable(True)
+        self._advanced_tabs_button.setAutoRaise(True)
+        self._advanced_tabs_button.setToolTip("Show extra analysis tools.")
+        self._advanced_tabs_button.toggled.connect(self._set_advanced_tabs_visible)
+        self.tabs.setCornerWidget(self._advanced_tabs_button, Qt.Corner.TopRightCorner)
         central_layout.addWidget(self.tabs, 1)
         self.setCentralWidget(central)
 
@@ -270,6 +288,7 @@ class TritonAnalysisWindow(QMainWindow):
             "backup-iceberg": "backup-iceberg-measurement",
             "terminal": "ssh",
         }
+        self._set_advanced_tabs_visible(False)
 
         self._pilot_sync_label = QLabel()
         self._pilot_sync_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -285,7 +304,7 @@ class TritonAnalysisWindow(QMainWindow):
             self._pilot_sync_timer.start()
             QTimer.singleShot(1000, self._start_pilot_sync)
 
-        self.focus_tab(initial_tab or "coral-reconstruction")
+        self.focus_tab(initial_tab or self.DEFAULT_TAB_KEY)
         self.statusBar().showMessage("TritonAnalysis unified app ready.")
         resize_to_available_screen(self, 1720, 980, min_width=1120, min_height=720)
 
@@ -744,6 +763,8 @@ class TritonAnalysisWindow(QMainWindow):
         window = self._windows.get(normalized)
         if window is None:
             return False
+        if normalized in self.ADVANCED_TAB_KEYS and not self._advanced_tabs_visible:
+            self._set_advanced_tabs_visible(True)
         index = self.tabs.indexOf(window)
         if index < 0:
             return False
@@ -768,3 +789,28 @@ class TritonAnalysisWindow(QMainWindow):
         window.statusBar().setSizeGripEnabled(False)
         self._windows[normalized] = window
         self.tabs.addTab(window, label)
+
+    def _set_advanced_tabs_visible(self, visible: bool) -> None:
+        visible = bool(visible)
+        if not visible:
+            current = self.tabs.currentWidget()
+            if any(self._windows.get(key) is current for key in self.ADVANCED_TAB_KEYS):
+                fallback = self._windows.get(self.DEFAULT_TAB_KEY)
+                fallback_index = self.tabs.indexOf(fallback) if fallback is not None else -1
+                if fallback_index >= 0:
+                    self.tabs.setCurrentIndex(fallback_index)
+        for key in self.ADVANCED_TAB_KEYS:
+            window = self._windows.get(key)
+            if window is None:
+                continue
+            index = self.tabs.indexOf(window)
+            if index >= 0:
+                self.tabs.setTabVisible(index, visible)
+        self._advanced_tabs_visible = visible
+        button = self._advanced_tabs_button
+        if button.isChecked() != visible:
+            previous = button.blockSignals(True)
+            button.setChecked(visible)
+            button.blockSignals(previous)
+        button.setText("Less" if visible else "More")
+        button.setToolTip("Hide extra analysis tools." if visible else "Show extra analysis tools.")

@@ -9,8 +9,9 @@ from dataclasses import replace
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, QRectF, Qt, QThread, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor, QDesktopServices, QPainter, QPen, QPixmap
+from PyQt6.QtGui import QBrush, QColor, QDesktopServices, QFont, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDoubleSpinBox,
@@ -68,6 +69,25 @@ from triton_analysis.gui.responsive import resize_to_available_screen
 from triton_analysis.workspace import fresh_output_subdir, latest_pilot_run_dir, workspace_paths
 
 
+INVASIVE_SPECIES_FORM_URL = "https://cbjfq.share.hsforms.com/2rHEWllQ5QO6D7Z4CwVM7IQ"
+JUDGE_DISPLAY_TAB_INDEX = 3
+JUDGE_COUNT_COLOR = QColor(0, 255, 90)
+
+
+class WheelGuardComboBox(QComboBox):
+    """Combo box that will not change values from accidental scroll-wheel ticks."""
+
+    def wheelEvent(self, event) -> None:
+        event.ignore()
+
+
+class WheelGuardDoubleSpinBox(QDoubleSpinBox):
+    """Spin box that will not change values from accidental scroll-wheel ticks."""
+
+    def wheelEvent(self, event) -> None:
+        event.ignore()
+
+
 class CrabCounterPreview(QWidget):
     """Scaled image preview with result boxes painted on top."""
 
@@ -105,6 +125,7 @@ class CrabCounterPreview(QWidget):
         self.update()
 
     def set_candidate_result(self, result: CrabCountResult | None, image_path: str | Path | None = None) -> None:
+        self._result = None
         self._candidate_result = result
         if image_path:
             self._image_path = Path(image_path).expanduser()
@@ -112,7 +133,7 @@ class CrabCounterPreview(QWidget):
         self.update()
 
     def set_display_mode(self, mode: str) -> None:
-        self._display_mode = "all" if mode == "all" else "accepted"
+        self._display_mode = mode if mode in {"accepted", "all", "judge"} else "accepted"
         self.update()
 
     def set_interaction_mode(self, mode: str) -> None:
@@ -170,8 +191,18 @@ class CrabCounterPreview(QWidget):
             return
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         stage_candidates = self._result is None and self._candidate_result is not None
+        judge_mode = self._display_mode == "judge" and not stage_candidates
         detections = draw_result.candidates if (self._display_mode == "all" or stage_candidates) else draw_result.detections
-        self._draw_detections(painter, image_rect, draw_result.image_size, detections, stage_candidates=stage_candidates)
+        self._draw_detections(
+            painter,
+            image_rect,
+            draw_result.image_size,
+            detections,
+            stage_candidates=stage_candidates,
+            show_labels=not judge_mode,
+        )
+        if judge_mode:
+            self._draw_judge_count(painter, image_rect, draw_result.image_size, draw_result.detections, draw_result.count)
         if self._selection_visible:
             self._draw_selection(painter, image_rect)
 
@@ -183,27 +214,97 @@ class CrabCounterPreview(QWidget):
         detections,
         *,
         stage_candidates: bool = False,
+        show_labels: bool = True,
     ) -> None:
+        for index, detection in enumerate(detections, start=1):
+            rect = self._detection_rect(image_rect, image_size, detection)
+            color = QColor(80, 210, 255) if stage_candidates else self._candidate_color(detection)
+            painter.setPen(QPen(QColor(0, 0, 0), 3.5))
+            painter.drawRect(rect)
+            painter.setPen(QPen(color, 2.0))
+            painter.drawRect(rect)
+            if not show_labels:
+                continue
+            label = f"C{index}" if stage_candidates else self._candidate_label(detection, index=index)
+            if label:
+                text_rect = QRectF(rect.left(), max(image_rect.top(), rect.top() - 16), 72, 15)
+                self._draw_overlay_text(painter, text_rect, label, color)
+
+    @staticmethod
+    def _draw_overlay_text(
+        painter: QPainter,
+        text_rect: QRectF,
+        text: str,
+        color: QColor,
+        *,
+        point_size: int | None = None,
+    ) -> None:
+        old_font = painter.font()
+        font = QFont(old_font)
+        font.setPointSize(point_size if point_size is not None else max(8, old_font.pointSize() - 1))
+        font.setBold(True)
+        painter.setFont(font)
+        for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            painter.setPen(QColor(0, 0, 0, 210))
+            painter.drawText(
+                text_rect.translated(dx, dy),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                text,
+            )
+        painter.setPen(color)
+        painter.drawText(text_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
+        painter.setFont(old_font)
+
+    def _draw_judge_count(
+        self,
+        painter: QPainter,
+        image_rect: QRectF,
+        image_size: tuple[int, int],
+        detections,
+        count: int,
+    ) -> None:
+        long_text = f"European Green crabs: {int(count)}"
+        short_text = f"EGC: {int(count)}"
+        old_font = painter.font()
+        font = QFont(old_font)
+        font.setPointSize(18)
+        font.setBold(True)
+        painter.setFont(font)
+        metrics = painter.fontMetrics()
+        margin = 8.0
+        header_height = self._judge_count_header_height()
+        header_rect = QRectF(
+            image_rect.left(),
+            max(float(self.rect().top()) + 4.0, image_rect.top() - header_height),
+            image_rect.width(),
+            max(28.0, header_height - 8.0),
+        )
+        max_width = max(80.0, header_rect.width() - margin * 2.0)
+        text = short_text if metrics.horizontalAdvance(long_text) + 18 > max_width else long_text
+        text_width = min(max_width, float(metrics.horizontalAdvance(text) + 18))
+        count_rect = QRectF(
+            header_rect.left() + margin,
+            header_rect.top(),
+            text_width,
+            header_rect.height(),
+        )
+        painter.setFont(old_font)
+        self._draw_overlay_text(painter, count_rect, text, JUDGE_COUNT_COLOR, point_size=18)
+
+    def _judge_count_header_height(self) -> float:
+        return 44.0
+
+    @staticmethod
+    def _detection_rect(image_rect: QRectF, image_size: tuple[int, int], detection) -> QRectF:
         scale_x = image_rect.width() / max(1, image_size[0])
         scale_y = image_rect.height() / max(1, image_size[1])
-        for index, detection in enumerate(detections, start=1):
-            x0, y0, x1, y1 = detection.bbox
-            rect = QRectF(
-                image_rect.left() + x0 * scale_x,
-                image_rect.top() + y0 * scale_y,
-                max(1.0, (x1 - x0) * scale_x),
-                max(1.0, (y1 - y0) * scale_y),
-            )
-            color = QColor(80, 210, 255) if stage_candidates else self._candidate_color(detection)
-            painter.setPen(QPen(QColor(0, 0, 0), 5.0))
-            painter.drawRect(rect)
-            painter.setPen(QPen(color, 2.5))
-            painter.drawRect(rect)
-            label = f"Cand {index}" if stage_candidates else self._candidate_label(detection)
-            text_rect = QRectF(rect.left(), max(image_rect.top(), rect.top() - 18), 145, 16)
-            painter.fillRect(text_rect.adjusted(-2, -1, 2, 1), QColor(0, 0, 0, 170))
-            painter.setPen(color)
-            painter.drawText(text_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
+        x0, y0, x1, y1 = detection.bbox
+        return QRectF(
+            image_rect.left() + x0 * scale_x,
+            image_rect.top() + y0 * scale_y,
+            max(1.0, (x1 - x0) * scale_x),
+            max(1.0, (y1 - y0) * scale_y),
+        )
 
     def mousePressEvent(self, event) -> None:
         if self._pixmap.isNull():
@@ -252,7 +353,8 @@ class CrabCounterPreview(QWidget):
 
     def _image_rect(self) -> QRectF:
         margin = 10.0
-        available = QRectF(self.rect()).adjusted(margin, margin, -margin, -margin)
+        top_inset = self._judge_count_header_height() if self._display_mode == "judge" and self._result is not None else 0.0
+        available = QRectF(self.rect()).adjusted(margin, margin + top_inset, -margin, -margin)
         scale = min(
             available.width() / max(1, self._pixmap.width()),
             available.height() / max(1, self._pixmap.height()),
@@ -339,14 +441,16 @@ class CrabCounterPreview(QWidget):
             return QColor(235, 85, 85)
         return QColor(90, 175, 255)
 
-    def _candidate_label(self, detection) -> str:
+    def _candidate_label(self, detection, *, index: int | None = None) -> str:
         short = {
             TARGET_CLASS: "EGC",
             "native_rock_crab": "Rock",
             "jonah_crab": "Jonah",
             UNCERTAIN_CLASS: "?",
         }.get(detection.label, detection.label)
-        return f"{short} {detection.target_match_confidence:.2f}"
+        if detection.label == TARGET_CLASS and detection.accepted_as_target and index is not None:
+            return f"{short} {index}"
+        return short
 
 
 class CrabCounterWorker(QObject):
@@ -465,10 +569,11 @@ class CrabCounterWindow(QMainWindow):
         self.preview_tabs.addTab("European Green")
         self.preview_tabs.addTab("All Candidates")
         self.preview_tabs.addTab("Projected Board")
+        self.preview_tabs.addTab("Judge Display")
         self.preview_tabs.currentChanged.connect(self._preview_tab_changed)
         self.target_edit = QLineEdit(str(Path(image_path).expanduser()) if image_path else "")
         self.target_edit.editingFinished.connect(self._load_target_preview)
-        self.preprocess_mode_combo = QComboBox()
+        self.preprocess_mode_combo = WheelGuardComboBox()
         self.preprocess_mode_combo.addItem("Auto Homography", "auto_homography")
         self.preprocess_mode_combo.addItem("Full Frame (Legacy)", "none")
         self.preprocess_mode_combo.addItem("Manual Crop (Legacy)", "manual_crop")
@@ -477,31 +582,34 @@ class CrabCounterWindow(QMainWindow):
         self.preprocess_status_label = QLabel("OpenAI will locate and rectify the board before classification.")
         self.preprocess_status_label.setWordWrap(True)
         self.model_edit = QLineEdit(DEFAULT_MODEL)
-        self.reasoning_effort_combo = QComboBox()
+        self.reasoning_effort_combo = WheelGuardComboBox()
         self.reasoning_effort_combo.addItems(REASONING_EFFORTS)
         default_effort_index = self.reasoning_effort_combo.findText(DEFAULT_REASONING_EFFORT)
         self.reasoning_effort_combo.setCurrentIndex(max(0, default_effort_index))
-        self.threshold_spin = QDoubleSpinBox()
+        self.threshold_spin = WheelGuardDoubleSpinBox()
         self.threshold_spin.setRange(0.5, 0.99)
         self.threshold_spin.setDecimals(2)
         self.threshold_spin.setSingleStep(0.05)
         self.threshold_spin.setValue(DEFAULT_TARGET_MATCH_THRESHOLD)
         self.threshold_spin.setToolTip("Higher values reduce false positives but can miss ambiguous European green crabs.")
-        self.margin_spin = QDoubleSpinBox()
+        self.margin_spin = WheelGuardDoubleSpinBox()
         self.margin_spin.setRange(0.0, 0.5)
         self.margin_spin.setDecimals(2)
         self.margin_spin.setSingleStep(0.05)
         self.margin_spin.setValue(DEFAULT_TARGET_MARGIN_THRESHOLD)
         self.margin_spin.setToolTip("Higher values require European green crab to beat the closest non-target by more.")
-        self.analysis_flow_combo = QComboBox()
+        self.analysis_flow_combo = WheelGuardComboBox()
         self.analysis_flow_combo.addItem("3-Stage Pipeline", "pipeline")
         self.analysis_flow_combo.addItem("Single Request (Legacy)", "single")
         self.output_root_edit = QLineEdit(str(self._workspace.results / "crab_counter"))
+        self.unlock_params_check = QCheckBox("Unlock Params")
+        self.unlock_params_check.setToolTip("Leave this off during normal runs to avoid accidental model, flow, and threshold changes.")
+        self.unlock_params_check.toggled.connect(self._update_param_lock_state)
         self.status_label = QLabel("Set OPENAI_API_KEY, choose a target image, then analyze.")
         self.status_label.setWordWrap(True)
         self.count_label = QLabel("Count: -")
         self.count_label.setObjectName("crabCounterCount")
-        self.count_label.setStyleSheet("QLabel#crabCounterCount { font-size: 22px; font-weight: 700; }")
+        self.count_label.setStyleSheet("QLabel#crabCounterCount { color: #00ff66; font-size: 24px; font-weight: 800; }")
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
         self.progress_bar.setTextVisible(True)
@@ -517,9 +625,25 @@ class CrabCounterWindow(QMainWindow):
         self.open_annotated_btn = QPushButton("Open Annotated")
         self.open_annotated_btn.clicked.connect(self._open_annotated_image)
         self.open_annotated_btn.setEnabled(False)
+        self.open_species_form_btn = QPushButton("Open Species Form")
+        self.open_species_form_btn.setObjectName("crabCounterSpeciesForm")
+        self.open_species_form_btn.setMinimumHeight(34)
+        self.open_species_form_btn.setStyleSheet(
+            "QPushButton#crabCounterSpeciesForm { font-weight: 700; padding: 6px 14px; }"
+        )
+        self.open_species_form_btn.clicked.connect(self._open_invasive_species_form)
         self.open_preprocessed_btn = QPushButton("Open Input")
         self.open_preprocessed_btn.clicked.connect(self._open_preprocessed_image)
         self.open_preprocessed_btn.setEnabled(False)
+        self._locked_param_widgets = (
+            self.preprocess_mode_combo,
+            self.model_edit,
+            self.reasoning_effort_combo,
+            self.analysis_flow_combo,
+            self.threshold_spin,
+            self.margin_spin,
+            self.output_root_edit,
+        )
 
         central = QWidget()
         root_layout = QVBoxLayout(central)
@@ -533,6 +657,7 @@ class CrabCounterWindow(QMainWindow):
         root_layout.addWidget(splitter, 1)
         self.setCentralWidget(central)
 
+        self._update_param_lock_state()
         self._load_default_references()
         self._load_target_preview()
         self.statusBar().showMessage("Crab counter ready.")
@@ -543,6 +668,12 @@ class CrabCounterWindow(QMainWindow):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
+        judge_row = QHBoxLayout()
+        judge_row.setContentsMargins(4, 0, 4, 0)
+        judge_row.addWidget(self.count_label)
+        judge_row.addStretch(1)
+        judge_row.addWidget(self.open_species_form_btn)
+        layout.addLayout(judge_row)
         layout.addWidget(self.preview_tabs, 0)
         layout.addWidget(self.preview, 1)
         return panel
@@ -611,6 +742,7 @@ class CrabCounterWindow(QMainWindow):
         layout.addLayout(reference_row)
 
         settings_form = QFormLayout()
+        settings_form.addRow("", self.unlock_params_check)
         settings_form.addRow("Model", self.model_edit)
         settings_form.addRow("Reasoning Effort", self.reasoning_effort_combo)
         settings_form.addRow("Flow", self.analysis_flow_combo)
@@ -626,7 +758,6 @@ class CrabCounterWindow(QMainWindow):
         action_row.addWidget(self.open_annotated_btn)
         layout.addLayout(action_row)
 
-        layout.addWidget(self.count_label)
         layout.addWidget(self.progress_bar)
         layout.addWidget(self.status_label)
         layout.addWidget(QLabel("Detections"))
@@ -638,6 +769,12 @@ class CrabCounterWindow(QMainWindow):
         scroll.setMinimumWidth(260)
         scroll.setMaximumWidth(420)
         return scroll
+
+    def _update_param_lock_state(self) -> None:
+        unlocked = self.unlock_params_check.isChecked()
+        for widget in self._locked_param_widgets:
+            widget.setEnabled(unlocked)
+        self.unlock_params_check.setText("Params Unlocked" if unlocked else "Unlock Params")
 
     def _load_default_references(self) -> None:
         references = discover_counter_reference_paths(self._workspace.root)
@@ -1002,7 +1139,7 @@ class CrabCounterWindow(QMainWindow):
             f"{mapping_note}"
         )
         self._populate_detection_list(display_result)
-        self._refresh_preview_display()
+        self._show_judge_display()
         self.open_output_btn.setEnabled(True)
         self.open_annotated_btn.setEnabled(True)
         self.progress_bar.setVisible(False)
@@ -1030,7 +1167,7 @@ class CrabCounterWindow(QMainWindow):
                 f"{run_result.reasoning_effort}: {run_result.count}/{len(run_result.candidates)} "
                 f"candidate(s) accepted in {run_result.analysis_seconds:.1f}s"
             )
-        self._refresh_preview_display()
+        self._show_judge_display()
         self.open_output_btn.setEnabled(True)
         self.open_annotated_btn.setEnabled(True)
         self.progress_bar.setVisible(False)
@@ -1076,9 +1213,18 @@ class CrabCounterWindow(QMainWindow):
         self._last_candidate_display_result = self._preview_result_for_current_run(projected)
         self._refresh_preview_display()
 
+    def _show_judge_display(self) -> None:
+        if self.preview_tabs.currentIndex() == JUDGE_DISPLAY_TAB_INDEX:
+            self.preview.set_display_mode("judge")
+            self._refresh_preview_display()
+            return
+        self.preview_tabs.setCurrentIndex(JUDGE_DISPLAY_TAB_INDEX)
+
     def _refresh_preview_display(self) -> None:
-        projected_tab = self.preview_tabs.currentIndex() == 2
-        self.preview.set_selection_visible(not projected_tab)
+        preview_index = self.preview_tabs.currentIndex()
+        projected_tab = preview_index == 2
+        judge_tab = preview_index == JUDGE_DISPLAY_TAB_INDEX
+        self.preview.set_selection_visible(not (projected_tab or judge_tab))
         if projected_tab:
             projected = self._last_projected_result or self._last_candidate_projected_result
             if projected is None:
@@ -1136,7 +1282,13 @@ class CrabCounterWindow(QMainWindow):
             )
 
     def _preview_tab_changed(self, index: int) -> None:
-        self.preview.set_display_mode("all" if index in (1, 2) else "accepted")
+        if index == JUDGE_DISPLAY_TAB_INDEX:
+            mode = "judge"
+        elif index in (1, 2):
+            mode = "all"
+        else:
+            mode = "accepted"
+        self.preview.set_display_mode(mode)
         self._refresh_preview_display()
 
     def _handle_worker_progress(self, payload: object) -> None:
@@ -1271,3 +1423,9 @@ class CrabCounterWindow(QMainWindow):
         if self._last_preprocess_result is None:
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._last_preprocess_result.processed_image)))
+
+    def _open_invasive_species_form(self) -> None:
+        if QDesktopServices.openUrl(QUrl(INVASIVE_SPECIES_FORM_URL)):
+            self.statusBar().showMessage("Opened invasive species reporting form.", 5000)
+        else:
+            self.status_label.setText(f"Could not open invasive species form: {INVASIVE_SPECIES_FORM_URL}")
