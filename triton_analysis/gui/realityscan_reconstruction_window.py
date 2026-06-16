@@ -42,7 +42,8 @@ from triton_analysis.workspace import fresh_output_subdir, latest_pilot_stereo_s
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-PIPELINE_RELATIVE_PATH = Path("tools") / "realityscan_underwater_pipeline.py"
+PIPELINE_MODULE = "triton_analysis.realityscan.underwater_pipeline"
+PIPELINE_PACKAGE_PATH = Path("triton_analysis") / "realityscan" / "underwater_pipeline.py"
 PRESETS = ("balanced", "high-detail", "max-detail")
 DEFAULT_MIN_GOOD_COMPONENT_RATIO = 0.12
 FAST_VARIANTS = (
@@ -61,21 +62,20 @@ def default_results_dir(*, create: bool = False) -> Path:
 def find_default_pipeline_root() -> Path:
     """Return the most likely checkout that contains the current pipeline."""
     candidates: list[Path] = []
-    for env_name in ("TRITON_REALITYSCAN_PIPELINE_ROOT", "TRITON_PILOT_ROOT"):
+    for env_name in ("TRITON_ANALYSIS_ROOT", "TRITON_REALITYSCAN_PIPELINE_ROOT"):
         value = os.environ.get(env_name, "").strip()
         if value:
             candidates.append(Path(value).expanduser())
     candidates.extend(
         [
             REPO_ROOT,
-            REPO_ROOT.parent / "TritonPilot",
             REPO_ROOT.parent / "TritonAnalysis",
         ]
     )
     for candidate in candidates:
-        if (candidate / PIPELINE_RELATIVE_PATH).exists():
+        if (candidate / PIPELINE_PACKAGE_PATH).exists():
             return candidate.resolve()
-    return (REPO_ROOT.parent / "TritonPilot").resolve()
+    return REPO_ROOT.resolve()
 
 
 def find_realityscan_exe() -> Path | None:
@@ -316,6 +316,7 @@ class RealityScanReconstructionWindow(QMainWindow):
         self.clean_model_check = QCheckBox("Clean Model")
         self.connectivity_report_check = QCheckBox("Connectivity Report")
         self.connectivity_report_check.setChecked(True)
+        self.component_diagnostics_check = QCheckBox("Component Diagnostics")
         self.try_merge_check = QCheckBox("Try Merge Components")
         self.fail_poor_alignment_check = QCheckBox("Fail On Poor Alignment")
         self.fail_poor_alignment_check.setChecked(True)
@@ -331,6 +332,7 @@ class RealityScanReconstructionWindow(QMainWindow):
             self.large_face_filter_check,
             self.clean_model_check,
             self.connectivity_report_check,
+            self.component_diagnostics_check,
             self.try_merge_check,
             self.fail_poor_alignment_check,
         ]
@@ -472,6 +474,7 @@ class RealityScanReconstructionWindow(QMainWindow):
                 ("workspace", "Workspace"),
                 ("contact_sheet", "Contact Sheet"),
                 ("report", "Report"),
+                ("components", "Components"),
                 ("model", "OBJ"),
                 ("metric_model", "Metric OBJ"),
                 ("metric_scale", "Metric Scale"),
@@ -581,7 +584,7 @@ class RealityScanReconstructionWindow(QMainWindow):
 
     def build_command(self, *, preview: bool = False, output_override: str | None = None) -> list[str]:
         session = self._path_arg(self.session_edit.text()) or ("<stereo-session>" if preview else "")
-        command = [sys.executable, "-u", "-m", "tools.realityscan_underwater_pipeline", session]
+        command = [sys.executable, "-u", "-m", PIPELINE_MODULE, session]
         output_path = output_override if output_override is not None else self._output_workspace_for_command(preview=preview)
         if output_path:
             command.extend(["--output", output_path])
@@ -615,6 +618,8 @@ class RealityScanReconstructionWindow(QMainWindow):
             command.append("--clean-model")
         if self.connectivity_report_check.isChecked():
             command.append("--connectivity-report")
+        if self.component_diagnostics_check.isChecked():
+            command.append("--export-component-diagnostics")
         if self.try_merge_check.isChecked():
             command.append("--try-merge-components")
         if self.fail_poor_alignment_check.isChecked():
@@ -831,11 +836,11 @@ class RealityScanReconstructionWindow(QMainWindow):
 
     def _validate_before_run(self, *, output_workspace: str | None = None) -> bool:
         pipeline_root = self._pipeline_root()
-        if not (pipeline_root / PIPELINE_RELATIVE_PATH).exists():
+        if not (pipeline_root / PIPELINE_PACKAGE_PATH).exists():
             QMessageBox.warning(
                 self,
                 "RealityScan Reconstruction",
-                f"Pipeline file was not found:\n{pipeline_root / PIPELINE_RELATIVE_PATH}",
+                f"Pipeline file was not found:\n{pipeline_root / PIPELINE_PACKAGE_PATH}",
             )
             return False
 
@@ -945,6 +950,10 @@ class RealityScanReconstructionWindow(QMainWindow):
             self._set_stage("RealityScan command written", 30)
         elif text.startswith("Contact sheet:"):
             self._set_output_path("contact_sheet", Path(text.split(":", 1)[1].strip()))
+        elif text.startswith("Component summary:"):
+            self._set_output_path("components", Path(text.split(":", 1)[1].strip()))
+        elif text.startswith("Component diagnostics summary:"):
+            self._set_output_path("components", Path(text.split(":", 1)[1].strip()))
         elif text.startswith("Launching RealityScan"):
             self._set_stage("RealityScan reconstruction running", 36)
         elif text.startswith("Detected "):
@@ -1023,6 +1032,7 @@ class RealityScanReconstructionWindow(QMainWindow):
         known = {
             "contact_sheet": workspace / "selection_contact_sheet.jpg",
             "report": workspace / "reports" / "final_overview.html",
+            "components": workspace / "reports" / "alignment_components.csv",
             "model": workspace / "underwater_model.obj",
             "metric_model": workspace / "underwater_model_metric.obj",
             "metric_scale": workspace / "reports" / "metric_scale.json",

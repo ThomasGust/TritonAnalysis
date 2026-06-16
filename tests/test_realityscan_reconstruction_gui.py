@@ -23,10 +23,10 @@ def _app() -> QApplication:
 
 
 def _pipeline_root(tmp_path: Path) -> Path:
-    root = tmp_path / "TritonPilot"
-    tools = root / "tools"
-    tools.mkdir(parents=True)
-    (tools / "realityscan_underwater_pipeline.py").write_text("# test pipeline\n", encoding="utf-8")
+    root = tmp_path / "TritonAnalysis"
+    pipeline = root / "triton_analysis" / "realityscan"
+    pipeline.mkdir(parents=True)
+    (pipeline / "underwater_pipeline.py").write_text("# test pipeline\n", encoding="utf-8")
     return root
 
 
@@ -62,7 +62,7 @@ def test_realityscan_gui_builds_stereo_pipeline_command(tmp_path: Path):
             os.sys.executable,
             "-u",
             "-m",
-            "tools.realityscan_underwater_pipeline",
+            "triton_analysis.realityscan.underwater_pipeline",
         ]
         assert command[4] == str(session.resolve())
         assert command[command.index("--output") + 1] == str(output)
@@ -137,6 +137,20 @@ def test_realityscan_gui_can_disable_color_texture_layers(tmp_path: Path):
         app.processEvents()
 
 
+def test_realityscan_gui_can_enable_component_diagnostics(tmp_path: Path):
+    app = _app()
+    window = RealityScanReconstructionWindow()
+    try:
+        window.component_diagnostics_check.setChecked(True)
+        command = window.build_command(preview=True)
+
+        assert "--export-component-diagnostics" in command
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
 def test_realityscan_gui_legacy_fast_variant_switches_default(tmp_path: Path):
     app = _app()
     window = RealityScanReconstructionWindow()
@@ -163,6 +177,7 @@ def test_realityscan_gui_populates_known_workspace_outputs(tmp_path: Path):
     for path in (
         workspace / "selection_contact_sheet.jpg",
         reports / "final_overview.html",
+        reports / "alignment_components.csv",
         workspace / "underwater_model.obj",
         workspace / "underwater_model_metric.obj",
         reports / "metric_scale.json",
@@ -177,6 +192,7 @@ def test_realityscan_gui_populates_known_workspace_outputs(tmp_path: Path):
         assert window._output_labels["workspace"].text() == str(workspace)
         assert window._output_buttons["metric_model"].isEnabled()
         assert window.view_metric_model_btn.isEnabled()
+        assert window._output_labels["components"].text() == str(reports / "alignment_components.csv")
         assert window._output_labels["metric_scale"].text() == str(reports / "metric_scale.json")
     finally:
         window.close()

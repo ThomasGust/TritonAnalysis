@@ -719,10 +719,15 @@ def _render_crab_patch(
     target_long_edge: int,
     rotation_deg: float,
     rng: np.random.Generator,
+    *,
+    color_jitter_strength: float = 1.0,
+    paper_pad_fraction_range: tuple[float, float] = (0.08, 0.18),
+    paper_radius_fraction_range: tuple[float, float] = (0.075, 0.13),
+    paper_alpha_scale: float = 1.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    src = _jitter_template_color(template.bgr, template.mask, rng)
+    src = _jitter_template_color(template.bgr, template.mask, rng, strength=color_jitter_strength)
     mask = template.mask.copy()
-    pad_fraction = float(rng.uniform(0.08, 0.18))
+    pad_fraction = float(_sample_range(rng, paper_pad_fraction_range))
     source_long_edge = max(1, max(src.shape[:2]))
     scaled_crab_long_edge = max(4.0, float(target_long_edge) / (1.0 + 2.0 * pad_fraction))
     scale = max(0.05, scaled_crab_long_edge / source_long_edge)
@@ -731,52 +736,81 @@ def _render_crab_patch(
     mask = cv2.resize(mask, scaled_size, interpolation=cv2.INTER_NEAREST)
 
     pad = max(3, int(round(max(src.shape[:2]) * pad_fraction)))
-    paper_shape = _paper_mask(mask, pad, rng)
-    patch_h, patch_w = paper_shape.shape[:2]
-
-    paper_color = rng.uniform(225, 255, size=(1, 1, 3)).astype(np.float32)
-    paper = np.full((patch_h, patch_w, 3), paper_color, dtype=np.float32)
-    paper += rng.normal(0.0, 2.6, paper.shape)
-    patch = np.clip(paper, 0, 255).astype(np.uint8)
-    patch[pad : pad + src.shape[0], pad : pad + src.shape[1]] = _alpha_blend(
-        patch[pad : pad + src.shape[0], pad : pad + src.shape[1]],
-        src,
-        _soften_mask(mask, blur=3),
-    )
-    alpha = paper_shape
-
+    if paper_alpha_scale > 0.001:
+        paper_shape = _paper_mask(mask, pad, rng, radius_fraction_range=paper_radius_fraction_range)
+        patch_h, patch_w = paper_shape.shape[:2]
+        paper_color = rng.uniform(225, 255, size=(1, 1, 3)).astype(np.float32)
+        paper = np.full((patch_h, patch_w, 3), paper_color, dtype=np.float32)
+        paper += rng.normal(0.0, 2.6, paper.shape)
+        patch = np.clip(paper, 0, 255).astype(np.uint8)
+        patch[pad : pad + src.shape[0], pad : pad + src.shape[1]] = _alpha_blend(
+            patch[pad : pad + src.shape[0], pad : pad + src.shape[1]],
+            src,
+            _soften_mask(mask, blur=3),
+        )
+    else:
+        patch_h = src.shape[0] + pad * 2
+        patch_w = src.shape[1] + pad * 2
+        patch = np.zeros((patch_h, patch_w, 3), dtype=np.uint8)
+        patch[pad : pad + src.shape[0], pad : pad + src.shape[1]] = src
+        paper_shape = np.zeros((patch_h, patch_w), dtype=np.uint8)
     label_mask = np.zeros((patch_h, patch_w), dtype=np.uint8)
     label_mask[pad : pad + mask.shape[0], pad : pad + mask.shape[1]] = mask
+    crab_alpha = _soften_mask(label_mask, blur=3)
+    paper_alpha = np.clip(paper_shape.astype(np.float32) * max(0.0, float(paper_alpha_scale)), 0, 255).astype(
+        np.uint8
+    )
+    alpha = np.maximum(paper_alpha, crab_alpha)
     return _rotate_patch(patch, alpha, label_mask, rotation_deg)
 
 
-def _jitter_template_color(image: np.ndarray, mask: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+def _jitter_template_color(
+    image: np.ndarray,
+    mask: np.ndarray,
+    rng: np.random.Generator,
+    *,
+    strength: float = 1.0,
+) -> np.ndarray:
+    strength = max(0.0, min(1.0, float(strength)))
+
+    def blend_neutral(neutral: float, sampled: float) -> float:
+        return neutral + (sampled - neutral) * strength
+
     out = image.astype(np.float32)
     channel_gains = np.array(
         [
-            rng.uniform(0.72, 1.08),
-            rng.uniform(0.72, 1.08),
-            rng.uniform(0.55, 1.0),
+            blend_neutral(1.0, float(rng.uniform(0.72, 1.08))),
+            blend_neutral(1.0, float(rng.uniform(0.72, 1.08))),
+            blend_neutral(1.0, float(rng.uniform(0.55, 1.0))),
         ],
         dtype=np.float32,
     )
     out *= channel_gains
-    out = (out - 127.5) * rng.uniform(0.72, 1.12) + 127.5 + rng.uniform(-24, 6)
+    out = (out - 127.5) * blend_neutral(1.0, float(rng.uniform(0.72, 1.12))) + 127.5 + blend_neutral(
+        0.0,
+        float(rng.uniform(-24, 6)),
+    )
     out = np.clip(out, 0, 255).astype(np.uint8)
     hsv = cv2.cvtColor(out, cv2.COLOR_BGR2HSV).astype(np.float32)
-    hsv[:, :, 1] *= rng.uniform(0.42, 1.05)
-    hsv[:, :, 2] *= rng.uniform(0.68, 1.03)
-    if rng.random() < 0.18:
-        hsv[:, :, 1] *= rng.uniform(1.0, 1.14)
+    hsv[:, :, 1] *= blend_neutral(1.0, float(rng.uniform(0.42, 1.05)))
+    hsv[:, :, 2] *= blend_neutral(1.0, float(rng.uniform(0.68, 1.03)))
+    if rng.random() < 0.18 * strength:
+        hsv[:, :, 1] *= blend_neutral(1.0, float(rng.uniform(1.0, 1.14)))
     out = cv2.cvtColor(np.clip(hsv, 0, 255).astype(np.uint8), cv2.COLOR_HSV2BGR)
-    if rng.random() < 0.2:
+    if rng.random() < 0.2 * strength:
         out = cv2.GaussianBlur(out, (3, 3), 0)
     return _alpha_blend(image, out, mask)
 
 
-def _paper_mask(mask: np.ndarray, pad: int, rng: np.random.Generator) -> np.ndarray:
+def _paper_mask(
+    mask: np.ndarray,
+    pad: int,
+    rng: np.random.Generator,
+    *,
+    radius_fraction_range: tuple[float, float] = (0.075, 0.13),
+) -> np.ndarray:
     padded = cv2.copyMakeBorder(mask, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=0)
-    radius = max(5, int(max(mask.shape[:2]) * rng.uniform(0.075, 0.13)))
+    radius = max(3, int(max(mask.shape[:2]) * _sample_range(rng, radius_fraction_range)))
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (radius * 2 + 1, radius * 2 + 1))
     paper = cv2.dilate(padded, kernel, iterations=1)
     paper = cv2.morphologyEx(paper, cv2.MORPH_CLOSE, kernel)

@@ -350,6 +350,8 @@ Purpose:
   `Legacy Enhanced Brown4` switch for reproducing the previous default.
 - Write color texture-layer sidecars by default so RealityScan can align and
   mesh from luma-stabilized frames while texturing the final model in color.
+- Write ranked component summaries and optionally export top fragments as
+  `.rsalign` components for alignment diagnostics.
 - Stream pipeline/RealityScan progress into the applet and collect output
   paths for review.
 - Load the exported OBJ into the adjacent Model Viewer tab for inspection and
@@ -359,19 +361,19 @@ Primary modules:
 
 - `triton_analysis/apps/main_realityscan_reconstruction.py`
 - `triton_analysis/gui/realityscan_reconstruction_window.py`
-- Existing pipeline checkout selected in the GUI's `Pipeline Root` field
+- TritonAnalysis pipeline package selected in the GUI's `Pipeline Root` field
 
 Inputs:
 
 - TritonPilot stereo session folder or `manifest.json`
 - `stereo_calibration.json`
 - RealityScan/RealityCapture executable, auto-detected when possible
-- Pipeline root containing `tools/realityscan_underwater_pipeline.py`
+- Pipeline root containing `triton_analysis/realityscan/underwater_pipeline.py`
 
 Outputs:
 
 - New timestamped RealityScan workspace under `Workspace/results/realityscan` by default
-- Contact sheet, logs, reports, connectivity CSVs, project file, and OBJ export
+- Contact sheet, logs, reports, connectivity/component CSVs, project file, and OBJ export
 - Metric-scaled OBJ and `metric_scale.json` when stereo scaling succeeds
 
 ## RealityScan Model Viewer

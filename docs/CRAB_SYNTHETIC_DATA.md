@@ -107,6 +107,55 @@ The default blur and JPEG settings are intentionally moderate. Increase
 Use `--no-stereo-backgrounds` if you want to exclude auto-discovered stereo
 camera images.
 
+## Real-board plane generator
+
+The more realistic dataset path uses real empty-board images as the scene and
+projects crab cutouts into the manually annotated board plane. This is a better
+starting point for closing the synthetic-to-real gap than relying only on fully
+rendered board geometry.
+
+Place empty-board photos under:
+
+```text
+Workspace\data\base images
+```
+
+Place additional real pool crab template images under:
+
+```text
+Workspace\data\real crabs
+```
+
+The template file names should include `green` or `euro`, `rock`, or `jonah`.
+The generator also includes the MATE reference images from `Downloads` when they
+are present, so real pool crab photos and the official reference cutouts are
+used together.
+
+Launch the GUI from the unified app with the `Crab Dataset` tab, or directly:
+
+```powershell
+python -m triton_analysis.apps.main_crab_dataset_generator
+```
+
+For each empty-board image, select the image and mark the four board corners in
+order around the board. Save each plane. The annotations are written to:
+
+```text
+Workspace\data\board_plane_annotations.json
+```
+
+`Generate Dataset` writes a YOLO dataset under `Workspace\datasets`, with the
+same `data.yaml`, `images/train`, `images/val`, `labels/train`, `labels/val`,
+`classes.txt`, `manifest.json`, and `preview.jpg` structure as the original
+synthetic generator.
+
+The real-board generator defaults to a calmer appearance than the fully
+synthetic renderer: crab color jitter is mild, no extra paper halo is added
+around each crab, and the internal board texture is rendered at a faster 768 px
+plane size before projection. Increase `Paper edge` only if the preview needs a
+faint cutout/laminate border, and increase `Plane size` only when the generated
+crabs look soft at your target training resolution.
+
 ## YOLO training
 
 For a first synthetic-only detector pass, train a small pretrained YOLO model on

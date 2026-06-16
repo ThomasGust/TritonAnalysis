@@ -20,12 +20,14 @@ TAB_CHOICES = (
     "stereo-iceberg-length",
     "iceberg-tracking",
     "edna-analysis",
+    "crab-dataset",
     "stereo-calibration",
     "backup-coral-measurement",
     "backup-iceberg-measurement",
     "ssh",
     "iceberg-measurement",
     "edna",
+    "crab",
     "terminal",
 )
 

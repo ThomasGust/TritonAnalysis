@@ -147,8 +147,8 @@ photogrammetry jobs after the stereo session has been copied off the pilot
 station.
 
 1. Select the `Pipeline Root` that contains the current
-   `tools/realityscan_underwater_pipeline.py`; the applet auto-detects a
-   sibling `TritonPilot` checkout when present.
+   `triton_analysis\realityscan\underwater_pipeline.py`; the applet
+   auto-detects the `TritonAnalysis` checkout.
 2. Select the stereo session folder or its `manifest.json`.
 3. Select the matching `stereo_calibration.json`; `Find Recent` searches recent
    TritonPilot stereo sessions.
@@ -169,13 +169,19 @@ and prevents a new reconstruction from overwriting the previous one.
 
 If the applet stops after alignment with a poor component-ratio warning, do not
 use that run for measurements. Inspect `reports\alignment_results.csv`, the
-RealityScan overview report, and `reports\connectivity_*.csv`. Good stereo
-pool sessions have formed one largest component of roughly 12% or more of the
-selected images; runs dominated by moving caustic light patterns tend to split
-into many tiny pair islands and export only a small fragment when meshed.
+ranked component table in `reports\alignment_components.csv`, the RealityScan
+overview report, and `reports\connectivity_*.csv`. Good stereo pool sessions
+have formed one largest component of roughly 12% or more of the selected images;
+runs dominated by moving caustic light patterns tend to split into many tiny
+pair islands and export only a small fragment when meshed.
 `Alignment Only` can test the selected fast variant without meshing. Turn on a
 Standard or Thorough alignment tournament when there is time for a slower
 diagnostic comparison across multiple preprocessing variants.
+Enable `Component Diagnostics` for an alignment-only or diagnostic run when you
+want to inspect the other large fragments. The pipeline exports ranked
+`.rsalign` components under `component_diagnostics\` without building dense
+meshes for each fragment. Sparse cloud export is available from the CLI as an
+extra experiment, but `.rsalign` export is the reliable default.
 The frame metrics CSV also includes `caustic_score`; values near 1.0 mean the
 selector is seeing strong bright, low-saturation light ripples instead of
 stable scene texture. `Thorough` mode includes an experimental

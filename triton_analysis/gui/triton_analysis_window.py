@@ -26,6 +26,7 @@ from triton_analysis.gui.file_dialogs import ThumbnailFileDialog as QFileDialog
 
 from triton_analysis.workspace import AnalysisWorkspace, set_active_workspace_root, workspace_paths
 from triton_analysis.gui.edna_analysis_window import EDNAAnalysisWindow
+from triton_analysis.gui.crab_dataset_generator_window import CrabDatasetGeneratorWindow
 from triton_analysis.gui.iceberg_measurement_window import IcebergMeasurementWindow
 from triton_analysis.gui.iceberg_tracking_window import IcebergTrackingWindow
 from triton_analysis.gui.multi_rect_length_measurement_window import MultiRectLengthMeasurementWindow
@@ -67,6 +68,7 @@ class TritonAnalysisWindow(QMainWindow):
         "stereo-iceberg-length",
         "iceberg-tracking",
         "edna-analysis",
+        "crab-dataset",
         "stereo-calibration",
         "backup-coral-measurement",
         "backup-iceberg-measurement",
@@ -203,6 +205,14 @@ class TritonAnalysisWindow(QMainWindow):
             ),
         )
         self._add_window(
+            "crab-dataset",
+            "Crab Dataset",
+            CrabDatasetGeneratorWindow(
+                workspace_root=self._workspace.root,
+                parent=self,
+            ),
+        )
+        self._add_window(
             "stereo-calibration",
             "Stereo Calibration",
             StereoCalibrationWindow(
@@ -239,6 +249,8 @@ class TritonAnalysisWindow(QMainWindow):
             "iceberg-measurement": "stereo-iceberg-length",
             "iceberg-length": "stereo-iceberg-length",
             "edna": "edna-analysis",
+            "crab": "crab-dataset",
+            "crab-dataset-generator": "crab-dataset",
             "backup-coral": "backup-coral-measurement",
             "multi-rect": "backup-coral-measurement",
             "multi-rect-length": "backup-coral-measurement",
