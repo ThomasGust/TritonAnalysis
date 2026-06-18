@@ -495,6 +495,7 @@ class CrabCounterWorker(QObject):
                         model=self._homography_model,
                         reasoning_effort=self._homography_effort,
                         board_reference_paths=self._board_reference_paths,
+                        artifact_root=config.output_dir,
                     )
                 except Exception as exc:
                     self.progress.emit({"event": "auto_homography_failed", "error": str(exc)})
@@ -1135,7 +1136,7 @@ class CrabCounterWindow(QMainWindow):
         mapping_note = " Preview boxes are mapped back to the original frame." if self._last_preprocess_result else ""
         self.status_label.setText(
             f"Accepted {result.count} of {len(result.candidates)} crab candidate(s) in {result.analysis_seconds:.1f}s. "
-            f"Wrote {outputs.annotated_image.name} and {outputs.result_json.name} under {outputs.output_dir}."
+            f"Wrote {outputs.annotated_image.name}, {outputs.result_json.name}, and run_manifest.json under {outputs.output_dir}."
             f"{mapping_note}"
         )
         self._populate_detection_list(display_result)
@@ -1158,7 +1159,8 @@ class CrabCounterWindow(QMainWindow):
         self._last_candidate_display_result = None
         self.count_label.setText(f"Count: {result.count}")
         self.status_label.setText(
-            f"Benchmark complete. Wrote {outputs.summary_csv.name} and {outputs.summary_json.name} under {outputs.output_dir}."
+            f"Benchmark complete. Wrote {outputs.summary_csv.name}, {outputs.summary_json.name}, "
+            f"and run_manifest.json under {outputs.output_dir}."
         )
         self.detection_list.clear()
         for run in outputs.runs:

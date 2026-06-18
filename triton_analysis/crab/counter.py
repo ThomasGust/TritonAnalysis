@@ -9,6 +9,7 @@ import mimetypes
 import os
 import time
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -111,6 +112,7 @@ class CrabCounterOutputs:
     output_dir: Path
     result_json: Path
     annotated_image: Path
+    artifact_manifest: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -121,6 +123,7 @@ class CrabBenchmarkOutputs:
     summary_json: Path
     summary_csv: Path
     runs: tuple[CrabCounterOutputs, ...]
+    artifact_manifest: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -266,6 +269,129 @@ def default_output_dir(workspace_root: str | Path | None = None) -> Path:
     return fresh_output_subdir(workspace.results / "crab_counter", "crab_counter", create=True)
 
 
+def _utc_now_text() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _artifact_stem(stage: str) -> str:
+    stem = "".join(char if char.isalnum() or char in {"_", "-"} else "_" for char in stage.strip().lower())
+    return stem.strip("_") or "stage"
+
+
+def _sanitize_json_value(value: object) -> object:
+    if isinstance(value, Path):
+        return str(value.expanduser())
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, Mapping):
+        return {str(key): _sanitize_json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_json_value(item) for item in value]
+    if isinstance(value, str):
+        if value.startswith("data:") and ";base64," in value:
+            header, encoded = value.split(",", 1)
+            mime_type = header[5:].split(";", 1)[0] or "application/octet-stream"
+            return {
+                "omitted": "base64_image_data",
+                "mime_type": mime_type,
+                "encoded_length": len(encoded),
+            }
+        return value
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return str(value)
+
+
+def _write_json(path: Path, payload: Mapping[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(_sanitize_json_value(payload), indent=2) + "\n", encoding="utf-8")
+
+
+def _record_stage_outputs(
+    output_dir: Path,
+    stage: str,
+    *,
+    context: Mapping[str, object] | None = None,
+    files: Mapping[str, str | Path | None] | None = None,
+) -> Path:
+    output_dir = Path(output_dir).expanduser()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = output_dir / "run_manifest.json"
+    manifest: dict[str, object] = {}
+    if manifest_path.is_file():
+        try:
+            loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            loaded = {}
+        if isinstance(loaded, dict):
+            manifest = loaded
+    manifest.setdefault("schema_version", 1)
+    manifest["output_dir"] = str(output_dir)
+    manifest["updated_at"] = _utc_now_text()
+    stages = manifest.get("stages")
+    if not isinstance(stages, list):
+        stages = []
+    stage_record: dict[str, object] = {
+        "stage": stage,
+        "recorded_at": _utc_now_text(),
+    }
+    if context:
+        stage_record["context"] = _sanitize_json_value(dict(context))
+    if files:
+        stage_record["files"] = {
+            name: str(Path(path).expanduser())
+            for name, path in files.items()
+            if path is not None
+        }
+    stages = [item for item in stages if not (isinstance(item, Mapping) and item.get("stage") == stage)]
+    stages.append(stage_record)
+    manifest["stages"] = stages
+    _write_json(manifest_path, manifest)
+    return manifest_path
+
+
+def _write_openai_stage_artifacts(
+    output_dir: Path,
+    stage: str,
+    *,
+    request_kwargs: Mapping[str, object],
+    response: Any,
+    context: Mapping[str, object] | None = None,
+) -> Path:
+    output_dir = Path(output_dir).expanduser()
+    artifacts_dir = output_dir / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    stem = _artifact_stem(stage)
+    request_path = artifacts_dir / f"{stem}_request.json"
+    response_text_path = artifacts_dir / f"{stem}_response.txt"
+    response_json_path = artifacts_dir / f"{stem}_response.json"
+
+    _write_json(
+        request_path,
+        {
+            "schema_version": 1,
+            "stage": stage,
+            "recorded_at": _utc_now_text(),
+            "context": dict(context or {}),
+            "request": dict(request_kwargs),
+        },
+    )
+    response_text = _response_text(response)
+    response_text_path.write_text(response_text.rstrip() + "\n", encoding="utf-8")
+    files: dict[str, str | Path | None] = {
+        "request_json": request_path,
+        "response_text": response_text_path,
+    }
+    try:
+        response_payload = json.loads(response_text)
+    except json.JSONDecodeError:
+        response_payload = None
+    if isinstance(response_payload, Mapping):
+        _write_json(response_json_path, response_payload)
+        files["response_json"] = response_json_path
+    return _record_stage_outputs(output_dir, stage, context=context, files=files)
+
+
 def discover_crab_board_reference_paths(workspace_root: str | Path | None = None) -> tuple[Path, ...]:
     """Return optional board-only pool reference images for the homography request."""
 
@@ -372,6 +498,15 @@ def preprocess_crab_target_image(
     )
     metadata_json = output_root / f"{stem}_{mode_name}_preprocess.json"
     metadata_json.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+    _record_stage_outputs(
+        output_root,
+        f"{mode_name}_preprocess",
+        context=metadata,
+        files={
+            "processed_image": output_path,
+            "metadata_json": metadata_json,
+        },
+    )
     return CrabPreprocessResult(
         mode=mode_name,
         source_image=source_path,
@@ -391,6 +526,7 @@ def detect_crab_board_homography(
     reasoning_effort: str = DEFAULT_HOMOGRAPHY_REASONING_EFFORT,
     board_reference_paths: Sequence[str | Path] | None = None,
     client: Any | None = None,
+    artifact_root: str | Path | None = None,
 ) -> CrabBoardOutlineResult:
     """Ask OpenAI for the board outline corners in source-image coordinates."""
 
@@ -401,13 +537,20 @@ def detect_crab_board_homography(
     normalized_effort = _normalize_reasoning_effort(reasoning_effort)
     selected_model = str(model or DEFAULT_HOMOGRAPHY_MODEL)
     start = time.perf_counter()
+    references = tuple(Path(path).expanduser() for path in board_reference_paths or ())
     response = _create_openai_homography_response(
         image_path=source_path,
         image_size=image_size,
         model=selected_model,
         reasoning_effort=normalized_effort,
-        board_reference_paths=tuple(Path(path).expanduser() for path in board_reference_paths or ()),
+        board_reference_paths=references,
         client=client,
+        artifact_root=Path(artifact_root).expanduser() if artifact_root is not None else None,
+        artifact_context={
+            "image_path": source_path,
+            "image_size": list(image_size),
+            "board_reference_paths": list(references),
+        },
     )
     result = _parse_board_outline_response(
         response,
@@ -427,6 +570,7 @@ def auto_preprocess_crab_target_image(
     reasoning_effort: str = DEFAULT_HOMOGRAPHY_REASONING_EFFORT,
     board_reference_paths: Sequence[str | Path] | None = None,
     client: Any | None = None,
+    artifact_root: str | Path | None = None,
 ) -> CrabPreprocessResult:
     """Detect the crab board outline with OpenAI and write a locally rectified target image."""
 
@@ -436,6 +580,7 @@ def auto_preprocess_crab_target_image(
         reasoning_effort=reasoning_effort,
         board_reference_paths=board_reference_paths,
         client=client,
+        artifact_root=artifact_root if artifact_root is not None else output_dir,
     )
     result = preprocess_crab_target_image(
         image_path,
@@ -475,6 +620,8 @@ def analyze_crab_image(config: CrabCounterConfig, *, client: Any | None = None) 
     target_confidence_threshold = _clamp01(config.target_confidence_threshold)
     target_margin_threshold = _clamp01(config.target_margin_threshold)
     atlas_refs = _merge_reference_atlas_paths(normalized_refs, config.reference_atlas_paths)
+    output_dir = Path(config.output_dir).expanduser()
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     analysis_start = time.perf_counter()
     response = _create_openai_response(
@@ -487,6 +634,15 @@ def analyze_crab_image(config: CrabCounterConfig, *, client: Any | None = None) 
         target_confidence_threshold=target_confidence_threshold,
         target_margin_threshold=target_margin_threshold,
         client=client,
+        artifact_root=output_dir,
+        artifact_context={
+            "image_path": image_path,
+            "image_size": list(image_size),
+            "reference_paths": normalized_refs,
+            "reference_atlas_paths": atlas_refs,
+            "target_confidence_threshold": target_confidence_threshold,
+            "target_margin_threshold": target_margin_threshold,
+        },
     )
     result = _parse_response(
         response,
@@ -498,19 +654,7 @@ def analyze_crab_image(config: CrabCounterConfig, *, client: Any | None = None) 
         target_margin_threshold=target_margin_threshold,
     )
     result = replace(result, analysis_seconds=time.perf_counter() - analysis_start)
-
-    output_dir = Path(config.output_dir).expanduser()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    result_json = output_dir / f"{image_path.stem}_crab_count.json"
-    annotated_image = output_dir / f"{image_path.stem}_crab_count_annotated.png"
-    result_json.write_text(json.dumps(result.to_dict(), indent=2) + "\n", encoding="utf-8")
-    draw_crab_count_result(image_path, result, annotated_image)
-    return CrabCounterOutputs(
-        result=result,
-        output_dir=output_dir,
-        result_json=result_json,
-        annotated_image=annotated_image,
-    )
+    return _write_crab_counter_outputs(result, output_dir=output_dir, annotated_image_source=image_path)
 
 
 def detect_crab_candidates(
@@ -520,6 +664,7 @@ def detect_crab_candidates(
     model: str = DEFAULT_MODEL,
     reasoning_effort: str = DEFAULT_DETECTOR_REASONING_EFFORT,
     client: Any | None = None,
+    artifact_root: str | Path | None = None,
 ) -> tuple[CrabCandidateDetectionResult, Path]:
     """Detect all visible printed crab candidate boxes without species classification."""
 
@@ -529,6 +674,9 @@ def detect_crab_candidates(
     image_size = image_dimensions(target_path)
     selected_model = str(model or DEFAULT_MODEL)
     selected_effort = _normalize_reasoning_effort(reasoning_effort)
+    output_root = Path(output_dir).expanduser()
+    output_root.mkdir(parents=True, exist_ok=True)
+    artifact_parent = Path(artifact_root).expanduser() if artifact_root is not None else output_root
     start = time.perf_counter()
     response = _create_openai_candidate_detection_response(
         image_path=target_path,
@@ -536,6 +684,11 @@ def detect_crab_candidates(
         model=selected_model,
         reasoning_effort=selected_effort,
         client=client,
+        artifact_root=artifact_parent,
+        artifact_context={
+            "image_path": target_path,
+            "image_size": list(image_size),
+        },
     )
     result = _parse_candidate_detection_response(
         response,
@@ -546,10 +699,20 @@ def detect_crab_candidates(
     )
     result = replace(result, analysis_seconds=time.perf_counter() - start)
 
-    output_root = Path(output_dir).expanduser()
-    output_root.mkdir(parents=True, exist_ok=True)
     detection_json = output_root / f"{target_path.stem}_candidate_boxes.json"
     detection_json.write_text(json.dumps(result.to_dict(), indent=2) + "\n", encoding="utf-8")
+    _record_stage_outputs(
+        artifact_parent,
+        "candidate_detection_outputs",
+        context={
+            "image_path": target_path,
+            "candidate_count": len(result.candidates),
+            "analysis_seconds": round(float(result.analysis_seconds), 3),
+        },
+        files={
+            "detector_json": detection_json,
+        },
+    )
     return result, detection_json
 
 
@@ -567,6 +730,19 @@ def analyze_crab_image_pipeline(
     detection_result, detection_json = _run_candidate_detection_stage(config, output_dir, client, progress_callback)
     contact_sheet = output_dir / f"{detection_result.image_path.stem}_candidate_contact_sheet.png"
     _write_candidate_contact_sheet(detection_result.image_path, detection_result.candidates, contact_sheet)
+    _record_stage_outputs(
+        output_dir,
+        "candidate_detection_outputs",
+        context={
+            "image_path": detection_result.image_path,
+            "candidate_count": len(detection_result.candidates),
+            "analysis_seconds": round(float(detection_result.analysis_seconds), 3),
+        },
+        files={
+            "detector_json": detection_json,
+            "contact_sheet": contact_sheet,
+        },
+    )
 
     if not detection_result.candidates:
         result = _empty_count_result(
@@ -623,6 +799,19 @@ def benchmark_crab_image_pipeline(
     detection_result, detection_json = _run_candidate_detection_stage(config, output_dir, client, progress_callback)
     contact_sheet = output_dir / f"{detection_result.image_path.stem}_candidate_contact_sheet.png"
     _write_candidate_contact_sheet(detection_result.image_path, detection_result.candidates, contact_sheet)
+    _record_stage_outputs(
+        output_dir,
+        "candidate_detection_outputs",
+        context={
+            "image_path": detection_result.image_path,
+            "candidate_count": len(detection_result.candidates),
+            "analysis_seconds": round(float(detection_result.analysis_seconds), 3),
+        },
+        files={
+            "detector_json": detection_json,
+            "contact_sheet": contact_sheet,
+        },
+    )
 
     runs: list[CrabCounterOutputs] = []
     total = len(selected_efforts)
@@ -688,6 +877,7 @@ def benchmark_crab_image_pipeline(
     summary = {
         "image_path": str(Path(config.image_path).expanduser()),
         "model": str(config.model or DEFAULT_MODEL),
+        "artifact_manifest": str(output_dir / "run_manifest.json"),
         "pipeline": {
             "mode": "detect_then_classify_crops",
             "detector_json": str(detection_json),
@@ -703,11 +893,26 @@ def benchmark_crab_image_pipeline(
     summary_csv = output_dir / "reasoning_effort_benchmark.csv"
     summary_json.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     _write_benchmark_csv(summary_csv, runs)
+    manifest_path = _record_stage_outputs(
+        output_dir,
+        "benchmark_summary",
+        context={
+            "image_path": Path(config.image_path).expanduser(),
+            "model": str(config.model or DEFAULT_MODEL),
+            "efforts": list(selected_efforts),
+            "flow": "detect_then_classify_crops",
+        },
+        files={
+            "summary_json": summary_json,
+            "summary_csv": summary_csv,
+        },
+    )
     return CrabBenchmarkOutputs(
         output_dir=output_dir,
         summary_json=summary_json,
         summary_csv=summary_csv,
         runs=tuple(runs),
+        artifact_manifest=manifest_path,
     )
 
 
@@ -768,6 +973,7 @@ def benchmark_crab_image(
     summary = {
         "image_path": str(Path(config.image_path).expanduser()),
         "model": str(config.model or DEFAULT_MODEL),
+        "artifact_manifest": str(output_dir / "run_manifest.json"),
         "target_confidence_threshold": _clamp01(config.target_confidence_threshold),
         "target_margin_threshold": _clamp01(config.target_margin_threshold),
         "runs": [_benchmark_row(run) for run in runs],
@@ -776,11 +982,26 @@ def benchmark_crab_image(
     summary_csv = output_dir / "reasoning_effort_benchmark.csv"
     summary_json.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     _write_benchmark_csv(summary_csv, runs)
+    manifest_path = _record_stage_outputs(
+        output_dir,
+        "benchmark_summary",
+        context={
+            "image_path": Path(config.image_path).expanduser(),
+            "model": str(config.model or DEFAULT_MODEL),
+            "efforts": list(selected_efforts),
+            "flow": "single_request",
+        },
+        files={
+            "summary_json": summary_json,
+            "summary_csv": summary_csv,
+        },
+    )
     return CrabBenchmarkOutputs(
         output_dir=output_dir,
         summary_json=summary_json,
         summary_csv=summary_csv,
         runs=tuple(runs),
+        artifact_manifest=manifest_path,
     )
 
 
@@ -969,6 +1190,7 @@ def _run_candidate_detection_stage(
         model=str(config.model or DEFAULT_MODEL),
         reasoning_effort=DEFAULT_DETECTOR_REASONING_EFFORT,
         client=client,
+        artifact_root=output_dir,
     )
     if progress_callback is not None:
         progress_callback(
@@ -1000,6 +1222,8 @@ def _classify_detected_crab_candidates(
     reasoning_effort = _normalize_reasoning_effort(config.reasoning_effort)
     target_confidence_threshold = _clamp01(config.target_confidence_threshold)
     target_margin_threshold = _clamp01(config.target_margin_threshold)
+    output_dir = Path(config.output_dir).expanduser()
+    output_dir.mkdir(parents=True, exist_ok=True)
     if progress_callback is not None:
         progress_callback(
             {
@@ -1019,6 +1243,18 @@ def _classify_detected_crab_candidates(
         target_confidence_threshold=target_confidence_threshold,
         target_margin_threshold=target_margin_threshold,
         client=client,
+        artifact_root=output_dir,
+        artifact_context={
+            "image_path": detection_result.image_path,
+            "image_size": list(detection_result.image_size),
+            "candidate_count": len(detection_result.candidates),
+            "candidates": [candidate.to_dict() for candidate in detection_result.candidates],
+            "contact_sheet": contact_sheet,
+            "reference_paths": normalized_refs,
+            "reference_atlas_paths": atlas_refs,
+            "target_confidence_threshold": target_confidence_threshold,
+            "target_margin_threshold": target_margin_threshold,
+        },
     )
     result = _parse_candidate_classification_response(
         response,
@@ -1076,16 +1312,34 @@ def _write_crab_counter_outputs(
     image_path = Path(result.image_path).expanduser()
     result_json = output_dir / f"{image_path.stem}_crab_count.json"
     annotated_image = output_dir / f"{image_path.stem}_crab_count_annotated.png"
+    manifest_path = output_dir / "run_manifest.json"
     payload = result.to_dict()
+    payload["artifact_manifest"] = str(manifest_path)
     if extra_json:
         payload.update(dict(extra_json))
     result_json.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     draw_crab_count_result(annotated_image_source, result, annotated_image)
+    _record_stage_outputs(
+        output_dir,
+        "final_outputs",
+        context={
+            "image_path": image_path,
+            "count": int(result.count),
+            "candidate_count": len(result.candidates),
+            "accepted_count": len(result.detections),
+            "analysis_seconds": round(float(result.analysis_seconds), 3),
+        },
+        files={
+            "result_json": result_json,
+            "annotated_image": annotated_image,
+        },
+    )
     return CrabCounterOutputs(
         result=result,
         output_dir=output_dir,
         result_json=result_json,
         annotated_image=annotated_image,
+        artifact_manifest=manifest_path,
     )
 
 
@@ -1291,7 +1545,7 @@ def _detection_to_dict(detection: CrabDetection) -> dict[str, object]:
 
 def _benchmark_row(run: CrabCounterOutputs) -> dict[str, object]:
     result = run.result
-    return {
+    row: dict[str, object] = {
         "reasoning_effort": result.reasoning_effort,
         "analysis_seconds": round(float(result.analysis_seconds), 3),
         "count": int(result.count),
@@ -1300,6 +1554,9 @@ def _benchmark_row(run: CrabCounterOutputs) -> dict[str, object]:
         "annotated_image": str(run.annotated_image),
         "summary": result.summary,
     }
+    if run.artifact_manifest is not None:
+        row["artifact_manifest"] = str(run.artifact_manifest)
+    return row
 
 
 def _write_benchmark_csv(path: Path, runs: Sequence[CrabCounterOutputs]) -> None:
@@ -1311,6 +1568,7 @@ def _write_benchmark_csv(path: Path, runs: Sequence[CrabCounterOutputs]) -> None
         "candidate_count",
         "result_json",
         "annotated_image",
+        "artifact_manifest",
         "summary",
     ]
     with path.open("w", newline="", encoding="utf-8") as file:
@@ -1459,6 +1717,8 @@ def _create_openai_response(
     target_confidence_threshold: float,
     target_margin_threshold: float,
     client: Any | None,
+    artifact_root: Path | None = None,
+    artifact_context: Mapping[str, object] | None = None,
 ) -> Any:
     if client is None:
         try:
@@ -1487,17 +1747,17 @@ def _create_openai_response(
     content.append({"type": "input_text", "text": "Target frame to analyze:"})
     content.append({"type": "input_image", "image_url": _image_data_url(image_path), "detail": "high"})
 
-    return client.responses.create(
-        model=model,
-        reasoning={"effort": reasoning_effort},
-        prompt_cache_key="triton_analysis_crab_counter_v2",
-        input=[
+    request_kwargs: dict[str, object] = {
+        "model": model,
+        "reasoning": {"effort": reasoning_effort},
+        "prompt_cache_key": "triton_analysis_crab_counter_v2",
+        "input": [
             {
                 "role": "user",
                 "content": content,
             }
         ],
-        text={
+        "text": {
             "format": {
                 "type": "json_schema",
                 "name": "crab_counter_result",
@@ -1506,7 +1766,17 @@ def _create_openai_response(
             },
             "verbosity": "low",
         },
-    )
+    }
+    response = client.responses.create(**request_kwargs)
+    if artifact_root is not None:
+        _write_openai_stage_artifacts(
+            artifact_root,
+            "single_request_count",
+            request_kwargs=request_kwargs,
+            response=response,
+            context=artifact_context,
+        )
+    return response
 
 
 def _create_openai_candidate_detection_response(
@@ -1516,6 +1786,8 @@ def _create_openai_candidate_detection_response(
     model: str,
     reasoning_effort: str,
     client: Any | None,
+    artifact_root: Path | None = None,
+    artifact_context: Mapping[str, object] | None = None,
 ) -> Any:
     if client is None:
         try:
@@ -1531,17 +1803,17 @@ def _create_openai_candidate_detection_response(
         {"type": "input_text", "text": _build_candidate_detection_prompt(width=width, height=height)},
         {"type": "input_image", "image_url": _image_data_url(image_path), "detail": "high"},
     ]
-    return client.responses.create(
-        model=model,
-        reasoning={"effort": reasoning_effort},
-        prompt_cache_key="triton_analysis_crab_candidate_detector_v3",
-        input=[
+    request_kwargs: dict[str, object] = {
+        "model": model,
+        "reasoning": {"effort": reasoning_effort},
+        "prompt_cache_key": "triton_analysis_crab_candidate_detector_v3",
+        "input": [
             {
                 "role": "user",
                 "content": content,
             }
         ],
-        text={
+        "text": {
             "format": {
                 "type": "json_schema",
                 "name": "crab_candidate_detector",
@@ -1550,7 +1822,17 @@ def _create_openai_candidate_detection_response(
             },
             "verbosity": "low",
         },
-    )
+    }
+    response = client.responses.create(**request_kwargs)
+    if artifact_root is not None:
+        _write_openai_stage_artifacts(
+            artifact_root,
+            "candidate_detection",
+            request_kwargs=request_kwargs,
+            response=response,
+            context=artifact_context,
+        )
+    return response
 
 
 def _create_openai_homography_response(
@@ -1561,6 +1843,8 @@ def _create_openai_homography_response(
     reasoning_effort: str,
     board_reference_paths: Sequence[Path],
     client: Any | None,
+    artifact_root: Path | None = None,
+    artifact_context: Mapping[str, object] | None = None,
 ) -> Any:
     if client is None:
         try:
@@ -1590,17 +1874,17 @@ def _create_openai_homography_response(
             content.append({"type": "input_image", "image_url": _image_data_url(reference_path), "detail": "low"})
     content.append({"type": "input_text", "text": "Target image for board-corner coordinates:"})
     content.append({"type": "input_image", "image_url": _image_data_url(image_path), "detail": "high"})
-    return client.responses.create(
-        model=model,
-        reasoning={"effort": reasoning_effort},
-        prompt_cache_key="triton_analysis_crab_board_homography_v1",
-        input=[
+    request_kwargs: dict[str, object] = {
+        "model": model,
+        "reasoning": {"effort": reasoning_effort},
+        "prompt_cache_key": "triton_analysis_crab_board_homography_v1",
+        "input": [
             {
                 "role": "user",
                 "content": content,
             }
         ],
-        text={
+        "text": {
             "format": {
                 "type": "json_schema",
                 "name": "crab_board_outline",
@@ -1609,7 +1893,17 @@ def _create_openai_homography_response(
             },
             "verbosity": "low",
         },
-    )
+    }
+    response = client.responses.create(**request_kwargs)
+    if artifact_root is not None:
+        _write_openai_stage_artifacts(
+            artifact_root,
+            "board_homography",
+            request_kwargs=request_kwargs,
+            response=response,
+            context=artifact_context,
+        )
+    return response
 
 
 def _create_openai_candidate_classification_response(
@@ -1623,6 +1917,8 @@ def _create_openai_candidate_classification_response(
     target_confidence_threshold: float,
     target_margin_threshold: float,
     client: Any | None,
+    artifact_root: Path | None = None,
+    artifact_context: Mapping[str, object] | None = None,
 ) -> Any:
     if client is None:
         try:
@@ -1653,17 +1949,17 @@ def _create_openai_candidate_classification_response(
         {"type": "input_text", "text": "Numbered candidate crop contact sheet to classify:"},
         {"type": "input_image", "image_url": _image_data_url(contact_sheet), "detail": "high"},
     ]
-    return client.responses.create(
-        model=model,
-        reasoning={"effort": reasoning_effort},
-        prompt_cache_key="triton_analysis_crab_candidate_classifier_v1",
-        input=[
+    request_kwargs: dict[str, object] = {
+        "model": model,
+        "reasoning": {"effort": reasoning_effort},
+        "prompt_cache_key": "triton_analysis_crab_candidate_classifier_v1",
+        "input": [
             {
                 "role": "user",
                 "content": content,
             }
         ],
-        text={
+        "text": {
             "format": {
                 "type": "json_schema",
                 "name": "crab_candidate_classifier",
@@ -1672,7 +1968,17 @@ def _create_openai_candidate_classification_response(
             },
             "verbosity": "low",
         },
-    )
+    }
+    response = client.responses.create(**request_kwargs)
+    if artifact_root is not None:
+        _write_openai_stage_artifacts(
+            artifact_root,
+            "candidate_classification",
+            request_kwargs=request_kwargs,
+            response=response,
+            context=artifact_context,
+        )
+    return response
 
 
 def _build_candidate_detection_prompt(*, width: int, height: int) -> str:

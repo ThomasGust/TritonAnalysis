@@ -359,6 +359,8 @@ def test_analyze_crab_image_uses_responses_api_and_writes_outputs(tmp_path: Path
     assert outputs.result.analysis_seconds >= 0.0
     assert outputs.result_json.exists()
     assert outputs.annotated_image.exists()
+    assert outputs.artifact_manifest == outputs.output_dir / "run_manifest.json"
+    assert outputs.artifact_manifest.exists()
     assert fake_client.responses.kwargs["model"] == "test-vision-model"
     assert fake_client.responses.kwargs["reasoning"] == {"effort": "xhigh"}
     content = fake_client.responses.kwargs["input"][0]["content"]
@@ -385,6 +387,16 @@ def test_analyze_crab_image_uses_responses_api_and_writes_outputs(tmp_path: Path
     written = json.loads(outputs.result_json.read_text(encoding="utf-8"))
     assert written["analysis_seconds"] >= 0.0
     assert written["detections"][0]["accepted_as_target"] is True
+    assert written["artifact_manifest"] == str(outputs.artifact_manifest)
+    manifest = json.loads(outputs.artifact_manifest.read_text(encoding="utf-8"))
+    stages = {stage["stage"] for stage in manifest["stages"]}
+    assert {"single_request_count", "final_outputs"} <= stages
+    request_summary = json.loads((outputs.output_dir / "artifacts" / "single_request_count_request.json").read_text(encoding="utf-8"))
+    saved_content = request_summary["request"]["input"][0]["content"]
+    assert saved_content[2]["image_url"]["omitted"] == "base64_image_data"
+    assert saved_content[4]["image_url"]["omitted"] == "base64_image_data"
+    response_payload = json.loads((outputs.output_dir / "artifacts" / "single_request_count_response.json").read_text(encoding="utf-8"))
+    assert response_payload["count"] == 2
 
 
 def test_analyze_crab_image_pipeline_detects_then_classifies_crops(tmp_path: Path):
@@ -417,6 +429,8 @@ def test_analyze_crab_image_pipeline_detects_then_classifies_crops(tmp_path: Pat
     assert outputs.result.analysis_seconds >= 0.0
     assert outputs.result_json.exists()
     assert outputs.annotated_image.exists()
+    assert outputs.artifact_manifest == outputs.output_dir / "run_manifest.json"
+    assert outputs.artifact_manifest.exists()
     detection_json = outputs.output_dir / "pipeline" / "target_candidate_boxes.json"
     contact_sheet = outputs.output_dir / "target_candidate_contact_sheet.png"
     assert detection_json.exists()
@@ -452,6 +466,18 @@ def test_analyze_crab_image_pipeline_detects_then_classifies_crops(tmp_path: Pat
     written = json.loads(outputs.result_json.read_text(encoding="utf-8"))
     assert written["pipeline"]["mode"] == "detect_then_classify_crops"
     assert written["pipeline"]["detector_candidate_count"] == 3
+    assert written["artifact_manifest"] == str(outputs.artifact_manifest)
+    manifest = json.loads(outputs.artifact_manifest.read_text(encoding="utf-8"))
+    stages = {stage["stage"] for stage in manifest["stages"]}
+    assert {"candidate_detection", "candidate_detection_outputs", "candidate_classification", "final_outputs"} <= stages
+    detector_request = json.loads((outputs.output_dir / "artifacts" / "candidate_detection_request.json").read_text(encoding="utf-8"))
+    assert detector_request["request"]["input"][0]["content"][1]["image_url"]["omitted"] == "base64_image_data"
+    classifier_response = json.loads(
+        (outputs.output_dir / "artifacts" / "candidate_classification_response.json").read_text(encoding="utf-8")
+    )
+    assert len(classifier_response["classifications"]) == 3
+    detection_stage = next(stage for stage in manifest["stages"] if stage["stage"] == "candidate_detection_outputs")
+    assert detection_stage["files"]["contact_sheet"] == str(contact_sheet)
 
 
 def test_benchmark_crab_image_pipeline_reuses_detector_stage(tmp_path: Path):
@@ -707,6 +733,13 @@ def test_auto_preprocess_crab_target_image_writes_detected_homography_metadata(t
     assert len(metadata["detected_points"]) == 4
     assert metadata["board_outline"]["confidence"] == 0.94
     assert metadata["auto_board_detection_seconds"] >= 0.0
+    manifest = json.loads((tmp_path / "preprocess" / "run_manifest.json").read_text(encoding="utf-8"))
+    stages = {stage["stage"] for stage in manifest["stages"]}
+    assert {"board_homography", "auto_homography_preprocess"} <= stages
+    request_summary = json.loads(
+        (tmp_path / "preprocess" / "artifacts" / "board_homography_request.json").read_text(encoding="utf-8")
+    )
+    assert request_summary["request"]["input"][0]["content"][-1]["image_url"]["omitted"] == "base64_image_data"
 
 
 def test_benchmark_crab_image_runs_each_reasoning_effort_and_writes_summary(tmp_path: Path):
@@ -736,9 +769,12 @@ def test_benchmark_crab_image_runs_each_reasoning_effort_and_writes_summary(tmp_
     assert len(outputs.runs) == 2
     assert outputs.summary_json.exists()
     assert outputs.summary_csv.exists()
+    assert outputs.artifact_manifest == outputs.output_dir / "run_manifest.json"
+    assert outputs.artifact_manifest.exists()
     assert [call["reasoning"]["effort"] for call in fake_client.responses.calls] == ["low", "high"]
     assert [run.result.reasoning_effort for run in outputs.runs] == ["low", "high"]
     assert all(run.result.analysis_seconds >= 0.0 for run in outputs.runs)
     summary = json.loads(outputs.summary_json.read_text(encoding="utf-8"))
+    assert summary["artifact_manifest"] == str(outputs.artifact_manifest)
     assert [run["reasoning_effort"] for run in summary["runs"]] == ["low", "high"]
     assert all("analysis_seconds" in run for run in summary["runs"])
