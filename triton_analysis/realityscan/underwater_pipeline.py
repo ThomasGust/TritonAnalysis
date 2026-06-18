@@ -1621,7 +1621,30 @@ def stereo_xmp_baseline_distances(frames_dir: Path) -> list[tuple[str, float]]:
         distance = float(np.linalg.norm(sides["right"] - sides["left"]))
         if math.isfinite(distance) and distance > 0:
             distances.append((pair_key, distance))
-    return distances
+    if distances:
+        return distances
+
+    # RealityScan 2.1 can export solved component poses as 00000.xmp,
+    # 00001.xmp, ... while leaving our pair_... sidecars as unsolved priors.
+    # Our stereo writer feeds images to RealityScan as adjacent left/right pairs,
+    # so the numbered export can still recover a metric baseline.
+    solved_numbered: list[tuple[Path, np.ndarray]] = []
+    for xmp_path in sorted(
+        (path for path in frames_dir.glob("*.xmp") if re.fullmatch(r"\d+", path.stem)),
+        key=lambda path: int(path.stem),
+    ):
+        position = read_xmp_position(xmp_path)
+        if position is not None:
+            solved_numbered.append((xmp_path, position))
+
+    numbered_distances: list[tuple[str, float]] = []
+    for index in range(0, len(solved_numbered) - 1, 2):
+        left_path, left_position = solved_numbered[index]
+        right_path, right_position = solved_numbered[index + 1]
+        distance = float(np.linalg.norm(right_position - left_position))
+        if math.isfinite(distance) and distance > 0:
+            numbered_distances.append((f"numbered_{left_path.stem}_{right_path.stem}", distance))
+    return numbered_distances
 
 
 def _robust_metric_distances(distances: list[tuple[str, float]]) -> list[tuple[str, float]]:

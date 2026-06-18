@@ -1004,17 +1004,31 @@ def _viewer_html(*, model_url: str, model_name: str) -> str:
         && Math.abs(floorAlignment.w - 1) < 1e-9;
     }}
 
+    function viewportSize() {{
+      const rect = viewport.getBoundingClientRect();
+      const width = Math.max(1, Math.floor(rect.width || window.innerWidth || 1));
+      const height = Math.max(1, Math.floor(rect.height || window.innerHeight || 1));
+      return {{ width, height }};
+    }}
+
     function resize() {{
-      const width = Math.max(1, window.innerWidth);
-      const height = Math.max(1, window.innerHeight);
+      const {{ width, height }} = viewportSize();
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
-      renderer.setSize(width, height, false);
+      renderer.setSize(width, height, true);
       if (typeof controls.handleResize === 'function') controls.handleResize();
       requestLabelUpdate();
     }}
     window.addEventListener('resize', resize);
+    if (typeof ResizeObserver !== 'undefined') {{
+      const viewportResizeObserver = new ResizeObserver(() => resize());
+      viewportResizeObserver.observe(viewport);
+    }}
     resize();
+    requestAnimationFrame(resize);
+    setTimeout(resize, 100);
+    setTimeout(resize, 500);
 
     function modelBaseUrl() {{
       const idx = modelUrl.lastIndexOf('/');
@@ -1181,7 +1195,15 @@ def _viewer_html(*, model_url: str, model_name: str) -> str:
       object.updateMatrixWorld(true);
     }}
 
+    function fitDistanceForRadius(radius) {{
+      const verticalFov = THREE.MathUtils.degToRad(camera.fov);
+      const horizontalFov = 2 * Math.atan(Math.tan(verticalFov * 0.5) * Math.max(camera.aspect, 1e-6));
+      const limitingFov = Math.max(Math.min(verticalFov, horizontalFov), 1e-6);
+      return radius / Math.sin(limitingFov * 0.5);
+    }}
+
     function fitCamera(object) {{
+      resize();
       const box = new THREE.Box3().setFromObject(object);
       const center = box.getCenter(new THREE.Vector3());
       const size = box.getSize(new THREE.Vector3());
@@ -1189,7 +1211,7 @@ def _viewer_html(*, model_url: str, model_name: str) -> str:
       modelRadius = radius;
       camera.near = Math.max(radius / 1000, 0.0001);
       camera.far = Math.max(radius * 1000, 10);
-      const distance = radius / Math.sin(THREE.MathUtils.degToRad(camera.fov * 0.5)) * 1.15;
+      const distance = fitDistanceForRadius(radius) * 1.15;
       camera.updateProjectionMatrix();
       setControlTargets(center);
       controls.minDistance = Math.max(radius * 0.015, 0.0005);

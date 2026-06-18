@@ -100,6 +100,11 @@ def test_model_viewer_server_serves_threejs_viewer_and_model(tmp_path: Path):
         assert "saveState" not in html
         assert "function rebuildGridForBox" in html
         assert "function setCameraPose" in html
+        assert "function viewportSize" in html
+        assert "viewport.getBoundingClientRect" in html
+        assert "renderer.setSize(width, height, true)" in html
+        assert "ResizeObserver" in html
+        assert "function fitDistanceForRadius" in html
         assert "function setFloorView" in html
         assert "function levelCameraToFloor" in html
         assert "function computeFootprintMajorAxis" in html

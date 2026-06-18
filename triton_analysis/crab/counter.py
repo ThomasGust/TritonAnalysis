@@ -130,6 +130,7 @@ class CrabCandidateBox:
     candidate_id: int
     bbox: tuple[float, float, float, float]
     confidence: float
+    single_crab: bool = True
     notes: str = ""
 
     def to_dict(self) -> dict[str, object]:
@@ -137,6 +138,7 @@ class CrabCandidateBox:
             "candidate_id": int(self.candidate_id),
             "bbox": [round(float(value), 2) for value in self.bbox],
             "confidence": round(float(self.confidence), 4),
+            "single_crab": bool(self.single_crab),
             "notes": self.notes,
         }
 
@@ -1166,11 +1168,15 @@ def _parse_candidate_detection_response(
         x0, y0, x1, y1 = _clamp_bbox(bbox, (width, height))
         if x1 - x0 < 3.0 or y1 - y0 < 3.0:
             continue
+        single_crab = bool(raw.get("single_crab", True))
+        if not single_crab:
+            continue
         candidates.append(
             CrabCandidateBox(
                 candidate_id=0,
                 bbox=(x0, y0, x1, y1),
                 confidence=_clamp01(raw.get("confidence", 0.0)),
+                single_crab=single_crab,
                 notes=str(raw.get("notes") or ""),
             )
         )
@@ -1528,7 +1534,7 @@ def _create_openai_candidate_detection_response(
     return client.responses.create(
         model=model,
         reasoning={"effort": reasoning_effort},
-        prompt_cache_key="triton_analysis_crab_candidate_detector_v1",
+        prompt_cache_key="triton_analysis_crab_candidate_detector_v3",
         input=[
             {
                 "role": "user",
@@ -1678,6 +1684,17 @@ def _build_candidate_detection_prompt(*, width: int, height: int) -> str:
         "important than species precision here; if a mark plausibly contains a printed crab, include it with lower "
         "confidence rather than missing it. Ignore board edges, screw heads, glare streaks, shadows, pool floor, "
         "robot parts, and blank white board. Do not duplicate the same crab with multiple boxes. "
+        "Never group two printed crabs into one candidate box. Adjacent, touching, overlapping, or partially "
+        "occluding crab prints must be split into separate candidate boxes whenever separate bodies, claw sets, "
+        "leg fans, or printed outlines can be distinguished. A correct split may have overlapping boxes; overlap "
+        "is better than one merged box. If a large region appears to contain multiple crab bodies, do not return "
+        "that large region as a candidate. Instead return the tightest one-crab boxes you can. Set single_crab "
+        "true only when the bbox contains exactly one printed crab body; if you cannot isolate one crab, set "
+        "single_crab false and explain the merge in notes. In crowded clusters, first identify each visible "
+        "carapace/body center, then draw one candidate box around each center and its own visible legs/claws. A "
+        "bbox is wrong if it encloses two body centers, even when the crabs overlap or one crab's legs cross near "
+        "another crab. Before finalizing, review each unusually large or crowded box and replace it with separate "
+        "boxes if it contains two carapace centers or two distinct sets of legs/claws. "
         f"Return bbox coordinates in the full target image coordinate system, width={width}, height={height}, using "
         "the order [x1, y1, x2, y2]. Each bbox must tightly cover the visible printed ink of one crab, including "
         "legs and claws when visible, without extra blank board. Numbering can be approximate; the software will "
@@ -1702,11 +1719,14 @@ def _candidate_detection_json_schema() -> dict[str, object]:
                         "bbox": {
                             "type": "array",
                             "items": {"type": "number"},
+                            "minItems": 4,
+                            "maxItems": 4,
                         },
                         "confidence": {"type": "number"},
+                        "single_crab": {"type": "boolean"},
                         "notes": {"type": "string"},
                     },
-                    "required": ["candidate_id", "bbox", "confidence", "notes"],
+                    "required": ["candidate_id", "bbox", "confidence", "single_crab", "notes"],
                 },
             },
             "summary": {"type": "string"},

@@ -117,11 +117,18 @@ class _FakePipelineResponses:
                 "image_width": 120,
                 "image_height": 90,
                 "candidates": [
-                    {"candidate_id": 1, "bbox": [10, 12, 42, 46], "confidence": 0.95, "notes": "printed crab"},
-                    {"candidate_id": 2, "bbox": [44, 14, 62, 39], "confidence": 0.93, "notes": "printed crab"},
-                    {"candidate_id": 3, "bbox": [70, 20, 110, 62], "confidence": 0.91, "notes": "printed crab"},
+                    {"candidate_id": 1, "bbox": [10, 12, 42, 46], "confidence": 0.95, "single_crab": True, "notes": "printed crab"},
+                    {"candidate_id": 2, "bbox": [44, 14, 62, 39], "confidence": 0.93, "single_crab": True, "notes": "printed crab"},
+                    {"candidate_id": 3, "bbox": [70, 20, 110, 62], "confidence": 0.91, "single_crab": True, "notes": "printed crab"},
+                    {
+                        "candidate_id": 4,
+                        "bbox": [8, 10, 64, 48],
+                        "confidence": 0.6,
+                        "single_crab": False,
+                        "notes": "merged region containing two adjacent printed crabs",
+                    },
                 ],
-                "summary": "Three printed crab candidates.",
+                "summary": "Three single-crab candidates plus one rejected merged region.",
             }
         elif schema_name == "crab_candidate_classifier":
             payload = {
@@ -420,6 +427,18 @@ def test_analyze_crab_image_pipeline_detects_then_classifies_crops(tmp_path: Pat
     ]
     assert fake_client.responses.calls[0]["reasoning"] == {"effort": "low"}
     assert fake_client.responses.calls[1]["reasoning"] == {"effort": "high"}
+    detector_call = fake_client.responses.calls[0]
+    detector_prompt = detector_call["input"][0]["content"][0]["text"]
+    assert "Never group two printed crabs into one candidate box" in detector_prompt
+    assert "overlapping boxes" in detector_prompt
+    assert "first identify each visible carapace/body center" in detector_prompt
+    assert "wrong if it encloses two body centers" in detector_prompt
+    detector_schema = detector_call["text"]["format"]["schema"]
+    detector_candidate_props = detector_schema["properties"]["candidates"]["items"]["properties"]
+    assert "single_crab" in detector_candidate_props
+    assert "single_crab" in detector_schema["properties"]["candidates"]["items"]["required"]
+    assert detector_candidate_props["bbox"]["minItems"] == 4
+    assert detector_call["prompt_cache_key"] == "triton_analysis_crab_candidate_detector_v3"
     classifier_content = fake_client.responses.calls[1]["input"][0]["content"]
     assert "classification only" in classifier_content[0]["text"]
     assert "Confidence is a species-match confidence conditional on the visible crop" in classifier_content[0]["text"]

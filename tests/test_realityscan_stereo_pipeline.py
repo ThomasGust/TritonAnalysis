@@ -217,6 +217,20 @@ def _write_solved_xmp(path: Path, position: tuple[float, float, float]) -> None:
     )
 
 
+def _write_unsolved_xmp(path: Path) -> None:
+    path.write_text(
+        """<x:xmpmeta xmlns:x="adobe:ns:meta/">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description xmlns:xcr="http://www.capturingreality.com/ns/xcr/1.1#">
+      <xcr:FocalLength35mm>24</xcr:FocalLength35mm>
+    </rdf:Description>
+  </rdf:RDF>
+</x:xmpmeta>
+""",
+        encoding="utf-8",
+    )
+
+
 def test_metric_scale_from_solved_stereo_xmp_writes_meter_obj(tmp_path: Path):
     calibration = load_stereo_calibration(_make_calibration(tmp_path))
     frames_dir = tmp_path / "frames"
@@ -252,6 +266,43 @@ def test_metric_scale_from_solved_stereo_xmp_writes_meter_obj(tmp_path: Path):
     assert "v 0.05 0.1 0.15" in text
     assert "v -0.1 0 0.2 0.4 0.5 0.6" in text
     assert "vn 0.0 0.0 1.0" in text
+
+
+def test_metric_scale_uses_numbered_realityscan_solved_xmp_exports(tmp_path: Path):
+    calibration = load_stereo_calibration(_make_calibration(tmp_path))
+    frames_dir = tmp_path / "frames"
+    frames_dir.mkdir()
+    positions = (
+        (0.0, 0.0, 0.0),
+        (2.0, 0.0, 0.0),
+        (5.0, 0.0, 0.0),
+        (7.0, 0.0, 0.0),
+        (10.0, 0.0, 0.0),
+        (12.0, 0.0, 0.0),
+    )
+    for index in range(1, 4):
+        stem = f"pair_{index:06d}"
+        _write_unsolved_xmp(frames_dir / f"{stem}_left_t_0000.000.xmp")
+        _write_unsolved_xmp(frames_dir / f"{stem}_right_t_0000.000.xmp")
+    for index, position in enumerate(positions):
+        _write_solved_xmp(frames_dir / f"{index:05d}.xmp", position)
+
+    model = tmp_path / "model.obj"
+    model.write_text("v 1.0 0.0 0.0\n", encoding="utf-8")
+
+    result = scale_model_from_stereo_baseline(
+        model,
+        frames_dir,
+        calibration,
+        translation_scale=0.001,
+        min_pairs=3,
+        report_path=tmp_path / "metric_scale.json",
+    )
+
+    assert result.reconstructed_baseline_units == approx(2.0)
+    assert result.scale_factor == approx(0.05)
+    assert result.pair_count == 3
+    assert "v 0.05 0 0" in result.metric_model.read_text(encoding="utf-8")
 
 
 def test_metric_scale_honors_centimeter_calibration_units(tmp_path: Path):
