@@ -44,17 +44,22 @@ from triton_analysis.edna.analysis import (
 from triton_analysis.gui.responsive import horizontal_scroll_area, resize_to_available_screen
 
 
+COMPACT_SPECIES_ROW_HEIGHT = 33
+
+
 class JudgeDisplayWidget(QWidget):
     """Readonly judge-facing preview of eDNA frequency rows."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, compact: bool = False):
         super().__init__(parent)
+        self._compact = bool(compact)
         self.setObjectName("ednaJudgeDisplay")
 
         self.title_label = QLabel("eDNA Frequency Analysis")
         self.title_label.setObjectName("ednaJudgeTitle")
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.title_label.setWordWrap(True)
+        self.title_label.setVisible(not self._compact)
 
         self.total_label = QLabel("Total sightings: 0")
         self.total_label.setObjectName("ednaJudgeTotal")
@@ -63,13 +68,22 @@ class JudgeDisplayWidget(QWidget):
 
         self.table = QTableWidget(0, 3)
         self.table.setObjectName("ednaJudgeTable")
-        self.table.setHorizontalHeaderLabels(["Species", "Number Seen", "% Frequency"])
+        if self._compact:
+            self.table.setHorizontalHeaderLabels(["Species", "Seen", "Frequency"])
+        else:
+            self.table.setHorizontalHeaderLabels(["Species", "Number Seen", "% Frequency"])
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.table.setAlternatingRowColors(True)
-        self.table.verticalHeader().setDefaultSectionSize(50)
+        self.table.setWordWrap(not self._compact)
+        self.table.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff if self._compact else Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.table.verticalHeader().setMinimumSectionSize(22 if self._compact else 34)
+        self.table.verticalHeader().setDefaultSectionSize(COMPACT_SPECIES_ROW_HEIGHT if self._compact else 50)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
@@ -81,8 +95,12 @@ class JudgeDisplayWidget(QWidget):
         self.formula_label.setWordWrap(True)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(22, 22, 22, 22)
-        layout.setSpacing(12)
+        if self._compact:
+            layout.setContentsMargins(8, 8, 8, 8)
+            layout.setSpacing(5)
+        else:
+            layout.setContentsMargins(22, 22, 22, 22)
+            layout.setSpacing(12)
         layout.addWidget(self.title_label)
         layout.addWidget(self.total_label)
         layout.addWidget(self.table, 1)
@@ -101,7 +119,14 @@ class JudgeDisplayWidget(QWidget):
 
         top_count = max((row.count for row in rows), default=0)
         for row_index, row in enumerate(rows):
-            species_item = self._make_item(row.species.display_name, align=Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+            species_text = row.species.display_name
+            if self._compact:
+                species_text = f"{row.species.common_name}\n{row.species.scientific_name}"
+            species_item = self._make_item(
+                species_text,
+                align=Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+            )
+            species_item.setToolTip(row.species.display_name)
             count_item = self._make_item(str(row.count), align=Qt.AlignmentFlag.AlignCenter)
             percent_item = self._make_item(
                 format_percent(row.percent_frequency, precision),
@@ -118,7 +143,18 @@ class JudgeDisplayWidget(QWidget):
             self.table.setItem(row_index, 0, species_item)
             self.table.setItem(row_index, 1, count_item)
             self.table.setItem(row_index, 2, percent_item)
-        self.table.resizeRowsToContents()
+        if self._compact:
+            for row_index in range(self.table.rowCount()):
+                self.table.setRowHeight(row_index, COMPACT_SPECIES_ROW_HEIGHT)
+            self._fit_compact_table_height()
+        else:
+            self.table.resizeRowsToContents()
+
+    def _fit_compact_table_height(self) -> None:
+        height = self.table.horizontalHeader().sizeHint().height()
+        height += sum(self.table.rowHeight(row) for row in range(self.table.rowCount()))
+        height += self.table.frameWidth() * 2 + 4
+        self.table.setMinimumHeight(height)
 
     @staticmethod
     def _make_item(text: str, *, align: Qt.AlignmentFlag) -> QTableWidgetItem:
@@ -129,49 +165,55 @@ class JudgeDisplayWidget(QWidget):
         return item
 
     def _apply_style(self) -> None:
+        title_size = 30 if not self._compact else 18
+        total_size = 18 if not self._compact else 12
+        formula_size = 13 if not self._compact else 11
+        table_font_size = 16 if not self._compact else 12
+        item_padding = "6px 8px" if not self._compact else "2px 6px"
+        header_padding = "8px 10px" if not self._compact else "4px 6px"
         self.setStyleSheet(
-            """
-            QWidget#ednaJudgeDisplay {
+            f"""
+            QWidget#ednaJudgeDisplay {{
                 background: #f4fafb;
                 color: #14202f;
-            }
-            QLabel#ednaJudgeTitle {
+            }}
+            QLabel#ednaJudgeTitle {{
                 color: #102233;
-                font-size: 30px;
+                font-size: {title_size}px;
                 font-weight: 900;
-            }
-            QLabel#ednaJudgeTotal {
+            }}
+            QLabel#ednaJudgeTotal {{
                 color: #1a5961;
-                font-size: 18px;
+                font-size: {total_size}px;
                 font-weight: 800;
                 padding: 4px 0;
-            }
-            QLabel#ednaJudgeFormula {
+            }}
+            QLabel#ednaJudgeFormula {{
                 color: #4d6073;
-                font-size: 13px;
+                font-size: {formula_size}px;
                 padding: 2px 0;
-            }
-            QTableWidget#ednaJudgeTable {
+            }}
+            QTableWidget#ednaJudgeTable {{
                 background: #ffffff;
                 alternate-background-color: #f0f7f8;
                 color: #14202f;
                 border: 1px solid #b7d0d4;
                 border-radius: 8px;
                 gridline-color: #c9dde1;
-                font-size: 16px;
-            }
-            QTableWidget#ednaJudgeTable::item {
+                font-size: {table_font_size}px;
+            }}
+            QTableWidget#ednaJudgeTable::item {{
                 color: #14202f;
-                padding: 6px 8px;
-            }
-            QHeaderView::section {
+                padding: {item_padding};
+            }}
+            QHeaderView::section {{
                 background: #18384c;
                 color: #ffffff;
-                padding: 8px 10px;
+                padding: {header_padding};
                 border: none;
                 font-weight: 800;
-                font-size: 14px;
-            }
+                font-size: {max(11, table_font_size - 1)}px;
+            }}
             """
         )
 
@@ -219,20 +261,20 @@ class EDNAAnalysisWindow(QMainWindow):
         container = QWidget(self)
         container.setObjectName("ednaRoot")
         root = QVBoxLayout(container)
-        root.setContentsMargins(10, 10, 10, 10)
-        root.setSpacing(10)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(8)
 
         header = QFrame()
         header.setObjectName("ednaHeader")
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(16, 14, 16, 14)
-        header_layout.setSpacing(14)
+        header_layout.setContentsMargins(12, 8, 12, 8)
+        header_layout.setSpacing(10)
 
         title_box = QVBoxLayout()
-        title_box.setSpacing(2)
+        title_box.setSpacing(0)
         title = QLabel("eDNA Frequency Analysis")
         title.setObjectName("ednaTitle")
-        subtitle = QLabel("Enter the judge-provided species counts and show the percent-frequency table.")
+        subtitle = QLabel("Enter species counts; percent frequencies update live.")
         subtitle.setObjectName("ednaSubtitle")
         subtitle.setWordWrap(True)
         title_box.addWidget(title)
@@ -253,7 +295,7 @@ class EDNAAnalysisWindow(QMainWindow):
         splitter.setChildrenCollapsible(False)
         splitter.addWidget(self._build_input_panel())
         splitter.addWidget(self._build_preview_panel())
-        splitter.setSizes([560, 760])
+        splitter.setSizes([610, 710])
         root.addWidget(splitter, 1)
 
         self.setCentralWidget(container)
@@ -262,10 +304,10 @@ class EDNAAnalysisWindow(QMainWindow):
     def _build_input_panel(self) -> QWidget:
         panel = QFrame()
         panel.setObjectName("ednaPanel")
-        panel.setMinimumWidth(420)
+        panel.setMinimumWidth(360)
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
 
         panel_title = QLabel("Count Entry")
         panel_title.setObjectName("ednaPanelTitle")
@@ -273,23 +315,29 @@ class EDNAAnalysisWindow(QMainWindow):
 
         self.input_table = QTableWidget(len(DEFAULT_SPECIES), 3)
         self.input_table.setObjectName("ednaInputTable")
-        self.input_table.setHorizontalHeaderLabels(["Species", "Number Seen", "% Frequency"])
+        self.input_table.setHorizontalHeaderLabels(["Species", "Seen", "Frequency"])
         self.input_table.verticalHeader().setVisible(False)
         self.input_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.input_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.input_table.setAlternatingRowColors(True)
+        self.input_table.setWordWrap(False)
         self.input_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.input_table.verticalHeader().setMinimumSectionSize(26)
-        self.input_table.verticalHeader().setDefaultSectionSize(31)
+        self.input_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.input_table.verticalHeader().setMinimumSectionSize(30)
+        self.input_table.verticalHeader().setDefaultSectionSize(COMPACT_SPECIES_ROW_HEIGHT)
         input_header = self.input_table.horizontalHeader()
         input_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        input_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        input_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        input_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        input_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        input_header.resizeSection(1, 92)
+        input_header.resizeSection(2, 86)
 
         for row_index, species in enumerate(DEFAULT_SPECIES):
-            species_item = self._readonly_item(species.display_name)
+            species_item = self._readonly_item(f"{species.common_name}\n{species.scientific_name}")
             species_item.setToolTip(species.display_name)
+            species_item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
             self.input_table.setItem(row_index, 0, species_item)
+            self.input_table.setRowHeight(row_index, COMPACT_SPECIES_ROW_HEIGHT)
 
             spin = QSpinBox()
             spin.setRange(0, 9999)
@@ -354,15 +402,16 @@ class EDNAAnalysisWindow(QMainWindow):
     def _build_preview_panel(self) -> QWidget:
         panel = QFrame()
         panel.setObjectName("ednaPreviewPanel")
+        panel.setMinimumWidth(360)
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(10)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
 
-        label = QLabel("Judge Preview")
+        label = QLabel("Output Preview")
         label.setObjectName("ednaPanelTitle")
         layout.addWidget(label)
 
-        self.judge_preview = JudgeDisplayWidget(panel)
+        self.judge_preview = JudgeDisplayWidget(panel, compact=True)
         self.judge_preview.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout.addWidget(self.judge_preview, 1)
         return panel
@@ -371,7 +420,7 @@ class EDNAAnalysisWindow(QMainWindow):
     def _make_summary_card(label_text: str, value_text: str) -> QLabel:
         label = QLabel(f"{label_text}\n{value_text}")
         label.setObjectName("ednaSummaryCard")
-        label.setMinimumWidth(130)
+        label.setMinimumWidth(112)
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         label.setWordWrap(True)
         return label
@@ -404,7 +453,7 @@ class EDNAAnalysisWindow(QMainWindow):
         else:
             self.top_card.setText(
                 "Top species\n"
-                f"{top_row.species.common_name} ({format_percent(top_row.percent_frequency, precision)})"
+                f"{top_row.species.common_name}: {format_percent(top_row.percent_frequency, precision)}"
             )
 
         for item, row in zip(self._percent_items, self._rows):
@@ -511,25 +560,25 @@ class EDNAAnalysisWindow(QMainWindow):
             }
             QLabel#ednaTitle {
                 color: #f6f8fb;
-                font-size: 24px;
+                font-size: 21px;
                 font-weight: 900;
             }
             QLabel#ednaSubtitle {
                 color: #b9c2d2;
-                font-size: 13px;
+                font-size: 12px;
             }
             QLabel#ednaPanelTitle {
                 color: #f6f8fb;
-                font-size: 15px;
+                font-size: 13px;
                 font-weight: 800;
             }
             QLabel#ednaSummaryCard {
                 background: #141821;
                 border: 1px solid #2c3343;
                 border-radius: 8px;
-                padding: 9px 12px;
+                padding: 6px 9px;
                 color: #dfe8f5;
-                font-size: 13px;
+                font-size: 12px;
                 font-weight: 800;
             }
             QTableWidget#ednaInputTable {
@@ -540,17 +589,17 @@ class EDNAAnalysisWindow(QMainWindow):
                 gridline-color: #29303f;
             }
             QTableWidget#ednaInputTable::item {
-                padding: 5px 7px;
+                padding: 3px 6px;
             }
             QSpinBox {
-                padding: 5px 8px;
+                padding: 3px 6px;
                 border: 1px solid #3b465c;
                 border-radius: 6px;
                 background: #0f131a;
-                min-width: 84px;
+                min-width: 76px;
             }
             QPushButton {
-                padding: 8px 10px;
+                padding: 6px 8px;
                 border: 1px solid #40506b;
                 border-radius: 7px;
                 background: #26324a;

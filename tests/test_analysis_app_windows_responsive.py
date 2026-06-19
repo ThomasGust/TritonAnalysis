@@ -22,6 +22,22 @@ def _app() -> QApplication:
     return app
 
 
+def _assert_table_rows_visible_without_scroll(table) -> None:
+    assert table.verticalScrollBar().maximum() == 0
+    assert table.horizontalScrollBar().maximum() == 0
+    last_row = table.rowCount() - 1
+    last_row_bottom = table.rowViewportPosition(last_row) + table.rowHeight(last_row)
+    assert last_row_bottom <= table.viewport().height()
+
+    metrics = table.fontMetrics()
+    species_column_width = table.columnWidth(0)
+    for row_index in range(table.rowCount()):
+        item = table.item(row_index, 0)
+        assert item is not None
+        for line in item.text().splitlines():
+            assert metrics.horizontalAdvance(line) <= species_column_width
+
+
 @pytest.fixture(autouse=True)
 def _disable_auto_pilot_sync(monkeypatch):
     monkeypatch.setenv("TRITON_ANALYSIS_AUTO_SYNC", "0")
@@ -475,23 +491,23 @@ def test_unified_analysis_stays_usable_when_pilot_network_is_unavailable(tmp_pat
         app.processEvents()
 
 
-def test_edna_count_entry_rows_are_visible_without_table_scroll():
+def test_edna_input_and_output_rows_are_visible_without_table_scroll():
     app = _app()
     from triton_analysis.edna.analysis import DEFAULT_SPECIES
     from triton_analysis.gui.edna_analysis_window import EDNAAnalysisWindow
 
     window = EDNAAnalysisWindow()
     try:
+        window.resize(1366, 768)
         window.show()
         app.processEvents()
 
-        table = window.input_table
-        assert table.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        assert table.verticalScrollBar().maximum() == 0
-        assert table.rowCount() == len(DEFAULT_SPECIES)
-        last_row = table.rowCount() - 1
-        last_row_bottom = table.rowViewportPosition(last_row) + table.rowHeight(last_row)
-        assert last_row_bottom <= table.viewport().height()
+        assert window.input_table.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        assert window.judge_preview.table.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        assert window.input_table.rowCount() == len(DEFAULT_SPECIES)
+        assert window.judge_preview.table.rowCount() == len(DEFAULT_SPECIES)
+        _assert_table_rows_visible_without_scroll(window.input_table)
+        _assert_table_rows_visible_without_scroll(window.judge_preview.table)
     finally:
         window.close()
         window.deleteLater()
