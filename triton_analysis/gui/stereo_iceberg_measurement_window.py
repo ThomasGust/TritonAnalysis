@@ -44,7 +44,9 @@ from triton_analysis.stereo.depth import (
 )
 from triton_analysis.stereo.segment_measurement import (
     STEREO_SEGMENT_PRESETS,
+    StereoSegmentReferenceCheck,
     StereoSegmentMeasurementResult,
+    evaluate_reference_scale_check,
     measure_stereo_segment,
     preset_by_key,
     right_endpoint_order_mismatch,
@@ -80,8 +82,12 @@ class _StereoKeelCanvas(QWidget):
         self._image_width = 0
         self._image_height = 0
         self._points: list[tuple[int, int]] = []
+        self._reference_points: list[tuple[int, int]] = []
+        self._active_line = "target"
         self._point_labels = ["Start", "End"]
+        self._reference_point_labels = ["Ref start", "Ref end"]
         self._badge = ""
+        self._reference_badge = ""
         self._placeholder = "No rectified image"
         self._zoom = 1.0
         self._pan = np.array([0.0, 0.0], dtype=np.float64)
@@ -94,31 +100,54 @@ class _StereoKeelCanvas(QWidget):
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
-    def points(self) -> list[tuple[int, int]]:
-        return list(self._points)
+    def _line_key(self, line: str | None = None) -> str:
+        key = str(line or self._active_line or "target").strip().lower()
+        return "reference" if key == "reference" else "target"
 
-    def set_points(self, points: list[tuple[int, int]], *, emit: bool = True) -> None:
-        self._points = [
+    def _line_points(self, line: str | None = None) -> list[tuple[int, int]]:
+        return self._reference_points if self._line_key(line) == "reference" else self._points
+
+    def set_active_line(self, line: str) -> None:
+        self._active_line = self._line_key(line)
+        self._drag_index = None
+        self._pending_point_press = None
+        self._refresh_cursor()
+        self.update()
+
+    def points(self, line: str | None = None) -> list[tuple[int, int]]:
+        return list(self._line_points(line))
+
+    def set_points(self, points: list[tuple[int, int]], *, emit: bool = True, line: str | None = None) -> None:
+        line_points = self._line_points(line)
+        line_points[:] = [
             (
                 int(round(np.clip(float(point[0]), 0, max(0, self._image_width - 1)))),
                 int(round(np.clip(float(point[1]), 0, max(0, self._image_height - 1)))),
             )
             for point in points[:2]
         ]
-        self._badge = ""
+        if self._line_key(line) == "reference":
+            self._reference_badge = ""
+        else:
+            self._badge = ""
         self._drag_index = None
         self._refresh_cursor()
         self.update()
         if emit:
             self.pointsChanged.emit()
 
-    def swap_points(self, *, emit: bool = True) -> None:
-        if len(self._points) != 2:
+    def swap_points(self, *, emit: bool = True, line: str | None = None) -> None:
+        line_points = self._line_points(line)
+        if len(line_points) != 2:
             return
-        self.set_points([self._points[1], self._points[0]], emit=emit)
+        self.set_points([line_points[1], line_points[0]], emit=emit, line=line)
 
     def set_point_labels(self, start_label: str, end_label: str) -> None:
         self._point_labels = [str(start_label or "Start"), str(end_label or "End")]
+        self.update()
+
+    def set_reference_point_labels(self, start_label: str, end_label: str) -> None:
+        self._reference_point_labels = [str(start_label or "Ref start"), str(end_label or "Ref end")]
         self.update()
 
     def set_frame(self, frame_bgr: np.ndarray | None, *, placeholder: str = "No rectified image") -> None:
@@ -133,24 +162,48 @@ class _StereoKeelCanvas(QWidget):
         self._pan[:] = 0.0
         self._pending_point_press = None
         self._points.clear()
+        self._reference_points.clear()
         self._badge = ""
+        self._reference_badge = ""
         self.pointsChanged.emit()
         self._refresh_cursor()
         self.update()
 
-    def clear_points(self) -> None:
-        if not self._points and not self._badge:
+    def clear_points(self, line: str | None = None) -> None:
+        key = self._line_key(line)
+        line_points = self._line_points(key)
+        badge = self._reference_badge if key == "reference" else self._badge
+        if not line_points and not badge:
             return
-        self._points.clear()
-        self._badge = ""
+        line_points.clear()
+        if key == "reference":
+            self._reference_badge = ""
+        else:
+            self._badge = ""
         self._drag_index = None
         self._pending_point_press = None
         self.pointsChanged.emit()
         self._refresh_cursor()
         self.update()
 
-    def set_badge(self, badge: str) -> None:
-        self._badge = str(badge or "")
+    def clear_all_points(self) -> None:
+        changed = bool(self._points or self._reference_points or self._badge or self._reference_badge)
+        self._points.clear()
+        self._reference_points.clear()
+        self._badge = ""
+        self._reference_badge = ""
+        self._drag_index = None
+        self._pending_point_press = None
+        self._refresh_cursor()
+        self.update()
+        if changed:
+            self.pointsChanged.emit()
+
+    def set_badge(self, badge: str, line: str | None = None) -> None:
+        if self._line_key(line) == "reference":
+            self._reference_badge = str(badge or "")
+        else:
+            self._badge = str(badge or "")
         self.update()
 
     def _centered_target_rect(self) -> QRectF:
@@ -212,7 +265,7 @@ class _StereoKeelCanvas(QWidget):
     def _nearest_point_index(self, x: float, y: float, *, max_distance: float = 12.0) -> int | None:
         nearest = None
         nearest_distance = float(max_distance)
-        for index, point in enumerate(self._points):
+        for index, point in enumerate(self._line_points()):
             widget_point = self._image_to_widget(point)
             if widget_point is None:
                 continue
@@ -227,7 +280,7 @@ class _StereoKeelCanvas(QWidget):
             self.setCursor(QCursor(Qt.CursorShape.ClosedHandCursor))
         elif self._drag_index is not None:
             self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        elif not self._pixmap.isNull() and len(self._points) < 2:
+        elif not self._pixmap.isNull() and len(self._line_points()) < 2:
             self.setCursor(QCursor(Qt.CursorShape.CrossCursor))
         else:
             self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
@@ -248,12 +301,13 @@ class _StereoKeelCanvas(QWidget):
             self._start_pan(x, y)
             return
         if event.button() == Qt.MouseButton.RightButton:
+            line_points = self._line_points()
             nearest = self._nearest_point_index(x, y)
             if nearest is not None:
-                del self._points[nearest]
-            elif self._points:
-                self._points.pop()
-            self._badge = ""
+                del line_points[nearest]
+            elif line_points:
+                line_points.pop()
+            self.set_badge("", line=self._active_line)
             self.pointsChanged.emit()
             self._refresh_cursor()
             self.update()
@@ -265,7 +319,7 @@ class _StereoKeelCanvas(QWidget):
             self._drag_index = nearest
             self._refresh_cursor()
             return
-        if len(self._points) >= 2:
+        if len(self._line_points()) >= 2:
             self._start_pan(x, y)
             return
         point = self._widget_to_image(x, y)
@@ -295,8 +349,8 @@ class _StereoKeelCanvas(QWidget):
         if self._drag_index is not None:
             point = self._widget_to_image(x, y)
             if point is not None:
-                self._points[self._drag_index] = point
-                self._badge = ""
+                self._line_points()[self._drag_index] = point
+                self.set_badge("", line=self._active_line)
                 self.pointsChanged.emit()
                 self.update()
 
@@ -308,13 +362,14 @@ class _StereoKeelCanvas(QWidget):
             return
         if event.button() == Qt.MouseButton.LeftButton and self._pending_point_press is not None:
             self._pending_point_press = None
-            if len(self._points) >= 2:
+            line_points = self._line_points()
+            if len(line_points) >= 2:
                 return
             point = self._widget_to_image(float(event.position().x()), float(event.position().y()))
             if point is None:
                 return
-            self._points.append(point)
-            self._badge = ""
+            line_points.append(point)
+            self.set_badge("", line=self._active_line)
             self.pointsChanged.emit()
             self._refresh_cursor()
             self.update()
@@ -369,39 +424,70 @@ class _StereoKeelCanvas(QWidget):
         self._draw_points(painter)
 
     def _draw_points(self, painter: QPainter) -> None:
-        widget_points = [self._image_to_widget(point) for point in self._points]
+        self._draw_measurement_line(
+            painter,
+            points=self._points,
+            labels=self._point_labels,
+            point_colors=(QColor("#55d6ff"), QColor("#ffe66a")),
+            line_color=QColor("#ffe66a"),
+            badge=self._badge,
+            active=self._active_line == "target",
+            badge_offset=-32,
+        )
+        self._draw_measurement_line(
+            painter,
+            points=self._reference_points,
+            labels=self._reference_point_labels,
+            point_colors=(QColor("#84f29a"), QColor("#ff79c6")),
+            line_color=QColor("#84f29a"),
+            badge=self._reference_badge,
+            active=self._active_line == "reference",
+            badge_offset=10,
+        )
+
+    def _draw_measurement_line(
+        self,
+        painter: QPainter,
+        *,
+        points: list[tuple[int, int]],
+        labels: list[str],
+        point_colors: tuple[QColor, QColor],
+        line_color: QColor,
+        badge: str,
+        active: bool,
+        badge_offset: int,
+    ) -> None:
+        widget_points = [self._image_to_widget(point) for point in points]
         widget_points = [point for point in widget_points if point is not None]
-        colors = [QColor("#55d6ff"), QColor("#ffe66a")]
-        labels = self._point_labels
         target = self._target_rect()
         for index, point in enumerate(widget_points):
-            color = colors[min(index, len(colors) - 1)]
+            color = point_colors[min(index, len(point_colors) - 1)]
             x, y = point
-            painter.setPen(QPen(QColor(color.red(), color.green(), color.blue(), 125), 1))
+            painter.setPen(QPen(QColor(color.red(), color.green(), color.blue(), 145 if active else 85), 1))
             painter.drawLine(int(target.left()), int(round(y)), int(target.right()), int(round(y)))
             painter.setPen(QPen(QColor("#111218"), 5))
             painter.drawEllipse(int(round(x)) - 8, int(round(y)) - 8, 16, 16)
-            painter.setPen(QPen(color, 3))
+            painter.setPen(QPen(color, 4 if active else 2))
             painter.drawEllipse(int(round(x)) - 8, int(round(y)) - 8, 16, 16)
             painter.setPen(QColor("#f7f8ff"))
             painter.drawText(int(round(x)) + 12, int(round(y)) - 10, labels[index])
         if len(widget_points) == 2:
-            painter.setPen(QPen(QColor("#ffe66a"), 3))
+            painter.setPen(QPen(line_color, 4 if active else 2))
             painter.drawLine(
                 int(round(widget_points[0][0])),
                 int(round(widget_points[0][1])),
                 int(round(widget_points[1][0])),
                 int(round(widget_points[1][1])),
             )
-        if self._badge and len(widget_points) == 2:
+        if badge and len(widget_points) == 2:
             mid_x = int(round((widget_points[0][0] + widget_points[1][0]) * 0.5))
             mid_y = int(round((widget_points[0][1] + widget_points[1][1]) * 0.5))
             metrics = painter.fontMetrics()
-            width = max(170, metrics.horizontalAdvance(self._badge) + 18)
-            badge_rect = QRectF(mid_x - width / 2.0, mid_y - 32, width, 24)
+            width = max(170, metrics.horizontalAdvance(badge) + 18)
+            badge_rect = QRectF(mid_x - width / 2.0, mid_y + badge_offset, width, 24)
             painter.fillRect(badge_rect, QColor(20, 22, 28, 220))
-            painter.setPen(QColor("#ffe66a"))
-            painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, self._badge)
+            painter.setPen(line_color)
+            painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, badge)
 
 
 class StereoSegmentMeasurementWindow(QMainWindow):
@@ -425,8 +511,14 @@ class StereoSegmentMeasurementWindow(QMainWindow):
         self.calibration_artifact: dict | None = None
         self.rectification_maps = None
         self.current_result: StereoSegmentMeasurementResult | None = None
+        self.reference_result: StereoSegmentMeasurementResult | None = None
+        self.reference_check: StereoSegmentReferenceCheck | None = None
         self.saved_results: list[dict] = []
         self._auto_corrected_right_order = False
+        self._reference_auto_corrected_right_order = False
+        self._active_line = "target"
+        self._target_error = ""
+        self._reference_error = ""
 
         self._build_ui()
         self._apply_preset(clear_results=False)
@@ -542,11 +634,15 @@ class StereoSegmentMeasurementWindow(QMainWindow):
         if preset_index >= 0:
             self.preset_combo.setCurrentIndex(preset_index)
         self.preset_combo.currentIndexChanged.connect(self._preset_changed)
+        self.active_line_combo = QComboBox()
+        self.active_line_combo.addItem("Variable Length", "target")
+        self.active_line_combo.addItem("Known Reference", "reference")
+        self.active_line_combo.currentIndexChanged.connect(self._active_line_changed)
         self.max_y_error_spin = QDoubleSpinBox()
         self.max_y_error_spin.setRange(0.25, 25.0)
         self.max_y_error_spin.setDecimals(2)
         self.max_y_error_spin.setSingleStep(0.25)
-        self.max_y_error_spin.setValue(12.0)
+        self.max_y_error_spin.setValue(3.0)
         self.max_y_error_spin.setSuffix(" px")
         self.max_y_error_spin.valueChanged.connect(lambda _value: self._recalculate_measurement())
         self.min_disparity_spin = QDoubleSpinBox()
@@ -561,16 +657,21 @@ class StereoSegmentMeasurementWindow(QMainWindow):
         self.top_lbl = self._value_label()
         self.bottom_lbl = self._value_label()
         self.length_lbl = self._value_label()
+        self.sensitivity_lbl = self._value_label()
         measure_form.addRow("Preset", self.preset_combo)
+        measure_form.addRow("Active Line", self.active_line_combo)
         measure_form.addRow("Max Y Error", self.max_y_error_spin)
         measure_form.addRow("Min Disparity", self.min_disparity_spin)
         measure_form.addRow(self.start_row_label, self.top_lbl)
         measure_form.addRow(self.end_row_label, self.bottom_lbl)
         measure_form.addRow(self.length_row_label, self.length_lbl)
+        measure_form.addRow("1 px Sensitivity", self.sensitivity_lbl)
         measure_card.body.addLayout(measure_form)
         measure_buttons = QHBoxLayout()
-        self.clear_points_btn = QPushButton("Clear Points")
+        self.clear_points_btn = QPushButton("Clear Line")
         self.clear_points_btn.clicked.connect(self._clear_points)
+        self.clear_all_points_btn = QPushButton("Clear All")
+        self.clear_all_points_btn.clicked.connect(self._clear_all_points)
         self.swap_right_btn = QPushButton("Swap Right")
         self.swap_right_btn.clicked.connect(self._swap_right_points)
         self.add_result_btn = QPushButton("Add Result")
@@ -578,17 +679,37 @@ class StereoSegmentMeasurementWindow(QMainWindow):
         self.copy_report_btn = QPushButton("Copy Report")
         self.copy_report_btn.clicked.connect(self._copy_report)
         measure_buttons.addWidget(self.clear_points_btn)
+        measure_buttons.addWidget(self.clear_all_points_btn)
         measure_buttons.addWidget(self.swap_right_btn)
         measure_buttons.addWidget(self.add_result_btn)
         measure_buttons.addWidget(self.copy_report_btn)
         measure_card.body.addLayout(measure_buttons)
         controls_layout.addWidget(measure_card)
 
+        reference_card = _SectionCard("Reference Check")
+        reference_form = QFormLayout()
+        self.reference_length_spin = QDoubleSpinBox()
+        self.reference_length_spin.setRange(1.0, 500.0)
+        self.reference_length_spin.setDecimals(1)
+        self.reference_length_spin.setSingleStep(1.0)
+        self.reference_length_spin.setValue(100.0)
+        self.reference_length_spin.setSuffix(" cm")
+        self.reference_length_spin.valueChanged.connect(lambda _value: self._recalculate_measurement())
+        self.reference_measured_lbl = self._value_label()
+        self.reference_scale_lbl = self._value_label()
+        self.reference_adjusted_lbl = self._value_label()
+        reference_form.addRow("Known Length", self.reference_length_spin)
+        reference_form.addRow("Measured", self.reference_measured_lbl)
+        reference_form.addRow("Frame Scale", self.reference_scale_lbl)
+        reference_form.addRow("Adjusted Length", self.reference_adjusted_lbl)
+        reference_card.body.addLayout(reference_form)
+        controls_layout.addWidget(reference_card)
+
         repeats_card = _SectionCard("Repeats")
         self.repeat_summary_lbl = self._value_label()
         repeats_card.body.addWidget(self.repeat_summary_lbl)
-        self.results_table = QTableWidget(0, 5)
-        self.results_table.setHorizontalHeaderLabels(["#", "Pair", "Length", "Y Err", "Disp"])
+        self.results_table = QTableWidget(0, 6)
+        self.results_table.setHorizontalHeaderLabels(["#", "Pair", "Length", "1px Sens", "Y Err", "Disp"])
         self.results_table.verticalHeader().hide()
         self.results_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.results_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -613,11 +734,20 @@ class StereoSegmentMeasurementWindow(QMainWindow):
         self._apply_preset(clear_results=True)
         self._recalculate_measurement()
 
+    def _active_line_changed(self, _index: int) -> None:
+        self._active_line = str(self.active_line_combo.currentData() or "target")
+        self.left_canvas.set_active_line(self._active_line)
+        self.right_canvas.set_active_line(self._active_line)
+        self._refresh_measurement_labels()
+        self._refresh_controls()
+
     def _apply_preset(self, *, clear_results: bool) -> None:
         self.setWindowTitle(self.active_preset.report_title)
         if hasattr(self, "left_canvas"):
             self.left_canvas.set_point_labels(self.active_preset.start_label, self.active_preset.end_label)
             self.right_canvas.set_point_labels(self.active_preset.start_label, self.active_preset.end_label)
+            self.left_canvas.set_reference_point_labels("Ref start", "Ref end")
+            self.right_canvas.set_reference_point_labels("Ref start", "Ref end")
         if hasattr(self, "start_row_label"):
             self.start_row_label.setText(self.active_preset.start_label)
             self.end_row_label.setText(self.active_preset.end_label)
@@ -755,6 +885,8 @@ class StereoSegmentMeasurementWindow(QMainWindow):
         if row < 0 or row >= len(self.image_pairs):
             return
         self.current_result = None
+        self.reference_result = None
+        self.reference_check = None
         left_path, right_path = self.image_pairs[row]
         left_image = cv2.imread(str(left_path), cv2.IMREAD_COLOR)
         right_image = cv2.imread(str(right_path), cv2.IMREAD_COLOR)
@@ -789,78 +921,165 @@ class StereoSegmentMeasurementWindow(QMainWindow):
 
     def _points_changed(self) -> None:
         self._auto_corrected_right_order = False
+        self._reference_auto_corrected_right_order = False
         self._recalculate_measurement()
 
     def _recalculate_measurement(self) -> None:
         self.current_result = None
-        self.left_canvas.set_badge("")
-        self.right_canvas.set_badge("")
+        self.reference_result = None
+        self.reference_check = None
+        self._target_error = ""
+        self._reference_error = ""
+        self.left_canvas.set_badge("", line="target")
+        self.right_canvas.set_badge("", line="target")
+        self.left_canvas.set_badge("", line="reference")
+        self.right_canvas.set_badge("", line="reference")
         self._auto_corrected_right_order = False
-        left = self.left_canvas.points()
-        right = self.right_canvas.points()
-        if len(left) < 2 or len(right) < 2:
-            self._refresh_measurement_labels()
+        self._reference_auto_corrected_right_order = False
+        if self.rectification_maps is None:
+            if self.left_canvas.points("target") or self.right_canvas.points("target"):
+                self._target_error = "Load calibration"
+            if self.left_canvas.points("reference") or self.right_canvas.points("reference"):
+                self._reference_error = "Load calibration"
             self._refresh_controls()
+            self._refresh_measurement_labels()
             return
+
+        self.current_result, self._target_error = self._measure_canvas_line(
+            "target",
+            preset_key=self.active_preset.key,
+        )
+        self.reference_result, self._reference_error = self._measure_canvas_line(
+            "reference",
+            preset_key="generic",
+        )
+        if self.current_result is not None:
+            badge = self._format_result_length(self.current_result)
+            self.left_canvas.set_badge(badge, line="target")
+            self.right_canvas.set_badge(badge, line="target")
+        if self.reference_result is not None:
+            self.left_canvas.set_badge(self._format_reference_badge(self.reference_result), line="reference")
+            self.right_canvas.set_badge(self._format_reference_badge(self.reference_result), line="reference")
+            try:
+                self.reference_check = evaluate_reference_scale_check(
+                    reference_result=self.reference_result,
+                    known_length_cm=float(self.reference_length_spin.value()),
+                    target_result=self.current_result,
+                )
+            except Exception as exc:
+                self._reference_error = str(exc)
+
+        self._set_measurement_summary()
+        self._refresh_measurement_labels()
+        self._refresh_controls()
+
+    def _measure_canvas_line(
+        self,
+        line: str,
+        *,
+        preset_key: str,
+    ) -> tuple[StereoSegmentMeasurementResult | None, str]:
+        left = self.left_canvas.points(line)
+        right = self.right_canvas.points(line)
+        if len(left) < 2 or len(right) < 2:
+            return None, ""
         if right_endpoint_order_mismatch(
             left_start_pixel=left[0],
             left_end_pixel=left[1],
             right_start_pixel=right[0],
             right_end_pixel=right[1],
         ):
-            self.right_canvas.swap_points(emit=False)
-            right = self.right_canvas.points()
-            self._auto_corrected_right_order = True
-            self.statusBar().showMessage(
-                "Swapped right endpoints to match the left endpoint order.",
-                5000,
-            )
-        if self.rectification_maps is None:
-            self.length_lbl.setText("Load calibration")
-            self._refresh_controls()
-            return
+            self.right_canvas.swap_points(emit=False, line=line)
+            right = self.right_canvas.points(line)
+            if line == "reference":
+                self._reference_auto_corrected_right_order = True
+                message = "Swapped reference right endpoints to match the left endpoint order."
+            else:
+                self._auto_corrected_right_order = True
+                message = "Swapped right endpoints to match the left endpoint order."
+            self.statusBar().showMessage(message, 5000)
         try:
-            result = measure_stereo_segment(
-                q=self.rectification_maps.q,
-                start_left_pixel=left[0],
-                start_right_pixel=right[0],
-                end_left_pixel=left[1],
-                end_right_pixel=right[1],
-                units=self._units(),
-                preset_key=self.active_preset.key,
-                min_abs_disparity=float(self.min_disparity_spin.value()),
-                max_vertical_error_px=float(self.max_y_error_spin.value()),
+            return (
+                measure_stereo_segment(
+                    q=self.rectification_maps.q,
+                    start_left_pixel=left[0],
+                    start_right_pixel=right[0],
+                    end_left_pixel=left[1],
+                    end_right_pixel=right[1],
+                    units=self._units(),
+                    preset_key=preset_key,
+                    min_abs_disparity=float(self.min_disparity_spin.value()),
+                    max_vertical_error_px=float(self.max_y_error_spin.value()),
+                ),
+                "",
             )
         except Exception as exc:
-            self._set_summary(str(exc), tone="warn")
-            self.length_lbl.setText(str(exc))
-            self._refresh_measurement_labels()
-            self._refresh_controls()
-            return
-        self.current_result = result
-        badge = self._format_result_length(result)
-        self.left_canvas.set_badge(badge)
-        self.right_canvas.set_badge(badge)
-        self._set_summary(
-            f"{self.active_preset.result_label}: {badge} | y error max {result.max_vertical_error_px:.2f} px | "
-            f"min disparity {result.min_abs_disparity_px:.1f} px"
-            + (" | right order auto-corrected" if self._auto_corrected_right_order else "")
-        )
-        self._refresh_measurement_labels()
-        self._refresh_controls()
+            return None, str(exc)
+
+    def _set_measurement_summary(self) -> None:
+        pieces = []
+        tone = None
+        if self.current_result is not None:
+            pieces.append(
+                f"{self.active_preset.result_label}: {self._format_result_length(self.current_result)} | "
+                f"stability {self._format_stability(self.current_result)} | "
+                f"y error max {self.current_result.max_vertical_error_px:.2f} px | "
+                f"min disparity {self.current_result.min_abs_disparity_px:.1f} px"
+            )
+            if self._auto_corrected_right_order:
+                pieces.append("right order auto-corrected")
+        elif self._target_error:
+            pieces.append(self._target_error)
+            tone = "warn"
+
+        if self.reference_check is not None:
+            pieces.append(self._format_reference_check(self.reference_check))
+            if self.reference_check.abs_error_cm > 5.0:
+                tone = "warn"
+        elif self._reference_error:
+            pieces.append(f"Reference: {self._reference_error}")
+            tone = "warn"
+        elif self.reference_result is not None:
+            pieces.append(f"Reference: {self._format_result_length(self.reference_result)}")
+
+        if not pieces:
+            active = "reference" if self._active_line == "reference" else "variable"
+            pieces.append(f"Pair {self.pairs_table.currentRow() + 1}: ready for {active} endpoint clicks.")
+        self._set_summary(" | ".join(pieces), tone=tone)
 
     def _refresh_measurement_labels(self) -> None:
-        left = self.left_canvas.points()
-        right = self.right_canvas.points()
+        left = self.left_canvas.points("target")
+        right = self.right_canvas.points("target")
         if self.current_result is not None:
             self.top_lbl.setText(self._format_sample(self.current_result.start))
             self.bottom_lbl.setText(self._format_sample(self.current_result.end))
             self.length_lbl.setText(self._format_result_length(self.current_result))
-            return
-        self.top_lbl.setText(self._format_pending_endpoint(0, left, right))
-        self.bottom_lbl.setText(self._format_pending_endpoint(1, left, right))
-        if len(left) < 2 or len(right) < 2:
-            self.length_lbl.setText("-")
+            self.sensitivity_lbl.setText(self._format_sensitivity(self.current_result))
+        else:
+            self.top_lbl.setText(self._format_pending_endpoint(0, left, right))
+            self.bottom_lbl.setText(self._format_pending_endpoint(1, left, right))
+            self.length_lbl.setText(self._target_error or "-")
+            self.sensitivity_lbl.setText("-")
+        self._refresh_reference_labels()
+
+    def _refresh_reference_labels(self) -> None:
+        ref_left = self.left_canvas.points("reference")
+        ref_right = self.right_canvas.points("reference")
+        if self.reference_result is not None:
+            self.reference_measured_lbl.setText(self._format_reference_result(self.reference_result))
+        elif self._reference_error:
+            self.reference_measured_lbl.setText(self._reference_error)
+        else:
+            start = self._format_pending_endpoint(0, ref_left, ref_right)
+            end = self._format_pending_endpoint(1, ref_left, ref_right)
+            self.reference_measured_lbl.setText("-" if start == "-" and end == "-" else f"{start} | {end}")
+
+        if self.reference_check is not None:
+            self.reference_scale_lbl.setText(self._format_reference_check(self.reference_check))
+            self.reference_adjusted_lbl.setText(self._format_adjusted_length(self.reference_check))
+        else:
+            self.reference_scale_lbl.setText("-")
+            self.reference_adjusted_lbl.setText("-")
 
     def _format_pending_endpoint(
         self,
@@ -886,14 +1105,28 @@ class StereoSegmentMeasurementWindow(QMainWindow):
 
     def _clear_points(self) -> None:
         self.current_result = None
+        self.reference_result = None
+        self.reference_check = None
         self._auto_corrected_right_order = False
-        self.left_canvas.clear_points()
-        self.right_canvas.clear_points()
+        self._reference_auto_corrected_right_order = False
+        self.left_canvas.clear_points(line=self._active_line)
+        self.right_canvas.clear_points(line=self._active_line)
+        self._refresh_measurement_labels()
+        self._refresh_controls()
+
+    def _clear_all_points(self) -> None:
+        self.current_result = None
+        self.reference_result = None
+        self.reference_check = None
+        self._auto_corrected_right_order = False
+        self._reference_auto_corrected_right_order = False
+        self.left_canvas.clear_all_points()
+        self.right_canvas.clear_all_points()
         self._refresh_measurement_labels()
         self._refresh_controls()
 
     def _swap_right_points(self) -> None:
-        self.right_canvas.swap_points(emit=False)
+        self.right_canvas.swap_points(emit=False, line=self._active_line)
         self.statusBar().showMessage("Right endpoint order swapped.", 4000)
         self._recalculate_measurement()
 
@@ -922,6 +1155,7 @@ class StereoSegmentMeasurementWindow(QMainWindow):
                 str(row + 1),
                 str(record["pair_index"]),
                 self._format_result_length(result),
+                self._format_sensitivity(result),
                 f"{result.max_vertical_error_px:.2f} px",
                 f"{result.min_abs_disparity_px:.1f} px",
             ]
@@ -972,10 +1206,22 @@ class StereoSegmentMeasurementWindow(QMainWindow):
                     f"Current length: {self._format_result_length(self.current_result)}",
                     f"{self.active_preset.start_label}: {self._format_sample(self.current_result.start)}",
                     f"{self.active_preset.end_label}: {self._format_sample(self.current_result.end)}",
+                    f"1 px sensitivity: {self._format_sensitivity(self.current_result)}",
                     f"Max vertical error: {self.current_result.max_vertical_error_px:.2f} px",
                     f"Min disparity: {self.current_result.min_abs_disparity_px:.1f} px",
                 ]
             )
+        if self.reference_result is not None:
+            lines.extend(
+                [
+                    "",
+                    f"Reference known length: {float(self.reference_length_spin.value()):.1f} cm",
+                    f"Reference measured: {self._format_reference_result(self.reference_result)}",
+                ]
+            )
+            if self.reference_check is not None:
+                lines.append(f"Reference scale: {self._format_reference_check(self.reference_check)}")
+                lines.append(f"Reference-adjusted length: {self._format_adjusted_length(self.reference_check)}")
         if self.saved_results:
             summary = summarize_segment_measurements([record["result"] for record in self.saved_results])
             lines.extend(
@@ -994,6 +1240,7 @@ class StereoSegmentMeasurementWindow(QMainWindow):
                 lines.append(
                     f"{index}. pair {record['pair_index']} {record['stem']} "
                     f"{self._format_result_length(result)} "
+                    f"sens={self._format_sensitivity(result)} "
                     f"yerr={result.max_vertical_error_px:.2f}px disp={result.min_abs_disparity_px:.1f}px"
                 )
         return "\n".join(lines)
@@ -1015,6 +1262,56 @@ class StereoSegmentMeasurementWindow(QMainWindow):
             return f"{result.length_cm:.1f} cm ({result.length_m:.3f} m)"
         return self._format_distance(result.length_units)
 
+    def _format_sensitivity(self, result: StereoSegmentMeasurementResult) -> str:
+        if result.click_sensitivity_units is None:
+            return "-"
+        pixel_text = f"{result.click_sensitivity_px:g} px"
+        if result.click_sensitivity_cm is not None:
+            return f"+/-{result.click_sensitivity_cm:.1f} cm per {pixel_text}"
+        return f"+/-{self._format_distance(result.click_sensitivity_units)} per {pixel_text}"
+
+    def _format_reference_badge(self, result: StereoSegmentMeasurementResult) -> str:
+        if result.length_cm is not None:
+            return f"ref {result.length_cm:.1f} cm"
+        return f"ref {self._format_distance(result.length_units)}"
+
+    def _format_reference_result(self, result: StereoSegmentMeasurementResult) -> str:
+        return (
+            f"{self._format_result_length(result)} | stability {self._format_stability(result)} | "
+            f"y error max {result.max_vertical_error_px:.2f} px | "
+            f"min disparity {result.min_abs_disparity_px:.1f} px"
+            + (" | right order auto-corrected" if self._reference_auto_corrected_right_order else "")
+        )
+
+    def _format_reference_check(self, check: StereoSegmentReferenceCheck) -> str:
+        if check.abs_error_cm <= 2.0:
+            label = "scale ok"
+        elif check.abs_error_cm <= 5.0:
+            label = "scale check"
+        else:
+            label = "scale warning"
+        return (
+            f"{label}: measured {check.measured_length_cm:.1f}/{check.known_length_cm:.1f} cm "
+            f"({check.error_cm:+.1f} cm, {check.percent_error:+.1f}%), factor {check.scale_factor:.4f}"
+        )
+
+    def _format_adjusted_length(self, check: StereoSegmentReferenceCheck) -> str:
+        if check.target_corrected_length_cm is None:
+            return "-"
+        return f"{check.target_corrected_length_cm:.1f} cm ({check.target_corrected_length_m:.3f} m)"
+
+    def _format_stability(self, result: StereoSegmentMeasurementResult) -> str:
+        sensitivity = self._format_sensitivity(result)
+        if result.click_sensitivity_cm is None:
+            return f"unknown ({sensitivity})"
+        if result.click_sensitivity_cm <= 2.0 and result.max_vertical_error_px <= 1.5:
+            label = "high"
+        elif result.click_sensitivity_cm <= 5.0 and result.max_vertical_error_px <= 3.0:
+            label = "check"
+        else:
+            label = "remeasure"
+        return f"{label} ({sensitivity})"
+
     def _format_distance(self, value: float | None) -> str:
         if value is None:
             return "-"
@@ -1028,11 +1325,24 @@ class StereoSegmentMeasurementWindow(QMainWindow):
         return f"{value:.2f} {units}".strip()
 
     def _refresh_controls(self) -> None:
-        has_points = bool(self.left_canvas.points() or self.right_canvas.points())
-        self.clear_points_btn.setEnabled(has_points)
-        self.swap_right_btn.setEnabled(len(self.right_canvas.points()) == 2)
+        active_left = self.left_canvas.points(self._active_line)
+        active_right = self.right_canvas.points(self._active_line)
+        has_active_points = bool(active_left or active_right)
+        has_any_points = bool(
+            self.left_canvas.points("target")
+            or self.right_canvas.points("target")
+            or self.left_canvas.points("reference")
+            or self.right_canvas.points("reference")
+        )
+        self.clear_points_btn.setEnabled(has_active_points)
+        self.clear_all_points_btn.setEnabled(has_any_points)
+        self.swap_right_btn.setEnabled(len(active_right) == 2)
         self.add_result_btn.setEnabled(self.current_result is not None)
-        self.copy_report_btn.setEnabled(self.current_result is not None or bool(self.saved_results))
+        self.copy_report_btn.setEnabled(
+            self.current_result is not None
+            or self.reference_result is not None
+            or bool(self.saved_results)
+        )
         self.clear_results_btn.setEnabled(bool(self.saved_results))
 
 

@@ -126,6 +126,9 @@ class StereoSegmentMeasurementResult:
     length_cm: float | None
     length_m: float | None
     preset_key: str = "generic"
+    click_sensitivity_px: float = 1.0
+    click_sensitivity_units: float | None = None
+    click_sensitivity_cm: float | None = None
 
     @property
     def max_vertical_error_px(self) -> float:
@@ -134,6 +137,12 @@ class StereoSegmentMeasurementResult:
     @property
     def min_abs_disparity_px(self) -> float:
         return min(abs(self.start.disparity), abs(self.end.disparity))
+
+    @property
+    def click_sensitivity_m(self) -> float | None:
+        if self.click_sensitivity_cm is None:
+            return None
+        return self.click_sensitivity_cm / 100.0
 
     @property
     def top(self) -> CorrespondenceSample:
@@ -168,6 +177,28 @@ class StereoSegmentMeasurementSeries:
         return self.median_length_cm / 100.0
 
 
+@dataclass(frozen=True)
+class StereoSegmentReferenceCheck:
+    """Known-length in-frame reference check for a stereo segment result."""
+
+    known_length_cm: float
+    measured_length_cm: float
+    error_cm: float
+    percent_error: float
+    scale_factor: float
+    target_corrected_length_cm: float | None = None
+
+    @property
+    def abs_error_cm(self) -> float:
+        return abs(self.error_cm)
+
+    @property
+    def target_corrected_length_m(self) -> float | None:
+        if self.target_corrected_length_cm is None:
+            return None
+        return self.target_corrected_length_cm / 100.0
+
+
 def unit_scale_to_cm(units: str) -> float | None:
     """Return a scale factor from calibration units to centimeters."""
 
@@ -181,20 +212,16 @@ def unit_scale_to_cm(units: str) -> float | None:
     return None
 
 
-def measure_stereo_segment(
+def _triangulate_segment(
     *,
     q: np.ndarray,
     start_left_pixel: PointLike,
     start_right_pixel: PointLike,
     end_left_pixel: PointLike,
     end_right_pixel: PointLike,
-    units: str = "",
-    preset_key: str = "generic",
-    min_abs_disparity: float = 1.0,
-    max_vertical_error_px: float | None = 3.0,
-) -> StereoSegmentMeasurementResult:
-    """Triangulate segment endpoints and return their 3D distance."""
-
+    min_abs_disparity: float,
+    max_vertical_error_px: float | None,
+) -> tuple[CorrespondenceSample, CorrespondenceSample, float]:
     start = point_from_rectified_correspondence(
         q,
         tuple(float(value) for value in start_left_pixel),
@@ -209,9 +236,110 @@ def measure_stereo_segment(
         min_abs_disparity=min_abs_disparity,
         max_vertical_error_px=max_vertical_error_px,
     )
-    length_units = distance_between_samples(start, end)
+    return start, end, distance_between_samples(start, end)
+
+
+def estimate_segment_click_sensitivity(
+    *,
+    q: np.ndarray,
+    start_left_pixel: PointLike,
+    start_right_pixel: PointLike,
+    end_left_pixel: PointLike,
+    end_right_pixel: PointLike,
+    pixel_delta: float = 1.0,
+    min_abs_disparity: float = 1.0,
+) -> float | None:
+    """Return worst-case length swing from nudging one clicked coordinate.
+
+    This is a local stability diagnostic for manual stereo measurements. It
+    intentionally ignores the vertical-error gate while perturbing points so a
+    near-threshold match still receives a meaningful sensitivity estimate.
+    """
+
+    delta = float(pixel_delta)
+    if not np.isfinite(delta) or delta <= 0.0:
+        return None
+
+    points = [
+        _as_image_point(start_left_pixel, "start_left_pixel"),
+        _as_image_point(start_right_pixel, "start_right_pixel"),
+        _as_image_point(end_left_pixel, "end_left_pixel"),
+        _as_image_point(end_right_pixel, "end_right_pixel"),
+    ]
+
+    try:
+        _start, _end, base_length = _triangulate_segment(
+            q=q,
+            start_left_pixel=points[0],
+            start_right_pixel=points[1],
+            end_left_pixel=points[2],
+            end_right_pixel=points[3],
+            min_abs_disparity=min_abs_disparity,
+            max_vertical_error_px=None,
+        )
+    except ValueError:
+        return None
+
+    deviations: list[float] = []
+    for point_index in range(len(points)):
+        for axis in range(2):
+            for sign in (-1.0, 1.0):
+                perturbed = [point.copy() for point in points]
+                perturbed[point_index][axis] += sign * delta
+                try:
+                    _start, _end, length = _triangulate_segment(
+                        q=q,
+                        start_left_pixel=perturbed[0],
+                        start_right_pixel=perturbed[1],
+                        end_left_pixel=perturbed[2],
+                        end_right_pixel=perturbed[3],
+                        min_abs_disparity=min_abs_disparity,
+                        max_vertical_error_px=None,
+                    )
+                except ValueError:
+                    continue
+                deviations.append(abs(float(length) - float(base_length)))
+
+    if not deviations:
+        return None
+    return max(deviations)
+
+
+def measure_stereo_segment(
+    *,
+    q: np.ndarray,
+    start_left_pixel: PointLike,
+    start_right_pixel: PointLike,
+    end_left_pixel: PointLike,
+    end_right_pixel: PointLike,
+    units: str = "",
+    preset_key: str = "generic",
+    min_abs_disparity: float = 1.0,
+    max_vertical_error_px: float | None = 3.0,
+    sensitivity_px: float = 1.0,
+) -> StereoSegmentMeasurementResult:
+    """Triangulate segment endpoints and return their 3D distance."""
+
+    start, end, length_units = _triangulate_segment(
+        q=q,
+        start_left_pixel=start_left_pixel,
+        start_right_pixel=start_right_pixel,
+        end_left_pixel=end_left_pixel,
+        end_right_pixel=end_right_pixel,
+        min_abs_disparity=min_abs_disparity,
+        max_vertical_error_px=max_vertical_error_px,
+    )
     scale = unit_scale_to_cm(units)
     length_cm = None if scale is None else length_units * scale
+    sensitivity_units = estimate_segment_click_sensitivity(
+        q=q,
+        start_left_pixel=start_left_pixel,
+        start_right_pixel=start_right_pixel,
+        end_left_pixel=end_left_pixel,
+        end_right_pixel=end_right_pixel,
+        pixel_delta=sensitivity_px,
+        min_abs_disparity=min_abs_disparity,
+    )
     return StereoSegmentMeasurementResult(
         length_units=length_units,
         units=str(units or ""),
@@ -220,6 +348,39 @@ def measure_stereo_segment(
         length_cm=length_cm,
         length_m=None if length_cm is None else length_cm / 100.0,
         preset_key=preset_by_key(preset_key).key,
+        click_sensitivity_px=float(sensitivity_px),
+        click_sensitivity_units=sensitivity_units,
+        click_sensitivity_cm=None if scale is None or sensitivity_units is None else sensitivity_units * scale,
+    )
+
+
+def evaluate_reference_scale_check(
+    *,
+    reference_result: StereoSegmentMeasurementResult,
+    known_length_cm: float,
+    target_result: StereoSegmentMeasurementResult | None = None,
+) -> StereoSegmentReferenceCheck:
+    """Compare a measured in-frame reference segment with its known length."""
+
+    known = float(known_length_cm)
+    if not np.isfinite(known) or known <= 0.0:
+        raise ValueError("Known reference length must be positive")
+    measured = reference_result.length_cm
+    if measured is None or not np.isfinite(float(measured)) or float(measured) <= 0.0:
+        raise ValueError("Reference measurement must have a positive centimeter length")
+
+    measured_cm = float(measured)
+    scale_factor = known / measured_cm
+    corrected = None
+    if target_result is not None and target_result.length_cm is not None:
+        corrected = float(target_result.length_cm) * scale_factor
+    return StereoSegmentReferenceCheck(
+        known_length_cm=known,
+        measured_length_cm=measured_cm,
+        error_cm=measured_cm - known,
+        percent_error=(measured_cm - known) * 100.0 / known,
+        scale_factor=scale_factor,
+        target_corrected_length_cm=corrected,
     )
 
 

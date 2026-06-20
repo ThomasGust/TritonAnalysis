@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from triton_analysis.stereo.segment_measurement import (
+    evaluate_reference_scale_check,
     measure_stereo_segment,
     preset_by_key,
     right_endpoint_order_mismatch,
@@ -39,6 +40,10 @@ def test_stereo_segment_measurement_triangulates_generic_distance():
     assert result.length_m == pytest.approx(0.01)
     assert result.max_vertical_error_px == pytest.approx(0.0)
     assert result.min_abs_disparity_px == pytest.approx(10.0)
+    assert result.click_sensitivity_px == pytest.approx(1.0)
+    assert result.click_sensitivity_units is not None
+    assert result.click_sensitivity_units > 0.0
+    assert result.click_sensitivity_cm == pytest.approx(result.click_sensitivity_units * 0.1)
 
 
 def test_stereo_segment_presets_include_iceberg_and_coral_labels():
@@ -111,6 +116,38 @@ def test_stereo_segment_series_reports_median_and_spread():
     assert summary.spread_units == pytest.approx(3.0)
     assert summary.median_length_cm == pytest.approx(1.0)
     assert summary.spread_cm == pytest.approx(0.3)
+
+
+def test_reference_scale_check_reports_error_and_corrected_target():
+    reference = measure_stereo_segment(
+        q=_q_matrix(),
+        start_left_pixel=(4, 3),
+        start_right_pixel=(-6, 3),
+        end_left_pixel=(14, 3),
+        end_right_pixel=(4, 3),
+        units="mm",
+    )
+    target = measure_stereo_segment(
+        q=_q_matrix(),
+        start_left_pixel=(4, 3),
+        start_right_pixel=(-6, 3),
+        end_left_pixel=(24, 3),
+        end_right_pixel=(14, 3),
+        units="mm",
+    )
+
+    check = evaluate_reference_scale_check(
+        reference_result=reference,
+        known_length_cm=1.1,
+        target_result=target,
+    )
+
+    assert check.measured_length_cm == pytest.approx(1.0)
+    assert check.error_cm == pytest.approx(-0.1)
+    assert check.percent_error == pytest.approx(-100.0 / 11.0)
+    assert check.scale_factor == pytest.approx(1.1)
+    assert check.target_corrected_length_cm == pytest.approx(2.2)
+    assert check.target_corrected_length_m == pytest.approx(0.022)
 
 
 def test_unit_scale_to_cm_handles_common_calibration_units():
