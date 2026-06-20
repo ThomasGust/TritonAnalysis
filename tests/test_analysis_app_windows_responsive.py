@@ -107,6 +107,51 @@ def test_analysis_windows_fit_available_screen(window_path: str, min_scroll_area
         app.processEvents()
 
 
+def test_coral_model_viewport_batches_redraws(monkeypatch):
+    app = _app()
+    from triton_analysis.gui.coral_garden_model_window import CoralGardenModelWindow
+
+    window = CoralGardenModelWindow()
+    try:
+        viewport = window.viewport
+        draw_calls = []
+
+        def fake_draw_scene(*, preserve_view: bool = True) -> None:
+            draw_calls.append(preserve_view)
+
+        monkeypatch.setattr(viewport, "_draw_scene", fake_draw_scene)
+
+        window.length_spin.setValue(window.length_spin.value() + 1.0)
+        window.height_spin.setValue(window.height_spin.value() + 1.0)
+        window.width_spin.setValue(window.width_spin.value() + 1.0)
+
+        assert draw_calls == []
+        assert viewport._redraw_timer.isActive()
+
+        viewport.flush_pending_redraw()
+
+        assert draw_calls == [True]
+        assert viewport._redraw_timer.isActive() is False
+
+        draw_calls.clear()
+        viewport.set_dimensions(
+            length_cm=window.length_spin.value(),
+            height_cm=window.height_spin.value(),
+            width_cm=window.width_spin.value(),
+        )
+
+        assert draw_calls == []
+        assert viewport._redraw_timer.isActive() is False
+        assert all(
+            spin.keyboardTracking() is False
+            for spin in (window.length_spin, window.height_spin, window.width_spin)
+        )
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
 def test_crab_counter_params_are_locked_by_default(tmp_path: Path):
     app = _app()
     from triton_analysis.gui.crab_counter_window import CrabCounterWindow

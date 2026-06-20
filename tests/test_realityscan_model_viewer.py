@@ -122,8 +122,9 @@ def test_model_viewer_server_serves_threejs_viewer_and_model(tmp_path: Path):
         assert "function alignFloorFromPickedPoints" in html
         assert "cumulativeModelScale" in html
         assert "hoverMarker" in html
-        assert "hoverMarker.visible = false" in html
-        assert "updateLoupe(true)" in html
+        assert "drawCleanLoupe" not in html
+        assert "updateLoupe(true)" not in html
+        assert "renderer.render(scene, camera);\n      updateLoupe();" in html
         assert "new THREE.EdgesGeometry" in html
         assert "new THREE.Vector3(0, 0, 1).normalize()" in html
         assert "pickAssistBtn.addEventListener('click'" in html

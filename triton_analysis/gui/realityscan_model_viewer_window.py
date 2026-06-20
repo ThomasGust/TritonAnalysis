@@ -1789,8 +1789,8 @@ def _viewer_html(*, model_url: str, model_name: str) -> str:
       return hit;
     }}
 
-    function updateLoupe(markerVisible = hoverMarker.visible) {{
-      if (!pickAssistEnabled || !pickingModeActive() || !pointerInsideViewport || !markerVisible || loupeDrawFailed) {{
+    function updateLoupe() {{
+      if (!pickAssistEnabled || !pickingModeActive() || !pointerInsideViewport || !hoverMarker.visible || loupeDrawFailed) {{
         loupe.style.display = 'none';
         return;
       }}
@@ -2131,16 +2131,8 @@ def _viewer_html(*, model_url: str, model_name: str) -> str:
       requestAnimationFrame(animate);
       controls.update();
       updateAllMeasurementLabels();
-      const drawCleanLoupe = pickAssistEnabled && pickingModeActive() && pointerInsideViewport && hoverMarker.visible && !loupeDrawFailed;
-      if (drawCleanLoupe) {{
-        hoverMarker.visible = false;
-        renderer.render(scene, camera);
-        hoverMarker.visible = true;
-        updateLoupe(true);
-      }} else {{
-        updateLoupe(false);
-      }}
       renderer.render(scene, camera);
+      updateLoupe();
     }}
     loadModel();
     animate();

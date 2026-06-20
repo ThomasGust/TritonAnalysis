@@ -7,7 +7,7 @@ from pathlib import Path
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
@@ -55,6 +55,11 @@ class CoralGardenViewport(QWidget):
         self._show_grid = True
         self._elev = 22.0
         self._azim = -55.0
+        self._pending_preserve_view = True
+        self._redraw_timer = QTimer(self)
+        self._redraw_timer.setSingleShot(True)
+        self._redraw_timer.setInterval(35)
+        self._redraw_timer.timeout.connect(self.flush_pending_redraw)
 
         self.figure = Figure(figsize=(8.0, 5.0), constrained_layout=True)
         self.figure.patch.set_facecolor("#f7f8f6")
@@ -70,23 +75,37 @@ class CoralGardenViewport(QWidget):
         self._draw_scene(preserve_view=False)
 
     def set_dimensions(self, *, length_cm: float, height_cm: float, width_cm: float) -> None:
-        self._length_cm = float(length_cm)
-        self._height_cm = float(height_cm)
-        self._width_cm = float(width_cm)
+        length_cm = float(length_cm)
+        height_cm = float(height_cm)
+        width_cm = float(width_cm)
+        if (
+            abs(self._length_cm - length_cm) < 1e-9
+            and abs(self._height_cm - height_cm) < 1e-9
+            and abs(self._width_cm - width_cm) < 1e-9
+        ):
+            return
+
+        self._length_cm = length_cm
+        self._height_cm = height_cm
+        self._width_cm = width_cm
         self._prisms = build_coral_garden_prisms(
             self._length_cm,
             self._height_cm,
             self._width_cm,
         )
-        self._draw_scene()
+        self._request_redraw()
 
     def set_show_dimensions(self, show: bool) -> None:
+        if self._show_dimensions == bool(show):
+            return
         self._show_dimensions = bool(show)
-        self._draw_scene()
+        self._request_redraw()
 
     def set_show_grid(self, show: bool) -> None:
+        if self._show_grid == bool(show):
+            return
         self._show_grid = bool(show)
-        self._draw_scene()
+        self._request_redraw()
 
     def set_isometric_view(self) -> None:
         self._set_view(22.0, -55.0)
@@ -101,9 +120,10 @@ class CoralGardenViewport(QWidget):
         self._set_view(0.0, 0.0)
 
     def fit_view(self) -> None:
-        self._draw_scene()
+        self._request_redraw(immediate=True)
 
     def save_png(self, path: Path) -> None:
+        self.flush_pending_redraw()
         self.canvas.draw()
         self.figure.savefig(path, dpi=160, facecolor=self.figure.get_facecolor())
 
@@ -116,7 +136,26 @@ class CoralGardenViewport(QWidget):
     def _set_view(self, elev: float, azim: float) -> None:
         self._elev = float(elev)
         self._azim = float(azim)
-        self._draw_scene(preserve_view=False)
+        self._request_redraw(preserve_view=False, immediate=True)
+
+    def _request_redraw(self, *, preserve_view: bool = True, immediate: bool = False) -> None:
+        if immediate:
+            self._redraw_timer.stop()
+            self._draw_scene(preserve_view=preserve_view)
+            return
+        if self._redraw_timer.isActive():
+            self._pending_preserve_view = self._pending_preserve_view and preserve_view
+        else:
+            self._pending_preserve_view = preserve_view
+        self._redraw_timer.start()
+
+    def flush_pending_redraw(self) -> None:
+        if not self._redraw_timer.isActive():
+            return
+        preserve_view = self._pending_preserve_view
+        self._redraw_timer.stop()
+        self._pending_preserve_view = True
+        self._draw_scene(preserve_view=preserve_view)
 
     def _draw_scene(self, *, preserve_view: bool = True) -> None:
         if preserve_view:
@@ -152,7 +191,7 @@ class CoralGardenViewport(QWidget):
                 axis.pane.set_edgecolor((0.76, 0.80, 0.86, 1.0))
             except AttributeError:
                 pass
-        self.canvas.draw_idle()
+        self.canvas.draw()
 
     def _draw_prisms(self) -> None:
         colors = ["#9fb8cf", "#e0ad45", "#62bda8"]
@@ -392,6 +431,7 @@ class CoralGardenModelWindow(QMainWindow):
         spin.setSuffix(" cm")
         spin.setValue(default)
         spin.setAlignment(Qt.AlignmentFlag.AlignRight)
+        spin.setKeyboardTracking(False)
         return spin
 
     def _update_model(self) -> None:
