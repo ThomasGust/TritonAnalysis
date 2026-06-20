@@ -499,6 +499,7 @@ class CrabCounterWorker(QObject):
                     )
                 except Exception as exc:
                     self.progress.emit({"event": "auto_homography_failed", "error": str(exc)})
+                    raise RuntimeError(f"auto homography failed: {exc}") from exc
                 else:
                     self.progress.emit(
                         {
@@ -1320,10 +1321,11 @@ class CrabCounterWindow(QMainWindow):
             return
         if event == "auto_homography_failed":
             error = str(data.get("error") or "unknown error")
-            self.progress_bar.setRange(0, 0)
-            self.progress_bar.setFormat("Classifying")
+            self.progress_bar.setRange(0, 1)
+            self.progress_bar.setValue(0)
+            self.progress_bar.setFormat("Homography failed")
             self._set_running_status(
-                f"Auto homography could not find a usable board outline ({error}). Continuing with the original image..."
+                f"Auto homography could not find a usable board outline ({error}). Run stopped before classification."
             )
             return
         if event == "candidate_detection_started":

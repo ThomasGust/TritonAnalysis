@@ -3,6 +3,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import pytest
 
 from triton_analysis.crab.counter import (
     CrabCounterConfig,
@@ -230,6 +231,21 @@ class _FakeBoardResponses:
 class _FakeBoardClient:
     def __init__(self):
         self.responses = _FakeBoardResponses()
+
+
+class _PayloadBoardResponses:
+    def __init__(self, payload: dict[str, object]):
+        self.payload = payload
+        self.kwargs = None
+
+    def create(self, **kwargs):
+        self.kwargs = kwargs
+        return type("FakeBoardResponse", (), {"output_text": json.dumps(self.payload)})()
+
+
+class _PayloadBoardClient:
+    def __init__(self, payload: dict[str, object]):
+        self.responses = _PayloadBoardResponses(payload)
 
 
 def test_result_from_payload_filters_and_clamps_to_green_crabs(tmp_path: Path):
@@ -740,6 +756,72 @@ def test_auto_preprocess_crab_target_image_writes_detected_homography_metadata(t
         (tmp_path / "preprocess" / "artifacts" / "board_homography_request.json").read_text(encoding="utf-8")
     )
     assert request_summary["request"]["input"][0]["content"][-1]["image_url"]["omitted"] == "base64_image_data"
+
+
+def test_auto_preprocess_crab_target_image_keeps_diamond_board_corners_distinct(tmp_path: Path):
+    target = tmp_path / "target.png"
+    _write_image(target, (30, 80, 120), size=(1920, 1080))
+    fake_client = _PayloadBoardClient(
+        {
+            "image_width": 1920,
+            "image_height": 1080,
+            "board_visible": True,
+            "confidence": 0.9,
+            "top_left": {"x": 521, "y": 272},
+            "top_right": {"x": 735, "y": 447},
+            "bottom_right": {"x": 480, "y": 676},
+            "bottom_left": {"x": 289, "y": 477},
+            "notes": "Diamond-shaped board from a recent pool run.",
+        }
+    )
+
+    result = auto_preprocess_crab_target_image(
+        target,
+        tmp_path / "preprocess",
+        model="test-outline-model",
+        reasoning_effort="xhigh",
+        client=fake_client,
+    )
+
+    rounded_points = {(round(x, 3), round(y, 3)) for x, y in result.ordered_points}
+    assert len(rounded_points) == 4
+    assert result.ordered_points == (
+        (521.0, 272.0),
+        (735.0, 447.0),
+        (480.0, 676.0),
+        (289.0, 477.0),
+    )
+    metadata = json.loads(result.metadata_json.read_text(encoding="utf-8"))
+    matrix_values = np.array(metadata["processed_to_source_matrix"], dtype=np.float64)
+    assert np.isfinite(matrix_values).all()
+    assert float(np.max(np.abs(matrix_values))) < 10000.0
+
+
+def test_auto_preprocess_crab_target_image_rejects_overlapping_board_corners(tmp_path: Path):
+    target = tmp_path / "target.png"
+    _write_image(target, (30, 80, 120), size=(220, 140))
+    fake_client = _PayloadBoardClient(
+        {
+            "image_width": 220,
+            "image_height": 140,
+            "board_visible": True,
+            "confidence": 0.94,
+            "top_left": {"x": 25, "y": 18},
+            "top_right": {"x": 182, "y": 20},
+            "bottom_right": {"x": 182, "y": 20},
+            "bottom_left": {"x": 32, "y": 114},
+            "notes": "Two corners overlapped.",
+        }
+    )
+
+    with pytest.raises(ValueError, match="overlap|convex|collinear|unstable"):
+        auto_preprocess_crab_target_image(
+            target,
+            tmp_path / "preprocess",
+            model="test-outline-model",
+            reasoning_effort="xhigh",
+            client=fake_client,
+        )
 
 
 def test_benchmark_crab_image_runs_each_reasoning_effort_and_writes_summary(tmp_path: Path):

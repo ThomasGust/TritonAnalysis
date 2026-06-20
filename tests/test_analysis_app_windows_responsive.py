@@ -139,6 +139,46 @@ def test_crab_counter_params_are_locked_by_default(tmp_path: Path):
         app.processEvents()
 
 
+def test_crab_worker_stops_when_auto_homography_fails(tmp_path: Path, monkeypatch):
+    _app()
+    from triton_analysis.gui import crab_counter_window as module
+
+    target = tmp_path / "target.jpg"
+    target.write_bytes(b"not used")
+    analyzer_called = False
+
+    def fail_homography(*_args, **_kwargs):
+        raise ValueError("homography points overlap")
+
+    def analyze_unrectified(*_args, **_kwargs):
+        nonlocal analyzer_called
+        analyzer_called = True
+        raise AssertionError("analyzer should not run after homography failure")
+
+    monkeypatch.setattr(module, "auto_preprocess_crab_target_image", fail_homography)
+    monkeypatch.setattr(module, "analyze_crab_image_pipeline", analyze_unrectified)
+    worker = module.CrabCounterWorker(
+        module.CrabCounterConfig(
+            image_path=target,
+            reference_paths={},
+            output_dir=tmp_path / "out",
+        ),
+        preprocess_mode="auto_homography",
+        preprocess_output_dir=tmp_path / "preprocess",
+    )
+    progress_events = []
+    finished_payloads = []
+    worker.progress.connect(progress_events.append)
+    worker.finished.connect(finished_payloads.append)
+
+    worker.run()
+
+    assert analyzer_called is False
+    assert any(event.get("event") == "auto_homography_failed" for event in progress_events)
+    assert finished_payloads[-1]["ok"] is False
+    assert "homography points overlap" in finished_payloads[-1]["error"]
+
+
 def test_multi_rect_actions_and_anchor_canvases_are_visible():
     app = _app()
     from triton_analysis.gui.multi_rect_length_measurement_window import MultiRectLengthMeasurementWindow

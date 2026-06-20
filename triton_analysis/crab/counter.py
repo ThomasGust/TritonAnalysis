@@ -472,7 +472,9 @@ def preprocess_crab_target_image(
         out_w, out_h = _homography_output_size(ordered)
         destination = np.array([[0, 0], [out_w - 1, 0], [out_w - 1, out_h - 1], [0, out_h - 1]], dtype=np.float32)
         source_to_processed = cv2.getPerspectiveTransform(ordered.astype(np.float32), destination)
+        _validate_homography_transform(source_to_processed, ordered, destination)
         processed_to_source = np.linalg.inv(source_to_processed)
+        _validate_homography_transform(processed_to_source, destination, ordered)
         processed = cv2.warpPerspective(image, source_to_processed, (out_w, out_h), flags=cv2.INTER_LINEAR)
         output_path = output_root / f"{stem}_{mode_name}.png"
         point_key = "clicked_points" if mode_name == "manual_homography" else "detected_points"
@@ -1675,15 +1677,42 @@ def _normalize_preprocess_mode(value: object) -> str:
 
 
 def _order_quad_points(points: np.ndarray) -> np.ndarray:
+    points = np.asarray(points, dtype=np.float32)
     if points.shape != (4, 2):
         raise ValueError("expected four 2D points")
-    sums = points.sum(axis=1)
-    diffs = np.diff(points, axis=1).reshape(-1)
-    top_left = points[int(np.argmin(sums))]
-    bottom_right = points[int(np.argmax(sums))]
-    top_right = points[int(np.argmin(diffs))]
-    bottom_left = points[int(np.argmax(diffs))]
-    ordered = np.array([top_left, top_right, bottom_right, bottom_left], dtype=np.float32)
+    if not np.isfinite(points).all():
+        raise ValueError("homography points must be finite")
+    pairwise_distances = [
+        float(np.linalg.norm(points[index] - points[other_index]))
+        for index in range(4)
+        for other_index in range(index + 1, 4)
+    ]
+    if min(pairwise_distances) < 8.0:
+        raise ValueError("homography points overlap or are too close together")
+    hull = cv2.convexHull(points.reshape(-1, 1, 2), returnPoints=True)
+    if hull is None or len(hull) != 4:
+        raise ValueError("homography points must form a convex quadrilateral")
+
+    centroid = points.mean(axis=0)
+    angles = np.arctan2(points[:, 1] - centroid[1], points[:, 0] - centroid[0])
+    clockwise = points[np.argsort(angles)]
+    top_edge_index = min(
+        range(4),
+        key=lambda index: (
+            float((clockwise[index, 1] + clockwise[(index + 1) % 4, 1]) * 0.5),
+            float(min(clockwise[index, 0], clockwise[(index + 1) % 4, 0])),
+        ),
+    )
+    next_index = (top_edge_index + 1) % 4
+    if clockwise[top_edge_index, 0] <= clockwise[next_index, 0]:
+        start_index = top_edge_index
+        step = 1
+    else:
+        start_index = next_index
+        step = -1
+    ordered = np.array([clockwise[(start_index + step * offset) % 4] for offset in range(4)], dtype=np.float32)
+    if not cv2.isContourConvex(ordered.reshape(-1, 1, 2)):
+        raise ValueError("homography points must form a convex quadrilateral")
     if abs(float(cv2.contourArea(ordered))) < 100.0:
         raise ValueError("homography points are nearly collinear")
     return ordered
@@ -1700,6 +1729,21 @@ def _homography_output_size(points: np.ndarray) -> tuple[int, int]:
     if width < 32 or height < 32:
         raise ValueError("homography output would be too small")
     return width, height
+
+
+def _validate_homography_transform(matrix: np.ndarray, source_points: np.ndarray, destination_points: np.ndarray) -> None:
+    if not np.isfinite(matrix).all():
+        raise ValueError("homography transform contains non-finite values")
+    projected = cv2.perspectiveTransform(
+        np.asarray(source_points, dtype=np.float32).reshape(-1, 1, 2),
+        np.asarray(matrix, dtype=np.float64),
+    ).reshape(-1, 2)
+    if not np.isfinite(projected).all():
+        raise ValueError("homography transform produced non-finite coordinates")
+    errors = np.linalg.norm(projected - np.asarray(destination_points, dtype=np.float32), axis=1)
+    max_error = float(np.max(errors))
+    if max_error > 2.0:
+        raise ValueError(f"homography transform is unstable ({max_error:.2f}px reprojection error)")
 
 
 def _matrix_to_lists(matrix: np.ndarray) -> list[list[float]]:
