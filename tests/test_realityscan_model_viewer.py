@@ -8,6 +8,7 @@ import pytest
 
 pytest.importorskip("PyQt6")
 
+from PyQt6.QtCore import QUrl
 from PyQt6.QtWidgets import QApplication
 
 import triton_analysis.gui.realityscan_model_viewer_window as model_viewer
@@ -94,6 +95,15 @@ def test_model_viewer_server_serves_threejs_viewer_and_model(tmp_path: Path):
         assert "controls.mouseButtons" in html
         assert "controls.staticMoving = false" in html
         assert "controls.dynamicDampingFactor = 0.12" in html
+        assert "preserveDrawingBuffer: true" in html
+        assert "powerPreference: 'high-performance'" in html
+        assert "renderer.setClearColor(0x0d1117, 1)" in html
+        assert "function requestRender" in html
+        assert "function renderFrame" in html
+        assert "requestAnimationFrame(renderFrame)" in html
+        assert "requestAnimationFrame(animate)" not in html
+        assert "function animate()" not in html
+        assert "requestRender(2)" in html
         assert "controls.noRotate = false" in html
         assert "function setControlMode" not in html
         assert "function saveViewState" in html
@@ -206,6 +216,44 @@ def test_model_viewer_reuses_existing_server_for_same_model(tmp_path: Path, monk
         if original_server is not None and original_stop is not None:
             original_stop()
             window.panel._server = None
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_model_viewer_embedded_view_does_not_reload_same_url():
+    app = _app()
+    window = RealityScanModelViewerWindow()
+
+    class FakeWebView:
+        def __init__(self):
+            self._url = QUrl()
+            self.loaded_urls: list[QUrl] = []
+
+        def url(self) -> QUrl:
+            return QUrl(self._url)
+
+        def setUrl(self, url: QUrl) -> None:
+            self._url = QUrl(url)
+            self.loaded_urls.append(QUrl(url))
+
+    fake_web_view = FakeWebView()
+    try:
+        window.panel.web_view = fake_web_view
+        window.panel._viewer_url = "http://127.0.0.1:45678/viewer.html"
+
+        window.panel._load_embedded_view()
+        window.panel._load_embedded_view()
+
+        assert len(fake_web_view.loaded_urls) == 1
+        assert fake_web_view.loaded_urls[-1].query() == "unit=cm"
+
+        window.panel.unit_combo.setCurrentIndex(window.panel.unit_combo.findData("mm"))
+        window.panel._load_embedded_view()
+
+        assert len(fake_web_view.loaded_urls) == 2
+        assert fake_web_view.loaded_urls[-1].query() == "unit=mm"
+    finally:
         window.close()
         window.deleteLater()
         app.processEvents()

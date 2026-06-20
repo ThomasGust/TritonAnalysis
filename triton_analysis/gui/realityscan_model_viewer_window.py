@@ -13,7 +13,7 @@ from pathlib import Path
 from urllib.parse import quote, unquote, urlparse
 
 from PyQt6.QtCore import QTimer, Qt, QUrl
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtGui import QDesktopServices, QColor
 from PyQt6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -327,6 +327,11 @@ class RealityScanModelViewerPanel(QWidget):
         use_embedded_webview = QWebEngineView is not None and os.environ.get("QT_QPA_PLATFORM", "").lower() != "offscreen"
         if use_embedded_webview:
             self.web_view = QWebEngineView()
+            self.web_view.setStyleSheet("background-color: #0d1117;")
+            try:
+                self.web_view.page().setBackgroundColor(QColor("#0d1117"))
+            except Exception:
+                pass
             self.web_view.setHtml(
                 "<!doctype html><html><body style='margin:0;background:#0d1117;color:#cbd5e1;"
                 "font-family:Segoe UI,Arial,sans-serif;display:grid;place-items:center;height:100vh'>"
@@ -398,6 +403,8 @@ class RealityScanModelViewerPanel(QWidget):
         url = QUrl(self._viewer_url)
         if self.unit_combo.currentData():
             url.setQuery(f"unit={self.unit_combo.currentData()}")
+        if self.web_view.url() == url:
+            return
         self.web_view.setUrl(url)
 
     def _reload_view(self) -> None:
@@ -693,9 +700,15 @@ def _viewer_html(*, model_url: str, model_name: str) -> str:
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0d1117);
     const camera = new THREE.PerspectiveCamera(55, 1, 0.001, 100000);
-    const renderer = new THREE.WebGLRenderer({{ antialias: true }});
+    const renderer = new THREE.WebGLRenderer({{
+      antialias: true,
+      alpha: false,
+      preserveDrawingBuffer: true,
+      powerPreference: 'high-performance'
+    }});
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.setClearColor(0x0d1117, 1);
     viewport.appendChild(renderer.domElement);
 
     const controls = new TrackballControls(camera, renderer.domElement);
@@ -712,10 +725,22 @@ def _viewer_html(*, model_url: str, model_name: str) -> str:
       MIDDLE: THREE.MOUSE.DOLLY,
       RIGHT: THREE.MOUSE.PAN
     }};
-    controls.addEventListener('change', requestLabelUpdate);
+    controls.addEventListener('change', () => {{
+      requestLabelUpdate();
+      requestRender(CAMERA_SETTLE_FRAMES);
+    }});
     controls.addEventListener('start', () => {{
       if (!applyingViewPreset) viewSelect.value = '';
+      requestRender(INTERACTION_RENDER_FRAMES);
     }});
+    controls.addEventListener('end', () => requestRender(CAMERA_SETTLE_FRAMES));
+    renderer.domElement.addEventListener('pointerdown', requestInteractionRender, {{ passive: true }});
+    renderer.domElement.addEventListener('pointermove', requestInteractionRender, {{ passive: true }});
+    renderer.domElement.addEventListener('pointerup', requestInteractionRender, {{ passive: true }});
+    renderer.domElement.addEventListener('pointercancel', requestInteractionRender, {{ passive: true }});
+    renderer.domElement.addEventListener('wheel', requestInteractionRender, {{ passive: true }});
+    window.addEventListener('keydown', requestInteractionRender);
+    window.addEventListener('keyup', requestInteractionRender);
 
     const hemi = new THREE.HemisphereLight(0xffffff, 0x334155, 1.8);
     scene.add(hemi);
@@ -801,6 +826,10 @@ def _viewer_html(*, model_url: str, model_name: str) -> str:
     let edgesVisible = false;
     let pointerInsideViewport = false;
     let loupeDrawFailed = false;
+    let renderPending = false;
+    let settleFrameBudget = 0;
+    const CAMERA_SETTLE_FRAMES = 28;
+    const INTERACTION_RENDER_FRAMES = 18;
     const lastPointer = {{ x: 0, y: 0 }};
     const dragPlane = new THREE.Plane();
     const dragPlaneHit = new THREE.Vector3();
@@ -838,6 +867,28 @@ def _viewer_html(*, model_url: str, model_name: str) -> str:
 
     function requestLabelUpdate() {{
       labelsDirty = true;
+      requestRender();
+    }}
+
+    function requestInteractionRender() {{
+      requestRender(INTERACTION_RENDER_FRAMES);
+    }}
+
+    function requestRender(frames = 1) {{
+      settleFrameBudget = Math.max(settleFrameBudget, frames);
+      if (renderPending) return;
+      renderPending = true;
+      requestAnimationFrame(renderFrame);
+    }}
+
+    function renderFrame() {{
+      renderPending = false;
+      controls.update();
+      updateAllMeasurementLabels();
+      renderer.render(scene, camera);
+      updateLoupe();
+      settleFrameBudget = Math.max(0, settleFrameBudget - 1);
+      if (settleFrameBudget > 0) requestRender(0);
     }}
 
     function roundToDevicePixel(value) {{
@@ -848,11 +899,13 @@ def _viewer_html(*, model_url: str, model_name: str) -> str:
     function setButtonPressed(button, pressed) {{
       button.classList.toggle('active', pressed);
       button.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+      requestRender();
     }}
 
     function setControlTargets(target) {{
       controls.target.copy(target);
       orbitCursor.position.copy(target);
+      requestRender();
     }}
 
     function saveViewState() {{
@@ -1397,6 +1450,7 @@ def _viewer_html(*, model_url: str, model_name: str) -> str:
         updateMeasurementSelect();
       }}
       updateReadout();
+      requestRender();
     }}
 
     function ensureMeasurementLabel(measurement) {{
@@ -1738,8 +1792,10 @@ def _viewer_html(*, model_url: str, model_name: str) -> str:
     }}
 
     function hidePickAssistVisuals() {{
+      const wasVisible = hoverMarker.visible || loupe.style.display !== 'none';
       hoverMarker.visible = false;
       loupe.style.display = 'none';
+      if (wasVisible) requestRender();
     }}
 
     function setPickAssistEnabled(enabled) {{
@@ -1763,7 +1819,9 @@ def _viewer_html(*, model_url: str, model_name: str) -> str:
 
     function updateHoverMarker(hit) {{
       if (!hit) {{
+        const wasVisible = hoverMarker.visible;
         hoverMarker.visible = false;
+        if (wasVisible) requestRender();
         return;
       }}
       const normal = surfaceNormalFromHit(hit);
@@ -1777,6 +1835,7 @@ def _viewer_html(*, model_url: str, model_name: str) -> str:
       positions.needsUpdate = true;
       hoverNormalGeometry.computeBoundingSphere();
       hoverMarker.visible = true;
+      requestRender();
     }}
 
     function updatePickAssist(clientX, clientY, meshHit = null) {{
@@ -1858,12 +1917,14 @@ def _viewer_html(*, model_url: str, model_name: str) -> str:
     }}
 
     function clearFloorPickMarkers() {{
+      const hadMarkers = floorPickMarkers.length > 0;
       floorPickMarkers.forEach(marker => {{
         scene.remove(marker);
         disposeObject(marker);
       }});
       floorPickMarkers.length = 0;
       floorPickPoints.length = 0;
+      if (hadMarkers) requestRender();
     }}
 
     function createFloorPickMarker(point, index) {{
@@ -1875,6 +1936,7 @@ def _viewer_html(*, model_url: str, model_name: str) -> str:
       marker.position.copy(point);
       scene.add(marker);
       floorPickMarkers.push(marker);
+      requestRender();
     }}
 
     function applyWorldAlignment(quaternion) {{
@@ -2127,15 +2189,8 @@ def _viewer_html(*, model_url: str, model_name: str) -> str:
       if (event.key === 'Enter') rescaleFromGroundTruth();
     }});
 
-    function animate() {{
-      requestAnimationFrame(animate);
-      controls.update();
-      updateAllMeasurementLabels();
-      renderer.render(scene, camera);
-      updateLoupe();
-    }}
     loadModel();
-    animate();
+    requestRender(2);
   </script>
 </body>
 </html>

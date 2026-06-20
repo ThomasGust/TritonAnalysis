@@ -8,6 +8,7 @@ import pytest
 from triton_analysis.crab.counter import (
     CrabCounterConfig,
     analyze_crab_image,
+    analyze_crab_image_ensemble,
     analyze_crab_image_pipeline,
     auto_preprocess_crab_target_image,
     benchmark_crab_image,
@@ -190,6 +191,19 @@ class _FakePipelineResponses:
                     },
                 ],
                 "summary": "Two candidates are European green crabs.",
+            }
+        elif schema_name == "crab_ensemble_validator":
+            payload = {
+                "selected_run_id": "image_2",
+                "confidence": 0.88,
+                "rationale": "image_2 has the cleanest board and agrees with the consensus count",
+                "agreement_notes": "all runs returned two accepted European green crabs",
+                "concerns": ["image_1 has mild glare"],
+                "run_assessments": [
+                    {"run_id": "image_1", "usable": True, "confidence": 0.78, "count": 2, "notes": "usable but glared"},
+                    {"run_id": "image_2", "usable": True, "confidence": 0.88, "count": 2, "notes": "sharpest board"},
+                    {"run_id": "image_3", "usable": True, "confidence": 0.82, "count": 2, "notes": "usable alternate"},
+                ],
             }
         else:
             raise AssertionError(f"unexpected schema name {schema_name}")
@@ -494,6 +508,80 @@ def test_analyze_crab_image_pipeline_detects_then_classifies_crops(tmp_path: Pat
     assert len(classifier_response["classifications"]) == 3
     detection_stage = next(stage for stage in manifest["stages"] if stage["stage"] == "candidate_detection_outputs")
     assert detection_stage["files"]["contact_sheet"] == str(contact_sheet)
+
+
+def test_analyze_crab_image_ensemble_runs_images_then_validates_selection(tmp_path: Path):
+    refs = {
+        "european_green_crab": tmp_path / "green.png",
+        "native_rock_crab": tmp_path / "rock.png",
+        "jonah_crab": tmp_path / "jonah.png",
+    }
+    _write_image(refs["european_green_crab"], (20, 60, 50))
+    _write_image(refs["native_rock_crab"], (80, 110, 160))
+    _write_image(refs["jonah_crab"], (90, 130, 190))
+    targets = []
+    for index, color in enumerate(((30, 80, 120), (35, 85, 125), (40, 90, 130)), start=1):
+        target = tmp_path / f"target_{index}.png"
+        _write_image(target, color)
+        targets.append(target)
+    fake_client = _FakePipelineClient()
+
+    outputs = analyze_crab_image_ensemble(
+        tuple(
+            CrabCounterConfig(
+                image_path=target,
+                reference_paths=refs,
+                output_dir=tmp_path / "ensemble",
+                model="test-vision-model",
+                reasoning_effort="high",
+            )
+            for target in targets
+        ),
+        output_dir=tmp_path / "ensemble",
+        client=fake_client,
+        preprocess_mode="none",
+        max_workers=1,
+    )
+
+    assert len(outputs.runs) == 3
+    assert outputs.selection.selected_run_id == "image_2"
+    assert outputs.selected_run.run_id == "image_2"
+    assert outputs.final_outputs.result.count == 2
+    assert outputs.final_outputs.result_json == outputs.output_dir / "ensemble_final_crab_count.json"
+    assert outputs.final_outputs.annotated_image.exists()
+    assert outputs.validation_json.exists()
+    assert (outputs.output_dir / "image_1" / "pipeline" / "target_1_candidate_boxes.json").exists()
+    assert (outputs.output_dir / "image_2" / "target_2_candidate_contact_sheet.png").exists()
+    schema_names = [call["text"]["format"]["name"] for call in fake_client.responses.calls]
+    assert schema_names.count("crab_candidate_detector") == 3
+    assert schema_names.count("crab_candidate_classifier") == 3
+    assert schema_names[-1] == "crab_ensemble_validator"
+    validator_call = fake_client.responses.calls[-1]
+    assert validator_call["prompt_cache_key"] == "triton_analysis_crab_ensemble_validator_v1"
+    assert validator_call["text"]["format"]["schema"]["properties"]["selected_run_id"]["enum"] == [
+        "image_1",
+        "image_2",
+        "image_3",
+    ]
+    validator_prompt = validator_call["input"][0]["content"][0]["text"]
+    assert "selected_run_id must exactly match" in validator_prompt
+    assert "Run summaries JSON" in validator_prompt
+    written = json.loads(outputs.final_outputs.result_json.read_text(encoding="utf-8"))
+    assert written["ensemble"]["selection"]["selected_run_id"] == "image_2"
+    assert written["ensemble"]["selected_result_json"] == str(outputs.selected_run.outputs.result_json)
+    selection = json.loads(outputs.validation_json.read_text(encoding="utf-8"))
+    assert selection["selection"]["confidence"] == 0.88
+    manifest = json.loads(outputs.artifact_manifest.read_text(encoding="utf-8"))
+    stages = {stage["stage"] for stage in manifest["stages"]}
+    assert {"ensemble_image_runs", "ensemble_validation", "ensemble_final_outputs"} <= stages
+    validator_request = json.loads((outputs.output_dir / "artifacts" / "ensemble_validation_request.json").read_text(encoding="utf-8"))
+    image_items = [
+        item
+        for item in validator_request["request"]["input"][0]["content"]
+        if item.get("type") == "input_image"
+    ]
+    assert image_items
+    assert image_items[0]["image_url"]["omitted"] == "base64_image_data"
 
 
 def test_benchmark_crab_image_pipeline_reuses_detector_stage(tmp_path: Path):

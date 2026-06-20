@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import csv
 import json
 import mimetypes
@@ -112,6 +113,72 @@ class CrabCounterOutputs:
     output_dir: Path
     result_json: Path
     annotated_image: Path
+    artifact_manifest: Path | None = None
+
+
+@dataclass(frozen=True)
+class CrabEnsembleImageRun:
+    """One fully analyzed image within a multi-image crab-counter ensemble."""
+
+    run_id: str
+    index: int
+    source_image: Path
+    outputs: CrabCounterOutputs
+    preprocess_result: CrabPreprocessResult | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "run_id": self.run_id,
+            "index": int(self.index),
+            "source_image": str(self.source_image),
+            "processed_image": str(self.outputs.result.image_path),
+            "preprocess": _preprocess_result_to_dict(self.preprocess_result),
+            "result": self.outputs.result.to_dict(),
+            "output_dir": str(self.outputs.output_dir),
+            "result_json": str(self.outputs.result_json),
+            "annotated_image": str(self.outputs.annotated_image),
+            "artifact_manifest": str(self.outputs.artifact_manifest) if self.outputs.artifact_manifest else "",
+        }
+
+
+@dataclass(frozen=True)
+class CrabEnsembleSelection:
+    """Validator-stage decision selecting the judge-facing run."""
+
+    selected_run_id: str
+    confidence: float
+    rationale: str
+    agreement_notes: str
+    concerns: tuple[str, ...]
+    run_assessments: tuple[Mapping[str, object], ...]
+    model: str
+    reasoning_effort: str
+    analysis_seconds: float = 0.0
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "selected_run_id": self.selected_run_id,
+            "confidence": round(float(self.confidence), 4),
+            "rationale": self.rationale,
+            "agreement_notes": self.agreement_notes,
+            "concerns": list(self.concerns),
+            "run_assessments": [_sanitize_json_value(dict(item)) for item in self.run_assessments],
+            "model": self.model,
+            "reasoning_effort": self.reasoning_effort,
+            "analysis_seconds": round(float(self.analysis_seconds), 3),
+        }
+
+
+@dataclass(frozen=True)
+class CrabEnsembleOutputs:
+    """Files written for a multi-image crab-counter ensemble."""
+
+    output_dir: Path
+    runs: tuple[CrabEnsembleImageRun, ...]
+    selection: CrabEnsembleSelection
+    selected_run: CrabEnsembleImageRun
+    final_outputs: CrabCounterOutputs
+    validation_json: Path
     artifact_manifest: Path | None = None
 
 
@@ -783,6 +850,144 @@ def analyze_crab_image_pipeline(
     )
 
 
+def analyze_crab_image_ensemble(
+    configs: Sequence[CrabCounterConfig],
+    *,
+    output_dir: str | Path | None = None,
+    client: Any | None = None,
+    client_factory: Any | None = None,
+    progress_callback: Any | None = None,
+    preprocess_mode: str = "auto_homography",
+    homography_model: str = DEFAULT_HOMOGRAPHY_MODEL,
+    homography_effort: str = DEFAULT_HOMOGRAPHY_REASONING_EFFORT,
+    board_reference_paths: Sequence[str | Path] | None = None,
+    validation_model: str | None = None,
+    validation_reasoning_effort: str | None = None,
+    max_workers: int | None = None,
+) -> CrabEnsembleOutputs:
+    """Analyze multiple board images in parallel and select the best judge-facing run."""
+
+    run_configs = tuple(configs)
+    if len(run_configs) < 2:
+        raise ValueError("crab ensemble analysis requires at least two image configs")
+    root = Path(output_dir or run_configs[0].output_dir).expanduser()
+    root.mkdir(parents=True, exist_ok=True)
+    mode_name = _normalize_preprocess_mode(preprocess_mode)
+    if mode_name in {"", "none", "full_frame", "fullframe", "legacy"}:
+        mode_name = "none"
+    if mode_name not in {"none", "auto_homography"}:
+        raise ValueError("crab ensemble analysis supports only auto_homography or none preprocessing")
+
+    selected_model = str(validation_model or run_configs[0].model or DEFAULT_MODEL)
+    selected_effort = _normalize_reasoning_effort(validation_reasoning_effort or run_configs[0].reasoning_effort)
+    worker_count = max(1, min(len(run_configs), int(max_workers or len(run_configs))))
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "event": "ensemble_started",
+                "total": len(run_configs),
+                "max_workers": worker_count,
+                "preprocess_mode": mode_name,
+            }
+        )
+
+    image_runs_by_index: dict[int, CrabEnsembleImageRun] = {}
+    completed = 0
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = {}
+        for index, config in enumerate(run_configs, start=1):
+            run_id = f"image_{index}"
+            child_config = replace(config, output_dir=root / run_id)
+            if progress_callback is not None:
+                progress_callback({"event": "ensemble_image_started", "run_id": run_id, "index": index, "total": len(run_configs)})
+            future = executor.submit(
+                _run_ensemble_image_pipeline,
+                run_id,
+                index,
+                child_config,
+                mode_name,
+                homography_model,
+                homography_effort,
+                tuple(Path(path).expanduser() for path in board_reference_paths or ()),
+                client,
+                client_factory,
+            )
+            futures[future] = (run_id, index)
+        for future in as_completed(futures):
+            run_id, index = futures[future]
+            try:
+                image_run = future.result()
+            except Exception as exc:
+                if progress_callback is not None:
+                    progress_callback({"event": "ensemble_image_failed", "run_id": run_id, "index": index, "error": str(exc)})
+                raise RuntimeError(f"{run_id} analysis failed: {exc}") from exc
+            image_runs_by_index[index] = image_run
+            completed += 1
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "event": "ensemble_image_finished",
+                        "run_id": run_id,
+                        "index": index,
+                        "completed": completed,
+                        "total": len(run_configs),
+                        "count": image_run.outputs.result.count,
+                        "candidate_count": len(image_run.outputs.result.candidates),
+                    }
+                )
+
+    image_runs = tuple(image_runs_by_index[index] for index in sorted(image_runs_by_index))
+    _record_stage_outputs(
+        root,
+        "ensemble_image_runs",
+        context={
+            "image_count": len(image_runs),
+            "max_workers": worker_count,
+            "preprocess_mode": mode_name,
+            "runs": [_ensemble_run_summary(run) for run in image_runs],
+        },
+        files={f"{run.run_id}_manifest": run.outputs.artifact_manifest for run in image_runs},
+    )
+
+    if progress_callback is not None:
+        progress_callback({"event": "ensemble_validation_started", "total": len(image_runs), "effort": selected_effort})
+    validation_start = time.perf_counter()
+    validator_client = _stage_client(client, client_factory)
+    normalized_refs = _normalize_reference_paths(run_configs[0].reference_paths)
+    reference_atlas_paths = _merge_reference_atlas_paths(normalized_refs, run_configs[0].reference_atlas_paths)
+    response = _create_openai_ensemble_selection_response(
+        runs=image_runs,
+        reference_atlas_paths=reference_atlas_paths,
+        model=selected_model,
+        reasoning_effort=selected_effort,
+        client=validator_client,
+        artifact_root=root,
+        artifact_context={
+            "image_count": len(image_runs),
+            "run_ids": [run.run_id for run in image_runs],
+            "preprocess_mode": mode_name,
+        },
+    )
+    selection = _parse_ensemble_selection_response(
+        response,
+        run_ids=tuple(run.run_id for run in image_runs),
+        model=selected_model,
+        reasoning_effort=selected_effort,
+    )
+    selection = replace(selection, analysis_seconds=time.perf_counter() - validation_start)
+    selected_run = next(run for run in image_runs if run.run_id == selection.selected_run_id)
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "event": "ensemble_validation_finished",
+                "selected_run_id": selection.selected_run_id,
+                "confidence": selection.confidence,
+                "analysis_seconds": selection.analysis_seconds,
+            }
+        )
+    return _write_crab_ensemble_outputs(root, image_runs, selection, selected_run)
+
+
 def benchmark_crab_image_pipeline(
     config: CrabCounterConfig,
     *,
@@ -1207,6 +1412,93 @@ def _run_candidate_detection_stage(
     return result, detection_json
 
 
+def _stage_client(client: Any | None, client_factory: Any | None) -> Any | None:
+    if client_factory is None:
+        return client
+    if not callable(client_factory):
+        raise TypeError("client_factory must be callable")
+    return client_factory()
+
+
+def _run_ensemble_image_pipeline(
+    run_id: str,
+    index: int,
+    config: CrabCounterConfig,
+    preprocess_mode: str,
+    homography_model: str,
+    homography_effort: str,
+    board_reference_paths: Sequence[Path],
+    client: Any | None,
+    client_factory: Any | None,
+) -> CrabEnsembleImageRun:
+    source_image = Path(config.image_path).expanduser()
+    run_client = _stage_client(client, client_factory)
+    preprocess_result: CrabPreprocessResult | None = None
+    analysis_config = config
+    if preprocess_mode == "auto_homography":
+        preprocess_result = auto_preprocess_crab_target_image(
+            source_image,
+            Path(config.output_dir).expanduser() / "preprocess",
+            model=homography_model,
+            reasoning_effort=homography_effort,
+            board_reference_paths=board_reference_paths,
+            client=run_client,
+            artifact_root=config.output_dir,
+        )
+        analysis_config = replace(config, image_path=preprocess_result.processed_image)
+    outputs = analyze_crab_image_pipeline(analysis_config, client=run_client)
+    return CrabEnsembleImageRun(
+        run_id=run_id,
+        index=index,
+        source_image=source_image,
+        outputs=outputs,
+        preprocess_result=preprocess_result,
+    )
+
+
+def _preprocess_result_to_dict(result: CrabPreprocessResult | None) -> dict[str, object] | None:
+    if result is None:
+        return None
+    return {
+        "mode": result.mode,
+        "source_image": str(result.source_image),
+        "processed_image": str(result.processed_image),
+        "metadata_json": str(result.metadata_json),
+        "source_size": list(result.source_size),
+        "output_size": list(result.output_size),
+        "selection_points": [[round(float(x), 3), round(float(y), 3)] for x, y in result.selection_points],
+        "ordered_points": [[round(float(x), 3), round(float(y), 3)] for x, y in result.ordered_points],
+        "board_confidence": None if result.board_confidence is None else round(float(result.board_confidence), 4),
+        "board_detection_seconds": (
+            None if result.board_detection_seconds is None else round(float(result.board_detection_seconds), 3)
+        ),
+        "board_notes": result.board_notes,
+        "board_model": result.board_model,
+        "board_reasoning_effort": result.board_reasoning_effort,
+    }
+
+
+def _ensemble_run_summary(run: CrabEnsembleImageRun) -> dict[str, object]:
+    result = run.outputs.result
+    return {
+        "run_id": run.run_id,
+        "index": int(run.index),
+        "source_image": str(run.source_image),
+        "processed_image": str(result.image_path),
+        "preprocess": _preprocess_result_to_dict(run.preprocess_result),
+        "count": int(result.count),
+        "candidate_count": len(result.candidates),
+        "accepted_count": len(result.detections),
+        "analysis_seconds": round(float(result.analysis_seconds), 3),
+        "result_json": str(run.outputs.result_json),
+        "annotated_image": str(run.outputs.annotated_image),
+        "artifact_manifest": str(run.outputs.artifact_manifest) if run.outputs.artifact_manifest else "",
+        "summary": result.summary,
+        "detections": [_detection_to_dict(detection) for detection in result.detections],
+        "candidates": [_detection_to_dict(candidate) for candidate in result.candidates],
+    }
+
+
 def _classify_detected_crab_candidates(
     config: CrabCounterConfig,
     detection_result: CrabCandidateDetectionResult,
@@ -1341,6 +1633,71 @@ def _write_crab_counter_outputs(
         output_dir=output_dir,
         result_json=result_json,
         annotated_image=annotated_image,
+        artifact_manifest=manifest_path,
+    )
+
+
+def _write_crab_ensemble_outputs(
+    output_dir: Path,
+    runs: Sequence[CrabEnsembleImageRun],
+    selection: CrabEnsembleSelection,
+    selected_run: CrabEnsembleImageRun,
+) -> CrabEnsembleOutputs:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    validation_json = output_dir / "ensemble_selection.json"
+    result_json = output_dir / "ensemble_final_crab_count.json"
+    annotated_image = output_dir / "ensemble_final_crab_count_annotated.png"
+    manifest_path = output_dir / "run_manifest.json"
+    selected_result = selected_run.outputs.result
+    summary = selected_result.summary.strip()
+    validator_note = f"Ensemble selected {selection.selected_run_id}: {selection.rationale}".strip()
+    final_summary = f"{summary} {validator_note}".strip() if summary else validator_note
+    final_result = replace(selected_result, summary=final_summary)
+    ensemble_payload = {
+        "selection": selection.to_dict(),
+        "selected_run_id": selected_run.run_id,
+        "selected_result_json": str(selected_run.outputs.result_json),
+        "selected_annotated_image": str(selected_run.outputs.annotated_image),
+        "runs": [_ensemble_run_summary(run) for run in runs],
+    }
+    _write_json(validation_json, ensemble_payload)
+    payload = final_result.to_dict()
+    payload["artifact_manifest"] = str(manifest_path)
+    payload["ensemble"] = ensemble_payload
+    result_json.write_text(json.dumps(_sanitize_json_value(payload), indent=2) + "\n", encoding="utf-8")
+    draw_crab_count_result(final_result.image_path, final_result, annotated_image)
+    _record_stage_outputs(
+        output_dir,
+        "ensemble_final_outputs",
+        context={
+            "selected_run_id": selected_run.run_id,
+            "confidence": round(float(selection.confidence), 4),
+            "count": int(final_result.count),
+            "candidate_count": len(final_result.candidates),
+            "accepted_count": len(final_result.detections),
+        },
+        files={
+            "selection_json": validation_json,
+            "result_json": result_json,
+            "annotated_image": annotated_image,
+            "selected_result_json": selected_run.outputs.result_json,
+            "selected_annotated_image": selected_run.outputs.annotated_image,
+        },
+    )
+    final_outputs = CrabCounterOutputs(
+        result=final_result,
+        output_dir=output_dir,
+        result_json=result_json,
+        annotated_image=annotated_image,
+        artifact_manifest=manifest_path,
+    )
+    return CrabEnsembleOutputs(
+        output_dir=output_dir,
+        runs=tuple(runs),
+        selection=selection,
+        selected_run=selected_run,
+        final_outputs=final_outputs,
+        validation_json=validation_json,
         artifact_manifest=manifest_path,
     )
 
@@ -1503,6 +1860,43 @@ def _parse_candidate_classification_response(
         reasoning_effort=reasoning_effort,
         target_confidence_threshold=target_confidence_threshold,
         target_margin_threshold=target_margin_threshold,
+    )
+
+
+def _parse_ensemble_selection_response(
+    response: Any,
+    *,
+    run_ids: Sequence[str],
+    model: str,
+    reasoning_effort: str,
+) -> CrabEnsembleSelection:
+    text = _response_text(response)
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"OpenAI ensemble validator response was not valid JSON: {text[:500]}") from exc
+    if not isinstance(payload, Mapping):
+        raise RuntimeError("OpenAI ensemble validator response JSON was not an object.")
+    selected_run_id = str(payload.get("selected_run_id") or "")
+    if selected_run_id not in set(run_ids):
+        allowed = ", ".join(run_ids)
+        raise RuntimeError(f"OpenAI ensemble validator selected unknown run '{selected_run_id}'. Expected one of: {allowed}")
+    raw_concerns = payload.get("concerns", [])
+    concerns = tuple(str(item) for item in raw_concerns) if isinstance(raw_concerns, (list, tuple)) else ()
+    raw_assessments = payload.get("run_assessments", [])
+    assessments: list[Mapping[str, object]] = []
+    for item in raw_assessments if isinstance(raw_assessments, (list, tuple)) else []:
+        if isinstance(item, Mapping):
+            assessments.append(dict(item))
+    return CrabEnsembleSelection(
+        selected_run_id=selected_run_id,
+        confidence=_clamp01(payload.get("confidence", 0.0)),
+        rationale=str(payload.get("rationale") or ""),
+        agreement_notes=str(payload.get("agreement_notes") or ""),
+        concerns=concerns,
+        run_assessments=tuple(assessments),
+        model=str(model),
+        reasoning_effort=_normalize_reasoning_effort(reasoning_effort),
     )
 
 
@@ -2023,6 +2417,140 @@ def _create_openai_candidate_classification_response(
             context=artifact_context,
         )
     return response
+
+
+def _create_openai_ensemble_selection_response(
+    *,
+    runs: Sequence[CrabEnsembleImageRun],
+    reference_atlas_paths: Mapping[str, Sequence[Path]],
+    model: str,
+    reasoning_effort: str,
+    client: Any | None,
+    artifact_root: Path | None = None,
+    artifact_context: Mapping[str, object] | None = None,
+) -> Any:
+    if client is None:
+        try:
+            from openai import OpenAI
+        except ImportError as exc:  # pragma: no cover - exercised through GUI messaging
+            raise RuntimeError("OpenAI Python package is not installed. Run setup_windows.ps1 again.") from exc
+        client = OpenAI()
+    if not hasattr(client, "responses"):
+        raise RuntimeError("OpenAI client does not expose the Responses API. Install openai>=2.0.0.")
+
+    run_ids = tuple(run.run_id for run in runs)
+    content: list[dict[str, object]] = [
+        {"type": "input_text", "text": _build_ensemble_validation_prompt(runs)},
+        {
+            "type": "input_text",
+            "text": "Reference atlas used by the classifier: rows are labeled with the crab class.",
+        },
+        {"type": "input_image", "image_url": _reference_atlas_data_url(reference_atlas_paths), "detail": "high"},
+    ]
+    for run in runs:
+        content.append({"type": "input_text", "text": f"{run.run_id} source image before preprocessing:"})
+        content.append({"type": "input_image", "image_url": _image_data_url(run.source_image), "detail": "low"})
+        processed_image = run.outputs.result.image_path
+        if processed_image != run.source_image:
+            content.append({"type": "input_text", "text": f"{run.run_id} processed board image sent to detector/classifier:"})
+            content.append({"type": "input_image", "image_url": _image_data_url(processed_image), "detail": "high"})
+        contact_sheet = _candidate_contact_sheet_path(run.outputs)
+        if contact_sheet.is_file():
+            content.append({"type": "input_text", "text": f"{run.run_id} numbered candidate crop contact sheet:"})
+            content.append({"type": "input_image", "image_url": _image_data_url(contact_sheet), "detail": "high"})
+        if run.outputs.annotated_image.is_file():
+            content.append({"type": "input_text", "text": f"{run.run_id} accepted-count overlay from the pipeline:"})
+            content.append({"type": "input_image", "image_url": _image_data_url(run.outputs.annotated_image), "detail": "low"})
+    request_kwargs: dict[str, object] = {
+        "model": model,
+        "reasoning": {"effort": reasoning_effort},
+        "prompt_cache_key": "triton_analysis_crab_ensemble_validator_v1",
+        "input": [
+            {
+                "role": "user",
+                "content": content,
+            }
+        ],
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "crab_ensemble_validator",
+                "strict": True,
+                "schema": _ensemble_selection_json_schema(run_ids),
+            },
+            "verbosity": "low",
+        },
+    }
+    response = client.responses.create(**request_kwargs)
+    if artifact_root is not None:
+        _write_openai_stage_artifacts(
+            artifact_root,
+            "ensemble_validation",
+            request_kwargs=request_kwargs,
+            response=response,
+            context=artifact_context,
+        )
+    return response
+
+
+def _candidate_contact_sheet_path(outputs: CrabCounterOutputs) -> Path:
+    return outputs.output_dir / f"{outputs.result.image_path.stem}_candidate_contact_sheet.png"
+
+
+def _build_ensemble_validation_prompt(runs: Sequence[CrabEnsembleImageRun]) -> str:
+    summaries = json.dumps([_ensemble_run_summary(run) for run in runs], indent=2)
+    run_ids = ", ".join(run.run_id for run in runs)
+    return (
+        "You are the final sensibility-check stage for an experimental MATE crab-board ensemble. Three independent "
+        "camera captures are from the same physical board. Each capture has already gone through board preprocessing, "
+        "candidate detection, crop classification, and local threshold filtering. Your job is not to invent a new set "
+        "of boxes. Compare the completed runs, sanity-check the evidence, and choose the one existing run that should "
+        "be used for the judge display.\n\n"
+        f"Valid run IDs are: {run_ids}. selected_run_id must exactly match one of those IDs.\n\n"
+        "Prefer the run that is most visually usable and internally consistent: the board is well rectified, the crop "
+        "sheet corresponds to real printed crabs, accepted boxes are tight, the count is plausible, and hard negatives "
+        "such as native rock crab were not counted as European green crab. When two or three runs agree, prefer that "
+        "consensus unless one agreeing image is clearly lower quality. Penalize duplicated boxes, merged multi-crab "
+        "boxes, obvious missed board regions, severe glare, blur, clipped board geometry, or a count that only wins "
+        "because it is higher. False positives are worse than false negatives.\n\n"
+        "Return a concise rationale and any concerns. Do not alter coordinates or return a new detection list; choose "
+        "the single run whose existing result should be trusted most.\n\n"
+        f"Run summaries JSON:\n{summaries}"
+    )
+
+
+def _ensemble_selection_json_schema(run_ids: Sequence[str]) -> dict[str, object]:
+    run_id_schema = {"type": "string", "enum": list(run_ids)}
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "selected_run_id": run_id_schema,
+            "confidence": {"type": "number"},
+            "rationale": {"type": "string"},
+            "agreement_notes": {"type": "string"},
+            "concerns": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+            "run_assessments": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "run_id": run_id_schema,
+                        "usable": {"type": "boolean"},
+                        "confidence": {"type": "number"},
+                        "count": {"type": "integer"},
+                        "notes": {"type": "string"},
+                    },
+                    "required": ["run_id", "usable", "confidence", "count", "notes"],
+                },
+            },
+        },
+        "required": ["selected_run_id", "confidence", "rationale", "agreement_notes", "concerns", "run_assessments"],
+    }
 
 
 def _build_candidate_detection_prompt(*, width: int, height: int) -> str:
