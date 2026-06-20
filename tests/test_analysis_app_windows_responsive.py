@@ -184,6 +184,103 @@ def test_crab_counter_params_are_locked_by_default(tmp_path: Path):
         app.processEvents()
 
 
+def test_crab_counter_sample_rows_are_count_driven(tmp_path: Path, monkeypatch):
+    app = _app()
+    from triton_analysis.gui.crab_counter_window import CrabCounterWindow
+
+    recordings = tmp_path / "pilot_recordings"
+    latest_session = recordings / "20260620-120000"
+    older_session = recordings / "20260620-110000"
+    latest_session.mkdir(parents=True)
+    older_session.mkdir(parents=True)
+    monkeypatch.setenv("TRITON_PILOT_RECORDINGS", str(recordings))
+
+    window = CrabCounterWindow(workspace_root=tmp_path / "workspace")
+    try:
+        window.show()
+        app.processEvents()
+
+        assert window.sample_count_spin.minimum() == 1
+        assert window.sample_count_spin.maximum() == 10
+        assert len(window.sample_edits) == 1
+        assert window.target_edit is window.sample_edits[0]
+        assert window.sample_label_widgets[0].text() == "Sample 1"
+
+        window.sample_count_spin.setValue(3)
+        app.processEvents()
+
+        assert len(window.sample_edits) == 3
+        assert [label.text() for label in window.sample_label_widgets] == ["Sample 1", "Sample 2", "Sample 3"]
+        assert window.sample_mode_label.text() == "3-sample ensemble"
+
+        stale = older_session / "stale.png"
+        stale.write_bytes(b"not a real image")
+        os.utime(stale, (1_800_000_000, 1_800_000_000))
+        os.utime(older_session, (1_800_000_000, 1_800_000_000))
+
+        oldest = latest_session / "oldest.png"
+        middle = latest_session / "middle.png"
+        newest = latest_session / "newest.png"
+        for index, path in enumerate((oldest, middle, newest), start=1):
+            path.write_bytes(b"not a real image")
+            timestamp = 1_800_000_000 + index
+            os.utime(path, (timestamp, timestamp))
+        os.utime(latest_session, (1_800_000_100, 1_800_000_100))
+
+        window._use_latest_pilot_images()
+        app.processEvents()
+
+        assert [edit.text() for edit in window.sample_edits] == [str(newest), str(middle), str(oldest)]
+        assert window._current_sample_paths() == (newest, middle, oldest)
+        assert latest_session.name in window.status_label.text()
+
+        window._initialize_sample_run_states((newest, middle, oldest))
+        app.processEvents()
+
+        assert window.sample_status_list.count() == 3
+        assert "Queued" in window.sample_status_list.item(0).text()
+        window._handle_worker_progress(
+            {
+                "event": "candidate_detection_started",
+                "run_id": "image_1",
+                "index": 1,
+                "effort": "low",
+            }
+        )
+        assert "Detecting" in window.sample_status_list.item(0).text()
+        window._handle_worker_progress(
+            {
+                "event": "ensemble_image_finished",
+                "run_id": "image_1",
+                "index": 1,
+                "completed": 1,
+                "total": 3,
+                "count": 2,
+                "candidate_count": 4,
+            }
+        )
+        assert "Done" in window.sample_status_list.item(0).text()
+        assert window.progress_bar.value() == 1
+
+        window.sample_count_spin.setValue(1)
+        app.processEvents()
+
+        assert len(window.sample_edits) == 1
+        assert window.target_edit is window.sample_edits[0]
+        assert window.sample_mode_label.text() == "Single staged run"
+
+        window._use_latest_three_pilot_images()
+        app.processEvents()
+
+        assert len(window.sample_edits) == 3
+        assert [edit.text() for edit in window.sample_edits] == [str(newest), str(middle), str(oldest)]
+        assert window.sample_mode_label.text() == "3-sample ensemble"
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
 def test_crab_worker_stops_when_auto_homography_fails(tmp_path: Path, monkeypatch):
     _app()
     from triton_analysis.gui import crab_counter_window as module

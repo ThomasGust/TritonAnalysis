@@ -20,12 +20,14 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
     QSplitter,
+    QSpinBox,
     QTabBar,
     QVBoxLayout,
     QWidget,
@@ -48,6 +50,7 @@ from triton_analysis.crab.counter import (
     CrabCounterConfig,
     CrabCounterOutputs,
     CrabDetection,
+    CrabEnsembleImageRun,
     CrabEnsembleOutputs,
     CrabPreprocessResult,
     analyze_crab_image,
@@ -74,6 +77,9 @@ from triton_analysis.workspace import fresh_output_subdir, latest_pilot_run_dir,
 INVASIVE_SPECIES_FORM_URL = "https://cbjfq.share.hsforms.com/2rHEWllQ5QO6D7Z4CwVM7IQ"
 JUDGE_DISPLAY_TAB_INDEX = 3
 JUDGE_COUNT_COLOR = QColor(0, 255, 90)
+MIN_SAMPLE_IMAGES = 1
+MAX_SAMPLE_IMAGES = 10
+TRITONPILOT_RECORDINGS_ENV = "TRITON_PILOT_RECORDINGS"
 
 
 class WheelGuardComboBox(QComboBox):
@@ -181,7 +187,7 @@ class CrabCounterPreview(QWidget):
         painter.fillRect(self.rect(), QColor(15, 15, 19))
         if self._pixmap.isNull():
             painter.setPen(QColor(180, 184, 196))
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No target image selected")
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No sample image selected")
             return
 
         image_rect = self._image_rect()
@@ -587,6 +593,8 @@ class CrabCounterWindow(QMainWindow):
         self._last_candidate_display_result: CrabCountResult | None = None
         self._last_candidate_projected_result: CrabCountResult | None = None
         self._last_output_dir: Path | None = None
+        self._sample_run_states: dict[str, dict[str, object]] = {}
+        self._active_run_id: str | None = None
         self._run_started_at = 0.0
         self._run_base_status = ""
         self._run_timer = QTimer(self)
@@ -601,8 +609,23 @@ class CrabCounterWindow(QMainWindow):
         self.preview_tabs.addTab("Projected Board")
         self.preview_tabs.addTab("Judge Display")
         self.preview_tabs.currentChanged.connect(self._preview_tab_changed)
+        self.sample_edits: list[QLineEdit] = []
+        self.sample_row_widgets: list[QWidget] = []
+        self.sample_label_widgets: list[QLabel] = []
+        self.sample_rows_layout: QVBoxLayout | None = None
         self.target_edit = QLineEdit(str(Path(image_path).expanduser()) if image_path else "")
         self.target_edit.editingFinished.connect(self._load_target_preview)
+        self.sample_edits.append(self.target_edit)
+        self.sample_count_spin = QSpinBox()
+        self.sample_count_spin.setRange(MIN_SAMPLE_IMAGES, MAX_SAMPLE_IMAGES)
+        self.sample_count_spin.setValue(1)
+        self.sample_count_spin.valueChanged.connect(self._set_sample_row_count)
+        self.sample_count_spin.setToolTip("Choose how many board captures to analyze, from 1 to 10.")
+        self.sample_mode_label = QLabel("Single staged run")
+        self.sample_mode_label.setWordWrap(True)
+        self.sample_status_list = QListWidget()
+        self.sample_status_list.setMaximumHeight(130)
+        self.sample_status_list.currentItemChanged.connect(self._sample_status_selection_changed)
         self.preprocess_mode_combo = WheelGuardComboBox()
         self.preprocess_mode_combo.addItem("Auto Homography", "auto_homography")
         self.preprocess_mode_combo.addItem("Full Frame (Legacy)", "none")
@@ -635,7 +658,7 @@ class CrabCounterWindow(QMainWindow):
         self.unlock_params_check = QCheckBox("Unlock Params")
         self.unlock_params_check.setToolTip("Leave this off during normal runs to avoid accidental model, flow, and threshold changes.")
         self.unlock_params_check.toggled.connect(self._update_param_lock_state)
-        self.status_label = QLabel("Set OPENAI_API_KEY, choose a target image, then analyze.")
+        self.status_label = QLabel("Set OPENAI_API_KEY, choose board samples, then analyze.")
         self.status_label.setWordWrap(True)
         self.count_label = QLabel("Count: -")
         self.count_label.setObjectName("crabCounterCount")
@@ -645,11 +668,8 @@ class CrabCounterWindow(QMainWindow):
         self.progress_bar.setTextVisible(True)
         self.reference_edits: dict[str, QLineEdit] = {}
         self.detection_list = QListWidget()
-        self.analyze_btn = QPushButton("Analyze")
+        self.analyze_btn = QPushButton("Analyze Samples")
         self.analyze_btn.clicked.connect(self._start_analysis)
-        self.ensemble_btn = QPushButton("Analyze Latest 3")
-        self.ensemble_btn.setToolTip("Experimental ensemble: analyze the three newest Pilot images, then let a validator select the judge result.")
-        self.ensemble_btn.clicked.connect(self._start_latest_ensemble)
         self.benchmark_btn = QPushButton("Benchmark Effort")
         self.benchmark_btn.clicked.connect(self._start_benchmark)
         self.open_output_btn = QPushButton("Open Output")
@@ -724,17 +744,32 @@ class CrabCounterWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 8, 0)
         layout.setSpacing(10)
 
-        target_row = QHBoxLayout()
-        browse_target_btn = QPushButton("Browse")
-        browse_target_btn.clicked.connect(self._choose_target_image)
-        latest_btn = QPushButton("Latest Pilot")
-        latest_btn.clicked.connect(self._use_latest_pilot_image)
-        target_row.addWidget(browse_target_btn)
-        target_row.addWidget(latest_btn)
-
-        layout.addWidget(QLabel("Target Image"))
-        layout.addWidget(self.target_edit)
-        layout.addLayout(target_row)
+        sample_form = QFormLayout()
+        sample_form.addRow("Sample Count", self.sample_count_spin)
+        sample_form.addRow("Run Mode", self.sample_mode_label)
+        layout.addWidget(QLabel("Board Samples"))
+        layout.addLayout(sample_form)
+        self.sample_rows_layout = QVBoxLayout()
+        self.sample_rows_layout.setContentsMargins(0, 0, 0, 0)
+        self.sample_rows_layout.setSpacing(6)
+        layout.addLayout(self.sample_rows_layout)
+        self._add_sample_row_widget(self.target_edit)
+        sample_row = QHBoxLayout()
+        latest_three_btn = QPushButton("Latest 3")
+        latest_three_btn.setToolTip("Set Sample Count to 3 and fill from the newest TritonPilot recording session.")
+        latest_three_btn.clicked.connect(self._use_latest_three_pilot_images)
+        latest_btn = QPushButton("Fill Latest Session")
+        latest_btn.setToolTip("Fill rows from the newest image files in TritonPilot/recordings.")
+        latest_btn.clicked.connect(self._use_latest_pilot_images)
+        clear_samples_btn = QPushButton("Clear Samples")
+        clear_samples_btn.clicked.connect(self._clear_sample_images)
+        sample_row.addWidget(latest_three_btn)
+        sample_row.addWidget(latest_btn)
+        sample_row.addWidget(clear_samples_btn)
+        sample_row.addStretch(1)
+        layout.addLayout(sample_row)
+        layout.addWidget(QLabel("Sample Progress"))
+        layout.addWidget(self.sample_status_list)
 
         preprocess_form = QFormLayout()
         preprocess_form.addRow("Preprocess", self.preprocess_mode_combo)
@@ -786,7 +821,6 @@ class CrabCounterWindow(QMainWindow):
 
         action_row = QHBoxLayout()
         action_row.addWidget(self.analyze_btn)
-        action_row.addWidget(self.ensemble_btn)
         action_row.addWidget(self.benchmark_btn)
         action_row.addStretch(1)
         output_action_row = QHBoxLayout()
@@ -826,18 +860,163 @@ class CrabCounterWindow(QMainWindow):
         else:
             self.status_label.setText("Reference images loaded.")
 
+    def _add_sample_row_widget(self, edit: QLineEdit) -> None:
+        if self.sample_rows_layout is None:
+            return
+        row_widget = QWidget()
+        row = QHBoxLayout(row_widget)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+        label = QLabel()
+        label.setMinimumWidth(64)
+        browse_btn = QPushButton("Browse")
+        browse_btn.clicked.connect(lambda _checked=False, row_widget=row_widget: self._choose_sample_image_for_row(row_widget))
+        clear_btn = QPushButton("Clear")
+        clear_btn.clicked.connect(lambda _checked=False, edit=edit: self._clear_sample_image(edit))
+        row.addWidget(label)
+        row.addWidget(edit, 1)
+        row.addWidget(browse_btn)
+        row.addWidget(clear_btn)
+        self.sample_rows_layout.addWidget(row_widget)
+        self.sample_row_widgets.append(row_widget)
+        self.sample_label_widgets.append(label)
+        self._refresh_sample_controls()
+
+    def _set_sample_row_count(self, count: int) -> None:
+        target_count = max(MIN_SAMPLE_IMAGES, min(MAX_SAMPLE_IMAGES, int(count)))
+        if self.sample_count_spin.value() != target_count:
+            self.sample_count_spin.setValue(target_count)
+            return
+        while len(self.sample_edits) < target_count:
+            edit = QLineEdit()
+            edit.editingFinished.connect(self._load_target_preview)
+            self.sample_edits.append(edit)
+            self._add_sample_row_widget(edit)
+        while len(self.sample_edits) > target_count:
+            self._remove_last_sample_row()
+        self._refresh_sample_controls()
+        self._load_target_preview()
+
+    def _remove_last_sample_row(self) -> None:
+        if len(self.sample_edits) <= MIN_SAMPLE_IMAGES:
+            return
+        self.sample_edits.pop()
+        self.sample_label_widgets.pop()
+        row_widget = self.sample_row_widgets.pop()
+        if self.sample_rows_layout is not None:
+            self.sample_rows_layout.removeWidget(row_widget)
+        row_widget.deleteLater()
+
+    def _refresh_sample_controls(self) -> None:
+        for index, label in enumerate(self.sample_label_widgets, start=1):
+            label.setText(f"Sample {index}")
+        count = len(self.sample_edits)
+        if self.sample_count_spin.value() != count:
+            self.sample_count_spin.blockSignals(True)
+            self.sample_count_spin.setValue(count)
+            self.sample_count_spin.blockSignals(False)
+        if count <= 1:
+            self.sample_mode_label.setText("Single staged run")
+        else:
+            self.sample_mode_label.setText(f"{count}-sample ensemble")
+
     def _choose_target_image(self) -> None:
-        start = self._target_start_dir()
+        self._choose_sample_image(0)
+
+    def _choose_sample_image_for_row(self, row_widget: QWidget) -> None:
+        try:
+            index = self.sample_row_widgets.index(row_widget)
+        except ValueError:
+            return
+        self._choose_sample_image(index)
+
+    def _choose_sample_image(self, index: int) -> None:
+        if index < 0 or index >= len(self.sample_edits):
+            return
+        start = self._sample_start_dir(index)
         path, _filter = QFileDialog.getOpenFileName(
             self,
-            "Choose crab-board image",
+            f"Choose crab-board sample {index + 1}",
             str(start),
             "Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff)",
         )
         if not path:
             return
-        self.target_edit.setText(path)
+        self.sample_edits[index].setText(path)
         self._load_target_preview()
+
+    def _clear_sample_image(self, edit: QLineEdit) -> None:
+        edit.clear()
+        self._load_target_preview()
+
+    def _clear_sample_images(self) -> None:
+        for edit in self.sample_edits:
+            edit.clear()
+        self._load_target_preview()
+
+    def _reset_sample_run_states(self) -> None:
+        self._sample_run_states.clear()
+        self._active_run_id = None
+        self.sample_status_list.clear()
+
+    def _initialize_sample_run_states(self, sample_paths: tuple[Path, ...]) -> None:
+        self._reset_sample_run_states()
+        for index, path in enumerate(sample_paths, start=1):
+            run_id = f"image_{index}"
+            item = QListWidgetItem()
+            item.setData(Qt.ItemDataRole.UserRole, run_id)
+            self.sample_status_list.addItem(item)
+            self._sample_run_states[run_id] = {
+                "run_id": run_id,
+                "index": index,
+                "source_image": path,
+                "status": "Queued",
+                "detail": path.name,
+                "item": item,
+            }
+            self._update_sample_status_item(run_id)
+        if self.sample_status_list.count():
+            self.sample_status_list.setCurrentRow(0)
+
+    def _sample_status_selection_changed(self, current: QListWidgetItem | None, _previous: QListWidgetItem | None) -> None:
+        if current is None:
+            return
+        run_id = current.data(Qt.ItemDataRole.UserRole)
+        if isinstance(run_id, str):
+            self._activate_sample_run(run_id)
+
+    def _ensure_sample_run_state(self, run_id: str, index: int = 0) -> dict[str, object]:
+        state = self._sample_run_states.get(run_id)
+        if state is not None:
+            return state
+        item = QListWidgetItem()
+        item.setData(Qt.ItemDataRole.UserRole, run_id)
+        self.sample_status_list.addItem(item)
+        state = {
+            "run_id": run_id,
+            "index": index or len(self._sample_run_states) + 1,
+            "status": "Queued",
+            "detail": "",
+            "item": item,
+        }
+        self._sample_run_states[run_id] = state
+        self._update_sample_status_item(run_id)
+        return state
+
+    def _update_sample_status_item(self, run_id: str) -> None:
+        state = self._sample_run_states.get(run_id)
+        if not state:
+            return
+        item = state.get("item")
+        if not isinstance(item, QListWidgetItem):
+            return
+        index = int(state.get("index") or 0)
+        status = str(state.get("status") or "Queued")
+        detail = str(state.get("detail") or "")
+        count_text = ""
+        if "count" in state:
+            count_text = f" | count {int(state.get('count') or 0)}"
+        item.setText(f"Sample {index}: {status}{count_text} | {detail}".strip())
 
     def _choose_reference_image(self, class_name: str) -> None:
         edit = self.reference_edits[class_name]
@@ -951,7 +1130,7 @@ class CrabCounterWindow(QMainWindow):
     def _preview_preprocessed_target(self) -> None:
         image_path = Path(self.target_edit.text().strip()).expanduser()
         if not image_path.is_file():
-            self.status_label.setText("Choose a target image first.")
+            self.status_label.setText("Choose Sample 1 first.")
             return
         mode = self._current_preprocess_mode()
         if mode == "none":
@@ -967,11 +1146,11 @@ class CrabCounterWindow(QMainWindow):
             preview_dir = Path(self.output_root_edit.text().strip()).expanduser() / "preprocess_preview"
             result = self._preprocess_target_image(image_path, preview_dir)
         except Exception as exc:
-            self.status_label.setText(f"Could not preprocess target image: {exc}")
+            self.status_label.setText(f"Could not preprocess sample: {exc}")
             return
         self._set_preprocess_result(result)
-        self.status_label.setText(f"Wrote {result.mode} preview: {result.processed_image}")
-        self.statusBar().showMessage(f"Preprocessed target: {result.processed_image}", 8000)
+        self.status_label.setText(f"Wrote {result.mode} sample preview: {result.processed_image}")
+        self.statusBar().showMessage(f"Preprocessed sample: {result.processed_image}", 8000)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(result.processed_image)))
 
     def _preprocess_target_image(self, image_path: Path, output_dir: Path) -> CrabPreprocessResult:
@@ -989,36 +1168,116 @@ class CrabCounterWindow(QMainWindow):
         raise ValueError(f"unsupported preprocessing mode: {mode}")
 
     def _target_start_dir(self) -> Path:
-        text = self.target_edit.text().strip()
+        return self._sample_start_dir(0)
+
+    def _sample_start_dir(self, index: int) -> Path:
+        edit = self.sample_edits[index] if 0 <= index < len(self.sample_edits) else self.target_edit
+        text = edit.text().strip()
         if text:
             path = Path(text).expanduser()
             return path.parent if path.is_file() else path
+        session = self._latest_tritonpilot_session_dir()
+        if session is not None:
+            return session
         return latest_pilot_run_dir(self._workspace.root, create=True)
 
     def _use_latest_pilot_image(self) -> None:
-        root = latest_pilot_run_dir(self._workspace.root, create=True)
-        image = self._latest_image_under(root)
-        if image is None:
-            self.status_label.setText(f"No images found under {root}.")
+        self._use_latest_pilot_images()
+
+    def _use_latest_three_pilot_images(self) -> None:
+        self.sample_count_spin.setValue(3)
+        self._use_latest_pilot_images()
+
+    def _use_latest_pilot_images(self) -> None:
+        session = self._latest_tritonpilot_session_dir()
+        if session is not None:
+            images = self._latest_images_in_tritonpilot_session(session, limit=len(self.sample_edits))
+            source_label = f"TritonPilot session {session.name}"
+        else:
+            root = latest_pilot_run_dir(self._workspace.root, create=True)
+            images = self._latest_images_under(root, limit=len(self.sample_edits))
+            source_label = str(root)
+        if not images:
+            recordings = self._tritonpilot_recordings_dir()
+            self.status_label.setText(f"No images found under {recordings} or the synced Pilot inbox.")
             return
-        self.target_edit.setText(str(image))
+        for index, edit in enumerate(self.sample_edits):
+            edit.setText(str(images[index]) if index < len(images) else "")
+        if len(images) < len(self.sample_edits):
+            self.status_label.setText(f"Filled {len(images)} of {len(self.sample_edits)} sample row(s) from {source_label}.")
+        else:
+            self.status_label.setText(f"Filled {len(images)} sample row(s) from {source_label}.")
         self._load_target_preview()
+
+    def _tritonpilot_recordings_dir(self) -> Path:
+        override = os.environ.get(TRITONPILOT_RECORDINGS_ENV, "").strip()
+        if override:
+            return Path(override).expanduser()
+        repo_root = Path(__file__).resolve().parents[2]
+        return repo_root.parent / "TritonPilot" / "recordings"
+
+    def _latest_tritonpilot_session_dir(self) -> Path | None:
+        recordings = self._tritonpilot_recordings_dir()
+        if not recordings.is_dir():
+            return None
+        sessions = sorted(
+            (path for path in recordings.iterdir() if path.is_dir()),
+            key=lambda path: path.stat().st_mtime_ns,
+            reverse=True,
+        )
+        for session in sessions:
+            if self._latest_images_in_tritonpilot_session(session, limit=1):
+                return session
+        return None
+
+    def _latest_images_in_tritonpilot_session(self, session: str | Path, *, limit: int) -> list[Path]:
+        session_path = Path(session).expanduser()
+        direct_images = self._image_files_under(session_path, recursive=False)
+        if len(direct_images) >= limit:
+            return direct_images[: max(0, int(limit))]
+        recursive_images = self._image_files_under(session_path, recursive=True, exclude_dirs={"stereo_sessions"})
+        merged: list[Path] = []
+        seen: set[Path] = set()
+        for path in [*direct_images, *recursive_images]:
+            try:
+                key = path.resolve()
+            except OSError:
+                key = path
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(path)
+        merged.sort(key=lambda path: path.stat().st_mtime_ns, reverse=True)
+        return merged[: max(0, int(limit))]
 
     def _latest_image_under(self, root: str | Path) -> Path | None:
         images = self._latest_images_under(root, limit=1)
         return images[0] if images else None
 
     def _latest_images_under(self, root: str | Path, *, limit: int) -> list[Path]:
+        return self._image_files_under(root, recursive=True)[: max(0, int(limit))]
+
+    def _image_files_under(
+        self,
+        root: str | Path,
+        *,
+        recursive: bool,
+        exclude_dirs: set[str] | None = None,
+    ) -> list[Path]:
         root_path = Path(root).expanduser()
         if not root_path.exists():
             return []
-        candidates = [
-            path
-            for path in root_path.rglob("*")
-            if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
-        ]
+        exclude = {name.lower() for name in (exclude_dirs or set())}
+        iterator = root_path.rglob("*") if recursive else root_path.iterdir()
+        candidates: list[Path] = []
+        for path in iterator:
+            if not path.is_file() or path.suffix.lower() not in IMAGE_EXTENSIONS:
+                continue
+            if exclude and any(part.lower() in exclude for part in path.relative_to(root_path).parts[:-1]):
+                continue
+            candidates.append(path)
         candidates.sort(key=lambda path: path.stat().st_mtime_ns, reverse=True)
-        return candidates[: max(0, int(limit))]
+        return candidates
 
     def _load_target_preview(self) -> None:
         text = self.target_edit.text().strip()
@@ -1031,50 +1290,54 @@ class CrabCounterWindow(QMainWindow):
         self.open_preprocessed_btn.setEnabled(False)
         if path and path.is_file():
             self.preview.set_image(path)
-            self.statusBar().showMessage(f"Loaded target image: {path.name}", 4000)
+            self.statusBar().showMessage(f"Loaded sample image: {path.name}", 4000)
         else:
             self.preview.set_image(None)
+
+    def _current_sample_paths(self) -> tuple[Path, ...]:
+        paths: list[Path] = []
+        for index, edit in enumerate(self.sample_edits, start=1):
+            text = edit.text().strip()
+            if not text:
+                raise ValueError(f"choose Sample {index} first")
+            path = Path(text).expanduser()
+            if not path.is_file():
+                raise ValueError(f"Sample {index} does not exist: {path}")
+            paths.append(path)
+        return tuple(paths)
 
     def _start_analysis(self) -> None:
         self._start_run(benchmark=False)
 
-    def _start_latest_ensemble(self) -> None:
-        self._start_run(benchmark=False, ensemble_latest_three=True)
-
     def _start_benchmark(self) -> None:
         self._start_run(benchmark=True)
 
-    def _start_run(self, *, benchmark: bool, ensemble_latest_three: bool = False) -> None:
+    def _start_run(self, *, benchmark: bool) -> None:
         if self._analysis_thread is not None:
-            return
-        if benchmark and ensemble_latest_three:
             return
         if not os.environ.get("OPENAI_API_KEY"):
             self.status_label.setText("OPENAI_API_KEY is not set in this environment.")
             self.statusBar().showMessage("Set OPENAI_API_KEY before running the crab counter.", 6000)
             return
-        ensemble_images: tuple[Path, ...] = ()
-        if ensemble_latest_three:
+        try:
+            sample_paths = self._current_sample_paths()
+        except ValueError as exc:
+            self.status_label.setText(str(exc))
+            return
+        if benchmark and len(sample_paths) != 1:
+            self.status_label.setText("Benchmark Effort uses one sample. Set Sample Count to 1 before benchmarking.")
+            return
+        ensemble_images = sample_paths if len(sample_paths) > 1 else ()
+        ensemble_run = bool(ensemble_images)
+        if ensemble_run:
             preprocess_mode_for_ensemble = self._current_preprocess_mode()
             if preprocess_mode_for_ensemble not in {"auto_homography", "none"}:
-                self.status_label.setText("Latest-3 ensemble supports Auto Homography or Full Frame mode.")
+                self.status_label.setText("Multi-sample analysis supports Auto Homography or Full Frame mode.")
                 return
             if self._current_analysis_flow() != "pipeline":
-                self.status_label.setText("Latest-3 ensemble requires the 3-Stage Pipeline flow.")
+                self.status_label.setText("Multi-sample analysis requires the 3-Stage Pipeline flow.")
                 return
-            latest_root = latest_pilot_run_dir(self._workspace.root, create=True)
-            ensemble_images = tuple(self._latest_images_under(latest_root, limit=3))
-            if len(ensemble_images) < 3:
-                self.status_label.setText(f"Need three images under {latest_root}; found {len(ensemble_images)}.")
-                return
-            image_path = ensemble_images[0]
-            self.target_edit.setText(str(image_path))
-            self._load_target_preview()
-        else:
-            image_path = Path(self.target_edit.text().strip()).expanduser()
-            if not image_path.is_file():
-                self.status_label.setText("Choose a target image first.")
-                return
+        image_path = sample_paths[0]
         references = self._current_reference_paths()
         missing = missing_reference_classes(references)
         if missing:
@@ -1082,7 +1345,7 @@ class CrabCounterWindow(QMainWindow):
             return
 
         output_root = Path(self.output_root_edit.text().strip()).expanduser()
-        if ensemble_latest_three:
+        if ensemble_run:
             output_prefix = "crab_ensemble"
         else:
             output_prefix = "crab_benchmark" if benchmark else "crab_counter"
@@ -1092,18 +1355,18 @@ class CrabCounterWindow(QMainWindow):
         worker_preprocess_mode = "none"
         self._last_preprocess_result = None
         self.open_preprocessed_btn.setEnabled(False)
-        if preprocess_mode != "none" and not ensemble_latest_three:
+        if preprocess_mode != "none" and not ensemble_run:
             if preprocess_mode == "auto_homography":
                 worker_preprocess_mode = "auto_homography"
             else:
                 try:
                     preprocess_result = self._preprocess_target_image(image_path, output_dir / "preprocess")
                 except Exception as exc:
-                    self.status_label.setText(f"Could not preprocess target image: {exc}")
+                    self.status_label.setText(f"Could not preprocess sample: {exc}")
                     return
                 self._set_preprocess_result(preprocess_result)
                 analysis_image_path = preprocess_result.processed_image
-        elif ensemble_latest_three and preprocess_mode == "auto_homography":
+        elif ensemble_run and preprocess_mode == "auto_homography":
             worker_preprocess_mode = "auto_homography"
         config = CrabCounterConfig(
             image_path=analysis_image_path,
@@ -1119,6 +1382,10 @@ class CrabCounterWindow(QMainWindow):
             replace(config, image_path=image, output_dir=output_dir / f"image_{index}")
             for index, image in enumerate(ensemble_images, start=1)
         )
+        if ensemble_run:
+            self._initialize_sample_run_states(tuple(ensemble_images))
+        else:
+            self._reset_sample_run_states()
         self._last_outputs = None
         self._last_benchmark_outputs = None
         self._last_output_dir = None
@@ -1130,15 +1397,15 @@ class CrabCounterWindow(QMainWindow):
         self.open_annotated_btn.setEnabled(False)
         self.count_label.setText("Count: ...")
         self.detection_list.clear()
-        if ensemble_latest_three:
+        if ensemble_run:
             names = ", ".join(path.name for path in ensemble_images)
             prep = f" via {preprocess_mode}" if preprocess_mode != "none" else ""
             self._set_running_status(
-                f"Analyzing latest 3 Pilot images{prep} with {config.model}, then validating the best judge result: {names}..."
+                f"Analyzing {len(ensemble_images)} samples{prep} with {config.model}, then validating the best judge result: {names}..."
             )
-            self.progress_bar.setRange(0, 3)
+            self.progress_bar.setRange(0, len(ensemble_images))
             self.progress_bar.setValue(0)
-            self.progress_bar.setFormat("0/3 images")
+            self.progress_bar.setFormat(f"0/{len(ensemble_images)} images")
         elif benchmark:
             efforts = ", ".join(REASONING_EFFORTS)
             prep = f" via {preprocess_mode}" if preprocess_mode != "none" else ""
@@ -1157,7 +1424,6 @@ class CrabCounterWindow(QMainWindow):
             self.progress_bar.setFormat("Working")
         self.progress_bar.setVisible(True)
         self.analyze_btn.setEnabled(False)
-        self.ensemble_btn.setEnabled(False)
         self.benchmark_btn.setEnabled(False)
         self._start_run_timer()
 
@@ -1171,7 +1437,7 @@ class CrabCounterWindow(QMainWindow):
             board_reference_paths=discover_crab_board_reference_paths(self._workspace.root),
             analysis_flow=self._current_analysis_flow(),
             ensemble_configs=ensemble_configs,
-            ensemble_output_dir=output_dir if ensemble_latest_three else None,
+            ensemble_output_dir=output_dir if ensemble_run else None,
         )
         thread = QThread(self)
         self._analysis_worker = worker
@@ -1189,7 +1455,6 @@ class CrabCounterWindow(QMainWindow):
     def _finish_analysis(self, payload: object) -> None:
         self._stop_run_timer()
         self.analyze_btn.setEnabled(True)
-        self.ensemble_btn.setEnabled(True)
         self.benchmark_btn.setEnabled(True)
         data = payload if isinstance(payload, dict) else {}
         if not data.get("ok"):
@@ -1237,35 +1502,35 @@ class CrabCounterWindow(QMainWindow):
     def _finish_ensemble(self, outputs: CrabEnsembleOutputs) -> None:
         self._last_outputs = outputs.final_outputs
         self._last_output_dir = outputs.output_dir
-        self._last_preprocess_result = outputs.selected_run.preprocess_result
-        if self._last_preprocess_result is not None:
-            self.open_preprocessed_btn.setEnabled(True)
-        else:
-            self.open_preprocessed_btn.setEnabled(False)
+        for run in outputs.runs:
+            self._store_sample_image_run(run)
+        selected_state = self._ensure_sample_run_state(outputs.selected_run.run_id, outputs.selected_run.index)
+        selected_state["projected_result"] = outputs.final_outputs.result
+        selected_state["display_result"] = self._preview_result_for_preprocess(
+            outputs.final_outputs.result,
+            outputs.selected_run.preprocess_result,
+        )
+        selected_state["status"] = "Selected"
+        selected_state["count"] = outputs.final_outputs.result.count
+        selected_state["detail"] = f"validator confidence {outputs.selection.confidence:.2f}"
+        self._update_sample_status_item(outputs.selected_run.run_id)
+        self._active_run_id = outputs.selected_run.run_id
+        selected_item = selected_state.get("item")
+        if isinstance(selected_item, QListWidgetItem):
+            self.sample_status_list.setCurrentItem(selected_item)
+        self._activate_sample_run(outputs.selected_run.run_id)
         result = outputs.final_outputs.result
-        display_result = self._preview_result_for_current_run(result)
-        self._last_projected_result = result
-        self._last_display_result = display_result
-        self._last_candidate_projected_result = None
-        self._last_candidate_display_result = None
         self.count_label.setText(f"Count: {result.count}")
         self.status_label.setText(
-            f"Latest-3 ensemble selected {outputs.selection.selected_run_id} "
+            f"Multi-sample ensemble selected {outputs.selection.selected_run_id} "
             f"(confidence {outputs.selection.confidence:.2f}). "
             f"Accepted {result.count} of {len(result.candidates)} crab candidate(s). "
             f"Wrote {outputs.final_outputs.result_json.name}, {outputs.validation_json.name}, "
             f"and run_manifest.json under {outputs.output_dir}."
         )
-        self._populate_detection_list(display_result)
-        self.detection_list.addItem(
-            f"Selected {outputs.selection.selected_run_id}: {outputs.selection.rationale}"
-        )
-        for run in outputs.runs:
-            run_result = run.outputs.result
-            self.detection_list.addItem(
-                f"{run.run_id}: {run_result.count}/{len(run_result.candidates)} candidate(s), "
-                f"{run_result.analysis_seconds:.1f}s"
-            )
+        if self._last_display_result is not None:
+            self._populate_detection_list(self._last_display_result)
+            self.detection_list.addItem(f"Selected {outputs.selection.selected_run_id}: {outputs.selection.rationale}")
         self._show_judge_display()
         self.open_output_btn.setEnabled(True)
         self.open_annotated_btn.setEnabled(True)
@@ -1313,6 +1578,12 @@ class CrabCounterWindow(QMainWindow):
         self._update_preprocess_status()
 
     def _set_candidate_detection_result(self, result: CrabCandidateDetectionResult) -> None:
+        projected = self._candidate_result_from_detection_result(result)
+        self._last_candidate_projected_result = projected
+        self._last_candidate_display_result = self._preview_result_for_current_run(projected)
+        self._refresh_preview_display()
+
+    def _candidate_result_from_detection_result(self, result: CrabCandidateDetectionResult) -> CrabCountResult:
         detections = tuple(
             CrabDetection(
                 label=UNCERTAIN_CLASS,
@@ -1327,7 +1598,7 @@ class CrabCounterWindow(QMainWindow):
             )
             for candidate in result.candidates
         )
-        projected = CrabCountResult(
+        return CrabCountResult(
             image_path=result.image_path,
             image_size=result.image_size,
             count=0,
@@ -1340,9 +1611,6 @@ class CrabCounterWindow(QMainWindow):
             analysis_seconds=result.analysis_seconds,
             summary=result.summary,
         )
-        self._last_candidate_projected_result = projected
-        self._last_candidate_display_result = self._preview_result_for_current_run(projected)
-        self._refresh_preview_display()
 
     def _show_judge_display(self) -> None:
         if self.preview_tabs.currentIndex() == JUDGE_DISPLAY_TAB_INDEX:
@@ -1383,7 +1651,13 @@ class CrabCounterWindow(QMainWindow):
         return outputs.runs[-1]
 
     def _preview_result_for_current_run(self, result: CrabCountResult) -> CrabCountResult:
-        preprocess_result = self._last_preprocess_result
+        return self._preview_result_for_preprocess(result, self._last_preprocess_result)
+
+    def _preview_result_for_preprocess(
+        self,
+        result: CrabCountResult,
+        preprocess_result: CrabPreprocessResult | None,
+    ) -> CrabCountResult:
         if preprocess_result is None:
             return result
         try:
@@ -1401,6 +1675,72 @@ class CrabCounterWindow(QMainWindow):
         except Exception as exc:
             self.statusBar().showMessage(f"Could not map boxes to original frame: {exc}", 8000)
             return result
+
+    def _activate_sample_run(self, run_id: str) -> None:
+        state = self._sample_run_states.get(run_id)
+        if not state:
+            return
+        self._active_run_id = run_id
+        preprocess_result = state.get("preprocess_result")
+        self._last_preprocess_result = preprocess_result if isinstance(preprocess_result, CrabPreprocessResult) else None
+        self.open_preprocessed_btn.setEnabled(self._last_preprocess_result is not None)
+        if self._last_preprocess_result is not None:
+            self.preview.set_homography_points(
+                self._last_preprocess_result.ordered_points or self._last_preprocess_result.selection_points
+            )
+        else:
+            self.preview.set_homography_points(())
+        projected = state.get("projected_result")
+        display = state.get("display_result")
+        candidate_projected = state.get("candidate_projected_result")
+        candidate_display = state.get("candidate_display_result")
+        self._last_projected_result = projected if isinstance(projected, CrabCountResult) else None
+        self._last_display_result = display if isinstance(display, CrabCountResult) else None
+        self._last_candidate_projected_result = candidate_projected if isinstance(candidate_projected, CrabCountResult) else None
+        self._last_candidate_display_result = candidate_display if isinstance(candidate_display, CrabCountResult) else None
+        if self._last_display_result is not None:
+            self._populate_detection_list(self._last_display_result)
+        elif self._last_candidate_display_result is not None:
+            self._populate_detection_list(self._last_candidate_display_result)
+        else:
+            self.detection_list.clear()
+            source = state.get("source_image")
+            if isinstance(source, Path) and source.is_file():
+                self.preview.set_image(source)
+        self._refresh_preview_display()
+
+    def _store_sample_candidate_result(
+        self,
+        run_id: str,
+        detection_result: CrabCandidateDetectionResult,
+    ) -> None:
+        state = self._ensure_sample_run_state(run_id)
+        projected = self._candidate_result_from_detection_result(detection_result)
+        preprocess_result = state.get("preprocess_result")
+        display = self._preview_result_for_preprocess(
+            projected,
+            preprocess_result if isinstance(preprocess_result, CrabPreprocessResult) else None,
+        )
+        state["candidate_projected_result"] = projected
+        state["candidate_display_result"] = display
+        state["detail"] = f"{len(detection_result.candidates)} candidate(s) detected"
+        self._update_sample_status_item(run_id)
+        if self._active_run_id == run_id:
+            self._activate_sample_run(run_id)
+
+    def _store_sample_image_run(self, image_run: CrabEnsembleImageRun) -> None:
+        state = self._ensure_sample_run_state(image_run.run_id, image_run.index)
+        state["source_image"] = image_run.source_image
+        state["preprocess_result"] = image_run.preprocess_result
+        state["outputs"] = image_run.outputs
+        state["projected_result"] = image_run.outputs.result
+        state["display_result"] = self._preview_result_for_preprocess(image_run.outputs.result, image_run.preprocess_result)
+        state["count"] = image_run.outputs.result.count
+        state["status"] = "Done"
+        state["detail"] = f"{image_run.outputs.result.count}/{len(image_run.outputs.result.candidates)} accepted"
+        self._update_sample_status_item(image_run.run_id)
+        if self._active_run_id == image_run.run_id:
+            self._activate_sample_run(image_run.run_id)
 
     def _populate_detection_list(self, result: CrabCountResult) -> None:
         self.detection_list.clear()
@@ -1422,9 +1762,84 @@ class CrabCounterWindow(QMainWindow):
         self.preview.set_display_mode(mode)
         self._refresh_preview_display()
 
+    def _handle_sample_run_progress(self, data: dict[str, object]) -> None:
+        run_id = str(data.get("run_id") or "")
+        if not run_id:
+            return
+        index = int(data.get("index") or 0)
+        state = self._ensure_sample_run_state(run_id, index)
+        event = str(data.get("event") or "")
+        if self._active_run_id is None:
+            self._active_run_id = run_id
+        if event in {"ensemble_image_started", "ensemble_image_pipeline_started"}:
+            state["status"] = "Running"
+            self._set_running_status(f"Sample {state.get('index')} started. Running image pipelines in parallel...")
+        elif event == "auto_homography_started":
+            state["status"] = "Finding board"
+            effort = str(data.get("effort") or DEFAULT_HOMOGRAPHY_REASONING_EFFORT)
+            self._set_running_status(f"Sample {state.get('index')} locating board corners ({effort} effort)...")
+        elif event == "auto_homography_finished":
+            preprocess_result = data.get("preprocess_result")
+            if isinstance(preprocess_result, CrabPreprocessResult):
+                state["preprocess_result"] = preprocess_result
+                state["detail"] = f"board confidence {float(preprocess_result.board_confidence or 0.0):.2f}"
+            state["status"] = "Board ready"
+            if self._active_run_id == run_id:
+                self._activate_sample_run(run_id)
+        elif event == "candidate_detection_started":
+            effort = str(data.get("effort") or "low")
+            state["status"] = "Detecting"
+            state["detail"] = f"{effort} effort"
+            self._set_running_status(f"Sample {state.get('index')} detecting printed crab candidate boxes...")
+        elif event == "candidate_detection_finished":
+            detection_result = data.get("detection_result")
+            if isinstance(detection_result, CrabCandidateDetectionResult):
+                self._store_sample_candidate_result(run_id, detection_result)
+            state["status"] = "Candidates ready"
+            count = int(data.get("count") or 0)
+            state["detail"] = f"{count} candidate box(es)"
+            self._set_running_status(f"Sample {state.get('index')} detected {count} candidate box(es).")
+        elif event == "candidate_classification_started":
+            count = int(data.get("candidate_count") or 0)
+            state["status"] = "Classifying"
+            state["detail"] = f"{count} crop(s)"
+            self._set_running_status(f"Sample {state.get('index')} classifying {count} candidate crop(s)...")
+        elif event == "candidate_classification_finished":
+            state["status"] = "Writing result"
+            seconds = float(data.get("analysis_seconds") or 0.0)
+            state["detail"] = f"classifier {seconds:.1f}s"
+        elif event == "ensemble_image_finished":
+            image_run = data.get("image_run")
+            if isinstance(image_run, CrabEnsembleImageRun):
+                self._store_sample_image_run(image_run)
+            completed = int(data.get("completed") or 0)
+            total = int(data.get("total") or max(1, self.sample_status_list.count()))
+            count = int(data.get("count") or state.get("count") or 0)
+            candidates = int(data.get("candidate_count") or 0)
+            state["status"] = "Done"
+            state["count"] = count
+            state["detail"] = f"{count}/{candidates} accepted"
+            self.progress_bar.setRange(0, max(1, total))
+            self.progress_bar.setValue(max(0, completed))
+            self.progress_bar.setFormat(f"{completed}/{total} images")
+            self._set_running_status(
+                f"Sample {state.get('index')} finished with {count}/{candidates} accepted candidate(s)."
+            )
+        elif event == "ensemble_image_failed":
+            state["status"] = "Failed"
+            state["detail"] = str(data.get("error") or "unknown error")
+            self.progress_bar.setFormat("Image failed")
+            self._set_running_status(f"Sample {state.get('index')} failed: {state['detail']}")
+        self._update_sample_status_item(run_id)
+        if self._active_run_id == run_id:
+            self._activate_sample_run(run_id)
+
     def _handle_worker_progress(self, payload: object) -> None:
         data = payload if isinstance(payload, dict) else {}
         event = str(data.get("event") or "")
+        if data.get("run_id"):
+            self._handle_sample_run_progress(data)
+            return
         if event == "auto_homography_started":
             effort = str(data.get("effort") or DEFAULT_HOMOGRAPHY_REASONING_EFFORT)
             self.progress_bar.setRange(0, 0)

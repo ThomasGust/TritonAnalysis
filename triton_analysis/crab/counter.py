@@ -911,6 +911,7 @@ def analyze_crab_image_ensemble(
                 tuple(Path(path).expanduser() for path in board_reference_paths or ()),
                 client,
                 client_factory,
+                progress_callback,
             )
             futures[future] = (run_id, index)
         for future in as_completed(futures):
@@ -933,6 +934,7 @@ def analyze_crab_image_ensemble(
                         "total": len(run_configs),
                         "count": image_run.outputs.result.count,
                         "candidate_count": len(image_run.outputs.result.candidates),
+                        "image_run": image_run,
                     }
                 )
 
@@ -1430,12 +1432,24 @@ def _run_ensemble_image_pipeline(
     board_reference_paths: Sequence[Path],
     client: Any | None,
     client_factory: Any | None,
+    progress_callback: Any | None,
 ) -> CrabEnsembleImageRun:
     source_image = Path(config.image_path).expanduser()
     run_client = _stage_client(client, client_factory)
     preprocess_result: CrabPreprocessResult | None = None
     analysis_config = config
+    total_context = {"run_id": run_id, "index": index}
+    if progress_callback is not None:
+        progress_callback({"event": "ensemble_image_pipeline_started", **total_context})
     if preprocess_mode == "auto_homography":
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "event": "auto_homography_started",
+                    "effort": homography_effort,
+                    **total_context,
+                }
+            )
         preprocess_result = auto_preprocess_crab_target_image(
             source_image,
             Path(config.output_dir).expanduser() / "preprocess",
@@ -1445,8 +1459,28 @@ def _run_ensemble_image_pipeline(
             client=run_client,
             artifact_root=config.output_dir,
         )
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "event": "auto_homography_finished",
+                    "preprocess_result": preprocess_result,
+                    "points": preprocess_result.ordered_points or preprocess_result.selection_points,
+                    "confidence": preprocess_result.board_confidence,
+                    "seconds": preprocess_result.board_detection_seconds,
+                    "processed_image": str(preprocess_result.processed_image),
+                    **total_context,
+                }
+            )
         analysis_config = replace(config, image_path=preprocess_result.processed_image)
-    outputs = analyze_crab_image_pipeline(analysis_config, client=run_client)
+
+    def emit_image_progress(payload: object) -> None:
+        if progress_callback is None:
+            return
+        data = dict(payload) if isinstance(payload, Mapping) else {"event": str(payload)}
+        data.update(total_context)
+        progress_callback(data)
+
+    outputs = analyze_crab_image_pipeline(analysis_config, client=run_client, progress_callback=emit_image_progress)
     return CrabEnsembleImageRun(
         run_id=run_id,
         index=index,

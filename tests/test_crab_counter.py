@@ -525,6 +525,7 @@ def test_analyze_crab_image_ensemble_runs_images_then_validates_selection(tmp_pa
         _write_image(target, color)
         targets.append(target)
     fake_client = _FakePipelineClient()
+    progress_events = []
 
     outputs = analyze_crab_image_ensemble(
         tuple(
@@ -541,6 +542,7 @@ def test_analyze_crab_image_ensemble_runs_images_then_validates_selection(tmp_pa
         client=fake_client,
         preprocess_mode="none",
         max_workers=1,
+        progress_callback=progress_events.append,
     )
 
     assert len(outputs.runs) == 3
@@ -556,6 +558,22 @@ def test_analyze_crab_image_ensemble_runs_images_then_validates_selection(tmp_pa
     assert schema_names.count("crab_candidate_detector") == 3
     assert schema_names.count("crab_candidate_classifier") == 3
     assert schema_names[-1] == "crab_ensemble_validator"
+    run_progress = [
+        (event.get("run_id"), event.get("event"))
+        for event in progress_events
+        if isinstance(event, dict) and event.get("run_id")
+    ]
+    assert ("image_1", "candidate_detection_started") in run_progress
+    assert ("image_2", "candidate_classification_started") in run_progress
+    assert ("image_3", "ensemble_image_finished") in run_progress
+    finished_event = next(
+        event
+        for event in progress_events
+        if isinstance(event, dict)
+        and event.get("run_id") == "image_2"
+        and event.get("event") == "ensemble_image_finished"
+    )
+    assert finished_event["image_run"].run_id == "image_2"
     validator_call = fake_client.responses.calls[-1]
     assert validator_call["prompt_cache_key"] == "triton_analysis_crab_ensemble_validator_v1"
     assert validator_call["text"]["format"]["schema"]["properties"]["selected_run_id"]["enum"] == [
