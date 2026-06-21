@@ -36,6 +36,17 @@ from triton_analysis.crab.synthetic import (
 
 
 ProgressCallback = Callable[[dict[str, object]], None]
+REPO_ROOT = Path(__file__).resolve().parents[2]
+BUNDLED_CRAB_TEMPLATE_DIRS = (
+    Path("data") / "crab" / "templates",
+    Path("data") / "crab" / "real crabs",
+    Path("data") / "crab" / "crab templates",
+)
+WORKSPACE_CRAB_TEMPLATE_DIRS = (
+    Path("data") / "real crabs",
+    Path("data") / "crabs",
+    Path("data") / "crab templates",
+)
 
 
 @dataclass(frozen=True)
@@ -96,9 +107,29 @@ def discover_board_images(root: str | Path) -> list[Path]:
 
 
 def discover_default_crab_template_paths(workspace_root: str | Path) -> dict[str, list[Path]]:
-    """Find MATE reference and local real-pool crab template images."""
+    """Find bundled, workspace, and legacy local crab template images."""
     templates: dict[str, list[Path]] = {name: [] for name in CRAB_CLASS_NAMES}
-    downloads = Path.home() / "Downloads"
+    repo = REPO_ROOT.expanduser()
+    bundled_mate_found = {name: False for name in CRAB_CLASS_NAMES}
+    bundled_mate_candidates = {
+        "european_green_crab": (
+            repo / "data" / "crab" / "templates" / "european_green_crab_mate_reference.jpg",
+        ),
+        "native_rock_crab": (
+            repo / "data" / "crab" / "templates" / "native_rock_crab_mate_reference.jpg",
+        ),
+        "jonah_crab": (
+            repo / "data" / "crab" / "templates" / "jonah_crab_mate_reference.png",
+        ),
+    }
+    for class_name, paths in bundled_mate_candidates.items():
+        for path in paths:
+            if path.exists():
+                templates[class_name].append(path)
+                bundled_mate_found[class_name] = True
+                break
+
+    downloads = _default_downloads_dir()
     mate_candidates = {
         "european_green_crab": (
             downloads / "European Green Crab Image (1).jpg",
@@ -117,23 +148,31 @@ def discover_default_crab_template_paths(workspace_root: str | Path) -> dict[str
         ),
     }
     for class_name, paths in mate_candidates.items():
+        if bundled_mate_found[class_name]:
+            continue
         for path in paths:
             if path.exists():
                 templates[class_name].append(path)
                 break
 
-    workspace = Path(workspace_root).expanduser()
-    for folder in (
-        workspace / "data" / "real crabs",
-        workspace / "data" / "crabs",
-        workspace / "data" / "crab templates",
-    ):
-        for path in discover_board_images(folder):
+    for rel in BUNDLED_CRAB_TEMPLATE_DIRS:
+        for path in discover_board_images(repo / rel):
             class_name = _class_name_from_template_path(path)
             if class_name is not None:
                 templates[class_name].append(path)
 
+    workspace = Path(workspace_root).expanduser()
+    for rel in WORKSPACE_CRAB_TEMPLATE_DIRS:
+        for path in discover_board_images(workspace / rel):
+            class_name = _class_name_from_template_path(path)
+            if class_name is not None and not templates[class_name]:
+                templates[class_name].append(path)
+
     return {class_name: _dedupe_paths(paths) for class_name, paths in templates.items()}
+
+
+def _default_downloads_dir() -> Path:
+    return Path.home() / "Downloads"
 
 
 def load_board_plane_annotations(

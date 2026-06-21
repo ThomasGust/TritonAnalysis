@@ -157,9 +157,10 @@ python -m triton_analysis.apps.main_crab_counter path\to\arm_camera_snapshot.png
 python -m triton_analysis.apps.main_triton_analysis --tab crab
 ```
 
-The crab counter auto-fills the three MATE crab reference images when they are
-available in `Downloads` or `Workspace\data\real crabs`, then writes JSON and an
-annotated image under `Workspace\results\crab_counter`.
+The crab counter auto-fills its repo-bundled references from
+`data\crab\templates`, then writes JSON and an annotated image under
+`Workspace\results\crab_counter`. `Downloads` and old `Workspace\data` template
+folders are fallback-only compatibility locations.
 
 Measurement applets:
 

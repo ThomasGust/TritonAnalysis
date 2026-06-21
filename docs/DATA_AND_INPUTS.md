@@ -33,6 +33,11 @@ The `data/` folder is reserved for small assets used by applets and tests.
 Large raw videos, competition runs, and generated result folders should remain
 outside git.
 
+The crab counter's portable species-reference bundle lives under
+`data/crab/templates`. These images are tracked with the repo so a fresh
+TritonAnalysis checkout can build the reference atlas without relying on a
+machine-local `Downloads` or `Workspace/data` folder.
+
 ## Workspace Layout
 
 TritonAnalysis uses one workspace root with stable folders under it. The
@@ -138,7 +143,8 @@ eDNA:
 Crab counter:
 
 - Target crab-board image
-- European green crab, native rock crab, and Jonah crab reference images
+- European green crab, native rock crab, and Jonah crab reference images from
+  `data/crab/templates`
 - OpenAI API key in `OPENAI_API_KEY`
 
 Color correction:

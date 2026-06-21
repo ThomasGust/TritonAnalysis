@@ -102,7 +102,7 @@ Primary modules:
 Inputs:
 
 - Target image from TritonPilot or another saved source
-- European green crab, native rock crab, and Jonah crab reference images
+- Repo-bundled European green crab, native rock crab, and Jonah crab reference images
 - `OPENAI_API_KEY` in the process environment before pressing Analyze
 
 Outputs:
@@ -114,8 +114,9 @@ Outputs:
 Setup notes:
 
 - Requires the `openai` Python package installed by `requirements.txt`.
-- The UI auto-fills reference images from `Downloads` and
-  `Workspace/data/real crabs` when those files are present.
+- The UI auto-fills reference images from the tracked
+  `data/crab/templates` bundle. `Downloads` and old `Workspace/data` template
+  folders are fallback-only compatibility locations.
 
 ## Iceberg Tracking
 

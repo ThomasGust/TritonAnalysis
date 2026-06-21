@@ -4,15 +4,15 @@ The invasive species detector should be trained on all three printed crab
 classes, even though the competition score needs the European green crab count.
 That gives the model explicit negative examples for the two non-target species.
 
-Generate a YOLO dataset from the three reference images:
+Generate a YOLO dataset from the bundled crab reference images:
 
 ```powershell
 python -m tools.crab_generate_dataset --count 2000 --width 1280 --height 720
 ```
 
-By default the tool looks for the reference crab images in `Downloads`, samples
-real pool media from `Workspace\incoming`, and writes an ignored dataset under
-`Workspace\datasets`. Synced stereo camera images under
+By default the tool looks for the tracked reference crab images in
+`data\crab\templates`, samples real pool media from `Workspace\incoming`, and
+writes an ignored dataset under `Workspace\datasets`. Synced stereo camera images under
 `Workspace\incoming\pilot\...\stereo_sessions` are prioritized automatically
 before the general incoming folder. Background discovery alternates across
 sources so one large stereo folder does not crowd out every other source.
@@ -23,9 +23,9 @@ Useful options:
 python -m tools.crab_generate_dataset `
   --count 2000 `
   --background-dir .\Workspace\incoming\pilot `
-  --green-template "C:\Users\Thoma\Downloads\European Green Crab Image (1).jpg" `
-  --rock-template "C:\Users\Thoma\Downloads\Native Rock Crab (1).jpg" `
-  --jonah-template "C:\Users\Thoma\Downloads\Jonah crab 2 (1).png"
+  --green-template .\data\crab\templates\european_green_crab_mate_reference.jpg `
+  --rock-template .\data\crab\templates\native_rock_crab_mate_reference.jpg `
+  --jonah-template .\data\crab\templates\jonah_crab_mate_reference.png
 ```
 
 The output contains:
@@ -120,16 +120,17 @@ Place empty-board photos under:
 Workspace\data\base images
 ```
 
-Place additional real pool crab template images under:
+Bundled crab template images live under:
 
 ```text
-Workspace\data\real crabs
+data\crab\templates
 ```
 
 The template file names should include `green` or `euro`, `rock`, or `jonah`.
-The generator also includes the MATE reference images from `Downloads` when they
-are present, so real pool crab photos and the official reference cutouts are
-used together.
+The generator uses the tracked MATE reference images and pool examples from that
+folder by default. Old `Workspace\data` template folders and `Downloads` are
+still accepted as compatibility fallbacks, but new shared references should go
+under `data\crab\templates`.
 
 Launch the GUI from the unified app with the `Crab Dataset` tab, or directly:
 
