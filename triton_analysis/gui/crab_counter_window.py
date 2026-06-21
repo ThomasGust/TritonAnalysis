@@ -71,7 +71,7 @@ from triton_analysis.crab.counter import (
 from triton_analysis.crab.synthetic import CRAB_CLASS_NAMES, IMAGE_EXTENSIONS
 from triton_analysis.gui.file_dialogs import ThumbnailFileDialog as QFileDialog
 from triton_analysis.gui.responsive import resize_to_available_screen
-from triton_analysis.workspace import fresh_output_subdir, latest_pilot_run_dir, workspace_paths
+from triton_analysis.workspace import fresh_output_subdir, latest_pilot_run_dir, recent_pilot_run_dirs, workspace_paths
 
 
 INVASIVE_SPECIES_FORM_URL = "https://cbjfq.share.hsforms.com/2rHEWllQ5QO6D7Z4CwVM7IQ"
@@ -756,10 +756,10 @@ class CrabCounterWindow(QMainWindow):
         self._add_sample_row_widget(self.target_edit)
         sample_row = QHBoxLayout()
         latest_three_btn = QPushButton("Latest 3")
-        latest_three_btn.setToolTip("Set Sample Count to 3 and fill from the newest TritonPilot recording session.")
+        latest_three_btn.setToolTip("Set Sample Count to 3 and fill from the newest synced Pilot session.")
         latest_three_btn.clicked.connect(self._use_latest_three_pilot_images)
         latest_btn = QPushButton("Fill Latest Session")
-        latest_btn.setToolTip("Fill rows from the newest image files in TritonPilot/recordings.")
+        latest_btn.setToolTip("Fill rows from the newest image files in Workspace incoming Pilot sessions.")
         latest_btn.clicked.connect(self._use_latest_pilot_images)
         clear_samples_btn = QPushButton("Clear Samples")
         clear_samples_btn.clicked.connect(self._clear_sample_images)
@@ -1176,10 +1176,7 @@ class CrabCounterWindow(QMainWindow):
         if text:
             path = Path(text).expanduser()
             return path.parent if path.is_file() else path
-        session = self._latest_tritonpilot_session_dir()
-        if session is not None:
-            return session
-        return latest_pilot_run_dir(self._workspace.root, create=True)
+        return self._latest_synced_pilot_session_dir()
 
     def _use_latest_pilot_image(self) -> None:
         self._use_latest_pilot_images()
@@ -1189,17 +1186,25 @@ class CrabCounterWindow(QMainWindow):
         self._use_latest_pilot_images()
 
     def _use_latest_pilot_images(self) -> None:
-        session = self._latest_tritonpilot_session_dir()
+        session = self._latest_synced_pilot_session_with_images()
         if session is not None:
             images = self._latest_images_in_tritonpilot_session(session, limit=len(self.sample_edits))
-            source_label = f"TritonPilot session {session.name}"
+            source_label = self._synced_pilot_source_label(session)
         else:
-            root = latest_pilot_run_dir(self._workspace.root, create=True)
-            images = self._latest_images_under(root, limit=len(self.sample_edits))
-            source_label = str(root)
+            session = self._latest_local_tritonpilot_session_dir()
+            if session is not None:
+                images = self._latest_images_in_tritonpilot_session(session, limit=len(self.sample_edits))
+                source_label = f"local TritonPilot session {session.name}"
+            else:
+                root = latest_pilot_run_dir(self._workspace.root, create=True)
+                images = self._latest_images_under(root, limit=len(self.sample_edits))
+                source_label = self._synced_pilot_source_label(root)
         if not images:
             recordings = self._tritonpilot_recordings_dir()
-            self.status_label.setText(f"No images found under {recordings} or the synced Pilot inbox.")
+            self.status_label.setText(
+                f"No images found under the synced Pilot inbox ({self._workspace.pilot_incoming}) "
+                f"or optional local fallback ({recordings})."
+            )
             return
         for index, edit in enumerate(self.sample_edits):
             edit.setText(str(images[index]) if index < len(images) else "")
@@ -1216,7 +1221,25 @@ class CrabCounterWindow(QMainWindow):
         repo_root = Path(__file__).resolve().parents[2]
         return repo_root.parent / "TritonPilot" / "recordings"
 
-    def _latest_tritonpilot_session_dir(self) -> Path | None:
+    def _latest_synced_pilot_session_dir(self) -> Path:
+        return latest_pilot_run_dir(self._workspace.root, create=True)
+
+    def _latest_synced_pilot_session_with_images(self) -> Path | None:
+        for session in recent_pilot_run_dirs(self._workspace.root, create=False):
+            if self._latest_images_in_tritonpilot_session(session, limit=1):
+                return session
+        inbox = self._workspace.pilot_incoming
+        if self._latest_images_in_tritonpilot_session(inbox, limit=1):
+            return inbox
+        return None
+
+    def _synced_pilot_source_label(self, path: Path) -> str:
+        label = self._workspace.label_for(path)
+        if path == self._workspace.pilot_incoming:
+            return f"synced Pilot inbox {label}"
+        return f"synced Pilot session {path.name}"
+
+    def _latest_local_tritonpilot_session_dir(self) -> Path | None:
         recordings = self._tritonpilot_recordings_dir()
         if not recordings.is_dir():
             return None

@@ -188,14 +188,23 @@ def test_crab_counter_sample_rows_are_count_driven(tmp_path: Path, monkeypatch):
     app = _app()
     from triton_analysis.gui.crab_counter_window import CrabCounterWindow
 
-    recordings = tmp_path / "pilot_recordings"
-    latest_session = recordings / "20260620-120000"
-    older_session = recordings / "20260620-110000"
+    workspace_root = tmp_path / "workspace"
+    pilot_inbox = workspace_root / "incoming" / "pilot"
+    latest_session = pilot_inbox / "20260620-120000"
+    older_session = pilot_inbox / "20260620-110000"
     latest_session.mkdir(parents=True)
     older_session.mkdir(parents=True)
+
+    recordings = tmp_path / "pilot_recordings"
+    local_session = recordings / "20260620-130000"
+    local_session.mkdir(parents=True)
+    local_newer = local_session / "local_newer.png"
+    local_newer.write_bytes(b"not a real image")
+    os.utime(local_newer, (1_800_000_500, 1_800_000_500))
+    os.utime(local_session, (1_800_000_500, 1_800_000_500))
     monkeypatch.setenv("TRITON_PILOT_RECORDINGS", str(recordings))
 
-    window = CrabCounterWindow(workspace_root=tmp_path / "workspace")
+    window = CrabCounterWindow(workspace_root=workspace_root)
     try:
         window.show()
         app.processEvents()
@@ -205,6 +214,7 @@ def test_crab_counter_sample_rows_are_count_driven(tmp_path: Path, monkeypatch):
         assert len(window.sample_edits) == 1
         assert window.target_edit is window.sample_edits[0]
         assert window.sample_label_widgets[0].text() == "Sample 1"
+        assert window._sample_start_dir(0) == latest_session
 
         window.sample_count_spin.setValue(3)
         app.processEvents()
