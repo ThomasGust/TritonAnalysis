@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import pytest
 
+from triton_analysis.crab import plane_dataset as plane_dataset_module
 from triton_analysis.crab.plane_dataset import (
     BoardPlaneAnnotation,
     PlaneProjectedDatasetConfig,
@@ -59,6 +60,55 @@ def test_plane_annotations_round_trip_relative_to_workspace_data(tmp_path: Path)
     assert loaded[0].quad_xy == annotation.quad_xy
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert payload["annotations"][0]["image"] == str(Path("base images") / "empty.png")
+
+
+def test_discover_default_crab_template_paths_prefers_bundled_repo_data(tmp_path: Path, monkeypatch):
+    repo = tmp_path / "repo"
+    workspace = tmp_path / "Workspace"
+    downloads = tmp_path / "Downloads"
+    repo_templates = repo / "data" / "crab" / "templates"
+    workspace_templates = workspace / "data" / "crab templates"
+    repo_templates.mkdir(parents=True)
+    workspace_templates.mkdir(parents=True)
+    downloads.mkdir()
+
+    bundled = {
+        "european_green_crab": repo_templates / "european_green_crab_mate_reference.jpg",
+        "native_rock_crab": repo_templates / "native_rock_crab_mate_reference.jpg",
+        "jonah_crab": repo_templates / "jonah_crab_mate_reference.png",
+    }
+    pools = {
+        "european_green_crab": repo_templates / "european_green_crab_pool_example.jpg",
+        "native_rock_crab": repo_templates / "native_rock_crab_pool_example.jpg",
+        "jonah_crab": repo_templates / "jonah_crab_pool_example.jpg",
+    }
+    workspace_refs = {
+        "european_green_crab": workspace_templates / "european_green_crab_workspace_example.jpg",
+        "native_rock_crab": workspace_templates / "native_rock_crab_workspace_example.jpg",
+        "jonah_crab": workspace_templates / "jonah_crab_workspace_example.jpg",
+    }
+    legacy_downloads = {
+        "european_green_crab": downloads / "European Green Crab Image.jpg",
+        "native_rock_crab": downloads / "Native Rock Crab.jpg",
+        "jonah_crab": downloads / "Jonah crab 2.png",
+    }
+    for index, class_name in enumerate(CRAB_CLASS_NAMES):
+        color = (30 + index * 30, 70 + index * 20, 120 + index * 15)
+        _write_template(bundled[class_name], color)
+        _write_template(pools[class_name], color, vertical=True)
+        _write_template(workspace_refs[class_name], color)
+        _write_template(legacy_downloads[class_name], color, vertical=True)
+
+    monkeypatch.setattr(plane_dataset_module, "REPO_ROOT", repo)
+    monkeypatch.setattr(plane_dataset_module, "_default_downloads_dir", lambda: downloads)
+
+    discovered = plane_dataset_module.discover_default_crab_template_paths(workspace)
+
+    for class_name in CRAB_CLASS_NAMES:
+        assert discovered[class_name][0] == bundled[class_name]
+        assert pools[class_name] in discovered[class_name]
+        assert workspace_refs[class_name] not in discovered[class_name]
+        assert legacy_downloads[class_name] not in discovered[class_name]
 
 
 def test_generate_plane_projected_dataset_writes_yolo_structure(tmp_path: Path):

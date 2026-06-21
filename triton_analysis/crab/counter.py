@@ -3062,7 +3062,7 @@ def _build_reference_atlas(reference_atlas_paths: Mapping[str, Sequence[Path]]) 
             max((len(reference_atlas_paths.get(class_name, ())) for class_name in CRAB_CLASS_NAMES), default=1),
         ),
     )
-    label_width = 210
+    label_width = 260
     cell_width = 190
     row_height = 178
     header_height = 38
