@@ -52,6 +52,88 @@ def apply_modern_style(app: QApplication) -> None:
     }
     QTabBar::tab:selected { background: #2a2a36; }
     QStatusBar { border-top: 1px solid #2a2a32; }
+    QWidget#missionClock {
+        background: #151820;
+        border: 1px solid #303849;
+        border-radius: 8px;
+    }
+    QLabel#missionClockLabel {
+        padding: 4px 8px;
+        border-radius: 6px;
+        border: 1px solid #3a4354;
+        color: #f7fbff;
+        background: #20232c;
+        font-family: Consolas, Menlo, monospace;
+        font-weight: 900;
+    }
+    QLabel#missionClockLabel[tone="green"] {
+        color: #e9fff1;
+        background: #1d5130;
+        border: 1px solid #4fb36e;
+    }
+    QLabel#missionClockLabel[tone="blue"] {
+        color: #f0f6ff;
+        background: #214d82;
+        border: 1px solid #5d9cec;
+    }
+    QLabel#missionClockLabel[tone="yellow"] {
+        color: #171207;
+        background: #e7bd42;
+        border: 1px solid #ffd56a;
+    }
+    QLabel#missionClockLabel[tone="orange"] {
+        color: #fff6e6;
+        background: #a5531d;
+        border: 1px solid #ee9142;
+    }
+    QLabel#missionClockLabel[tone="red"] {
+        color: #fff0f0;
+        background: #7b2424;
+        border: 1px solid #e36b6b;
+    }
+    QLabel#missionClockLabel[tone="off"] {
+        color: #b7bdca;
+        background: #2a2d35;
+        border: 1px solid #4a4f5e;
+    }
+    QLabel#missionClockLabel[state="paused"] {
+        color: #fff8e8;
+    }
+    QPushButton#missionClockButton,
+    QToolButton#missionClockButton {
+        min-width: 48px;
+        padding: 3px 8px;
+        border-radius: 6px;
+        border: 1px solid #414a5c;
+        background: #202733;
+        color: #eef3ff;
+        font-weight: 700;
+    }
+    QPushButton#missionClockButton:hover,
+    QToolButton#missionClockButton:hover {
+        border: 1px solid #6d80aa;
+        background: #283242;
+    }
+    QPushButton#missionClockButton:disabled,
+    QToolButton#missionClockButton:disabled {
+        color: #7e8491;
+        background: #1d2028;
+        border: 1px solid #303541;
+    }
+    QSpinBox#missionClockDuration {
+        min-width: 66px;
+        padding: 2px 4px;
+        border: 1px solid #414a5c;
+        border-radius: 6px;
+        background: #15161d;
+        color: #edf3ff;
+        font-weight: 700;
+    }
+    QSpinBox#missionClockDuration:disabled {
+        color: #7e8491;
+        background: #1d2028;
+        border: 1px solid #303541;
+    }
     QLabel#summaryCard {
         background: #202028;
         border: 1px solid #2f2f3a;

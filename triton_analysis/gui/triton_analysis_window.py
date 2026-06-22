@@ -6,19 +6,24 @@ import os
 import time
 from pathlib import Path
 
-from PyQt6.QtCore import QPoint, QSettings, Qt, QThread, QTimer, QUrl
+from PyQt6.QtCore import QEvent, QPoint, QSettings, Qt, QThread, QTimer, QUrl
 from PyQt6.QtGui import QAction, QDesktopServices
 from PyQt6.QtWidgets import (
+    QAbstractSpinBox,
     QApplication,
+    QComboBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QMainWindow,
+    QPlainTextEdit,
     QPushButton,
     QSizePolicy,
     QTabWidget,
+    QTextEdit,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -28,6 +33,7 @@ from triton_analysis.gui.file_dialogs import ThumbnailFileDialog as QFileDialog
 
 from triton_analysis.gui.job_center import JobCenter, state_priority
 from triton_analysis.gui.job_notifications import ActivityPanel, JobStatusTabBar, ToastStack
+from triton_analysis.gui.mission_clock import MissionClock
 from triton_analysis.workspace import AnalysisWorkspace, set_active_workspace_root, workspace_paths
 from triton_analysis.gui.edna_analysis_window import EDNAAnalysisWindow
 from triton_analysis.gui.crab_counter_window import CrabCounterWindow
@@ -318,6 +324,13 @@ class TritonAnalysisWindow(QMainWindow):
             self._pilot_sync_timer.start()
             QTimer.singleShot(1000, self._start_pilot_sync)
 
+        try:
+            app = QApplication.instance()
+            if app is not None:
+                app.installEventFilter(self)
+        except Exception:
+            pass
+
         self.focus_tab(initial_tab or self.DEFAULT_TAB_KEY)
         self.statusBar().showMessage("TritonAnalysis unified app ready.")
         resize_to_available_screen(self, 1720, 980, min_width=1120, min_height=720)
@@ -388,6 +401,7 @@ class TritonAnalysisWindow(QMainWindow):
         self._pilot_sync_destination_label.setObjectName("pilotSyncMeta")
         self._pilot_sync_last_label = QLabel("Last sync: never")
         self._pilot_sync_last_label.setObjectName("pilotSyncMeta")
+        self._mission_clock = MissionClock(self)
 
         for label in (
             self._pilot_sync_state_panel_label,
@@ -417,7 +431,8 @@ class TritonAnalysisWindow(QMainWindow):
         layout.addLayout(button_row, 0, 2)
         layout.addWidget(self._pilot_sync_source_label, 1, 0)
         layout.addWidget(self._pilot_sync_destination_label, 1, 1)
-        layout.addWidget(self._pilot_sync_last_label, 1, 2)
+        layout.addWidget(self._mission_clock, 1, 2)
+        layout.addWidget(self._pilot_sync_last_label, 2, 0, 1, 3)
         layout.setColumnStretch(0, 1)
         layout.setColumnStretch(1, 2)
         layout.setColumnStretch(2, 0)
@@ -953,7 +968,78 @@ class TritonAnalysisWindow(QMainWindow):
         self.tabs.setCurrentIndex(index)
         return True
 
+    @staticmethod
+    def _widget_or_parent_is_text_entry(widget) -> bool:
+        text_entry_types = (QLineEdit, QPlainTextEdit, QTextEdit, QAbstractSpinBox)
+        current = widget if isinstance(widget, QWidget) else None
+        while current is not None:
+            if isinstance(current, text_entry_types):
+                return True
+            if isinstance(current, QComboBox):
+                try:
+                    if current.isEditable():
+                        return True
+                except Exception:
+                    return True
+            try:
+                current = current.parentWidget()
+            except Exception:
+                return False
+        return False
+
+    def _keyboard_mission_clock_suppressed(self, obj=None) -> bool:
+        widget = obj if isinstance(obj, QWidget) else None
+        if widget is None:
+            try:
+                widget = QApplication.focusWidget()
+            except Exception:
+                widget = None
+        if widget is not None and widget is not self and not self.isAncestorOf(widget):
+            return True
+        try:
+            if self._widget_or_parent_is_text_entry(obj):
+                return True
+        except Exception:
+            pass
+        try:
+            if self._widget_or_parent_is_text_entry(QApplication.focusWidget()):
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _start_mission_clock_from_keyboard(self) -> None:
+        clock = getattr(self, "_mission_clock", None)
+        if clock is None:
+            return
+        outcome = clock.start_from_keyboard()
+        messages = {
+            "started": "Mission clock started",
+            "running": "Mission clock already running",
+            "disabled": "Mission clock disabled; enable it with the mouse",
+            "complete": "Mission clock finished; reset it with the mouse",
+        }
+        self.statusBar().showMessage(messages.get(outcome, "Mission clock"), 2500)
+
+    def eventFilter(self, obj, event):
+        try:
+            if event.type() == QEvent.Type.KeyPress:
+                if hasattr(event, "isAutoRepeat") and event.isAutoRepeat():
+                    return False
+                if event.key() == Qt.Key.Key_M and not self._keyboard_mission_clock_suppressed(obj):
+                    self._start_mission_clock_from_keyboard()
+                    return True
+        except Exception:
+            pass
+        return super().eventFilter(obj, event)
+
     def closeEvent(self, event) -> None:
+        try:
+            app = QApplication.instance()
+            if app is not None:
+                app.removeEventFilter(self)
+        except Exception:
+            pass
         self._pilot_sync_timer.stop()
         thread = self._pilot_sync_thread
         if thread is not None and thread.isRunning():

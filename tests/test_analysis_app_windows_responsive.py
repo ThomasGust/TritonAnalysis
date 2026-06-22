@@ -7,9 +7,11 @@ import pytest
 
 pytest.importorskip("PyQt6")
 
-from PyQt6.QtCore import QSettings, Qt
+from PyQt6.QtCore import QEvent, QSettings, Qt
+from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtWidgets import QApplication, QScrollArea, QTabWidget, QToolButton
 
+import triton_analysis.gui.mission_clock as mission_clock
 from triton_analysis.gui.style import apply_modern_style
 from triton_analysis.workspace import set_active_workspace_root
 
@@ -417,6 +419,50 @@ def test_unified_analysis_window_contains_competition_tabs():
         assert window.focus_tab("terminal") is True
         assert tabs.currentIndex() == 9
         assert window.focus_tab("missing") is False
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_m_shortcut_starts_global_mission_clock_without_toggling_pause(monkeypatch):
+    app = _app()
+    from triton_analysis.gui.triton_analysis_window import TritonAnalysisWindow
+
+    now = [1000.0]
+    monkeypatch.setattr(mission_clock, "monotonic", lambda: now[0])
+
+    window = TritonAnalysisWindow(pilot_transfer_auto_sync=False)
+    try:
+        window.show()
+        app.processEvents()
+        clock = window._mission_clock
+        assert clock.clock_label.text() == "15:00"
+        assert clock.is_running() is False
+
+        key_event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_M, Qt.KeyboardModifier.NoModifier, "m")
+        assert window.eventFilter(window, key_event) is True
+        assert clock.is_running() is True
+
+        now[0] = 1060.0
+        clock._refresh_display()
+        assert clock.clock_label.text() == "14:00"
+
+        key_event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_M, Qt.KeyboardModifier.NoModifier, "m")
+        assert window.eventFilter(window, key_event) is True
+        assert clock.is_running() is True
+        assert clock.remaining_seconds() == pytest.approx(14 * 60)
+
+        clock.toggle_btn.click()
+        app.processEvents()
+        assert clock.is_running() is False
+        assert clock.clock_label.text() == "PAUSED 14:00"
+
+        assert window.focus_tab("crab")
+        now[0] = 1080.0
+        key_event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_M, Qt.KeyboardModifier.NoModifier, "m")
+        assert window.eventFilter(window, key_event) is True
+        assert clock.is_running() is True
     finally:
         window.close()
         window.deleteLater()
