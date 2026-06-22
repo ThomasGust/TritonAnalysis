@@ -70,11 +70,14 @@ class SurveyStatus:
     message: str
 
 
+# Ordered to match the MATE platform table: Hibernia, Hebron, Sea Rose,
+# Terra Nova. assess_all_platforms preserves this order, so the map, results
+# table, and judge report all read in the order the judges expect.
 DEFAULT_PLATFORMS: tuple[Platform, ...] = (
     Platform("Hibernia", 46.7504, -48.7819, -78.0),
+    Platform("Hebron", 46.544, -48.518, -93.0),
     Platform("Sea Rose", 46.7895, -48.146, -107.0),
     Platform("Terra Nova", 46.4, -48.4, -91.0),
-    Platform("Hebron", 46.544, -48.518, -93.0),
 )
 
 

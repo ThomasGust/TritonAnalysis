@@ -160,6 +160,13 @@ class RealityScanReconstructionWindow(JobReporter, QMainWindow):
         self._output_buttons: dict[str, QPushButton] = {}
 
         self._build_ui()
+        # Force readable light text in the path fields and previews; without
+        # this the output-folder line edit can render dark/near-black text on
+        # the dark card and be effectively invisible.
+        self.setStyleSheet(
+            "QLineEdit { color: #f4f7fb; }"
+            " QPlainTextEdit { color: #e8edf5; }"
+        )
         if session_path:
             self.session_edit.setText(str(Path(session_path)))
             self._autoload_session_calibration()

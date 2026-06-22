@@ -11,6 +11,7 @@ from PyQt6.QtGui import QColor, QBrush, QFont, QLinearGradient, QPainter, QPen, 
 from PyQt6.QtWidgets import (
     QApplication,
     QAbstractItemView,
+    QAbstractSpinBox,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -19,6 +20,7 @@ from PyQt6.QtWidgets import (
     QHeaderView,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
@@ -56,6 +58,7 @@ from triton_analysis.iceberg.tracking import (
     normalize_heading_deg,
 )
 from triton_analysis.gui.responsive import resize_to_available_screen, vertical_scroll_area
+from triton_analysis.gui.widgets import BlankZeroDoubleSpinBox, BlankZeroSpinBox
 
 
 LEVEL_COLORS = {
@@ -88,7 +91,9 @@ class IcebergMapWidget(QWidget):
         self._heading_deg = 180.0
         self._future_track_only = True
         self._assessments: list[ThreatAssessment] = []
-        self.setMinimumSize(420, 320)
+        self._awaiting_position = True
+        self._grid_caption = ""
+        self.setMinimumSize(220, 300)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
     def set_tracking_state(
@@ -105,6 +110,13 @@ class IcebergMapWidget(QWidget):
         self._heading_deg = float(heading_deg)
         self._future_track_only = bool(future_track_only)
         self._assessments = list(assessments)
+        self._awaiting_position = False
+        self.update()
+
+    def set_awaiting_position(self) -> None:
+        """Show a neutral 'enter the iceberg position' prompt over the ocean."""
+        self._assessments = []
+        self._awaiting_position = True
         self.update()
 
     def _map_bounds(self) -> tuple[float, float, float, float]:
@@ -167,12 +179,18 @@ class IcebergMapWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
+        # Ocean-blue chart background to match the MATE example imagery.
         background = QLinearGradient(0, 0, 0, self.height())
-        background.setColorAt(0.0, QColor("#fbfbf8"))
-        background.setColorAt(1.0, QColor("#edf3f8"))
+        background.setColorAt(0.0, QColor("#0b3a59"))
+        background.setColorAt(1.0, QColor("#11537e"))
         painter.fillRect(self.rect(), background)
 
-        plot_rect = QRectF(self.rect()).adjusted(32.0, 48.0, -78.0, -32.0)
+        if self._awaiting_position:
+            self._draw_awaiting_prompt(painter)
+            painter.end()
+            return
+
+        plot_rect = QRectF(self.rect()).adjusted(24.0, 34.0, -22.0, -22.0)
         project, scale, bounds = self._projection(plot_rect)
 
         self._draw_grid(painter, project, bounds)
@@ -180,7 +198,26 @@ class IcebergMapWidget(QWidget):
         self._draw_track(painter, project)
         self._draw_platforms(painter, project)
         self._draw_iceberg(painter, project)
-        self._draw_legend(painter)
+        self._draw_caption(painter)
+        painter.end()
+
+    def _draw_caption(self, painter: QPainter) -> None:
+        # Bottom-left, clear of the longitude labels along the top and the
+        # latitude labels down the right edge.
+        painter.setPen(QColor("#bcd7ea"))
+        painter.setFont(QFont("Segoe UI", 8))
+        painter.drawText(16, self.height() - 9, self._grid_caption)
+
+    def _draw_awaiting_prompt(self, painter: QPainter) -> None:
+        painter.setPen(QColor("#dceaf6"))
+        painter.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
+        flags = int(Qt.AlignmentFlag.AlignCenter) | int(Qt.TextFlag.TextWordWrap)
+        painter.drawText(
+            QRectF(self.rect()).adjusted(24.0, 24.0, -24.0, -24.0),
+            flags,
+            "Enter the iceberg latitude, longitude, heading, and keel depth "
+            "to plot the platform threat map.",
+        )
 
     def _draw_grid(self, painter: QPainter, project, bounds: tuple[float, float, float, float]) -> None:
         min_x, max_x, min_y, max_y = bounds
@@ -196,7 +233,7 @@ class IcebergMapWidget(QWidget):
         lat_step = self._coordinate_grid_step(max_lat - min_lat)
         lon_step = self._coordinate_grid_step(max_lon - min_lon)
 
-        painter.setPen(QPen(QColor(24, 31, 44, 110), 1))
+        painter.setPen(QPen(QColor(255, 255, 255, 48), 1))
         painter.setBrush(Qt.BrushStyle.NoBrush)
 
         lon = math.ceil(min_lon / lon_step) * lon_step
@@ -239,15 +276,9 @@ class IcebergMapWidget(QWidget):
             self._draw_latitude_label(painter, right, lat)
             lat += lat_step
 
-        painter.setPen(QColor("#243247"))
-        painter.setFont(QFont("Segoe UI", 8))
-        painter.drawText(
-            16,
-            self.height() - 8,
-            (
-                f"Grid: {self._format_grid_step(lat_step)} lat / {self._format_grid_step(lon_step)} lon | "
-                f"heading {normalize_heading_deg(self._heading_deg):.1f} deg true"
-            ),
+        self._grid_caption = (
+            f"Grid {self._format_grid_step(lat_step)} lat / {self._format_grid_step(lon_step)} lon"
+            f"   ·   heading {normalize_heading_deg(self._heading_deg):.1f}° true"
         )
 
     @staticmethod
@@ -272,33 +303,32 @@ class IcebergMapWidget(QWidget):
 
     @staticmethod
     def _draw_longitude_label(painter: QPainter, point: QPointF, longitude_deg: float) -> None:
-        text = format_dms_coordinate(longitude_deg, "lon")
+        text = format_dms_coordinate(longitude_deg, "lon").replace("o", "°")
         painter.setFont(QFont("Segoe UI", 8, QFont.Weight.DemiBold))
         metrics = painter.fontMetrics()
         rect = QRectF(
             point.x() - metrics.horizontalAdvance(text) * 0.5 - 5.0,
-            10.0,
+            8.0,
             metrics.horizontalAdvance(text) + 10.0,
-            22.0,
+            20.0,
         )
-        painter.setPen(QColor("#151820"))
+        painter.setPen(QColor("#d6e8f6"))
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
-        painter.setPen(QPen(QColor(21, 24, 32, 130), 1))
-        painter.drawLine(QPointF(point.x(), 37.0), QPointF(point.x(), 48.0))
+        painter.setPen(QPen(QColor(255, 255, 255, 70), 1))
+        painter.drawLine(QPointF(point.x(), 30.0), QPointF(point.x(), 38.0))
 
     @staticmethod
     def _draw_latitude_label(painter: QPainter, point: QPointF, latitude_deg: float) -> None:
-        text = format_dms_coordinate(latitude_deg, "lat")
+        text = format_dms_coordinate(latitude_deg, "lat").replace("o", "°")
         painter.setFont(QFont("Segoe UI", 8, QFont.Weight.DemiBold))
-        painter.save()
-        painter.translate(point.x() + 24.0, point.y())
-        painter.rotate(90.0)
-        rect = QRectF(-45.0, -11.0, 90.0, 22.0)
-        painter.setPen(QColor("#151820"))
-        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
-        painter.restore()
-        painter.setPen(QPen(QColor(21, 24, 32, 130), 1))
-        painter.drawLine(QPointF(point.x(), point.y()), QPointF(point.x() + 11.0, point.y()))
+        painter.setPen(QColor("#d6e8f6"))
+        painter.drawText(
+            QRectF(point.x() - 96.0, point.y() - 9.0, 90.0, 18.0),
+            int(Qt.AlignmentFlag.AlignRight) | int(Qt.AlignmentFlag.AlignVCenter),
+            text,
+        )
+        painter.setPen(QPen(QColor(255, 255, 255, 70), 1))
+        painter.drawLine(QPointF(point.x() - 4.0, point.y()), QPointF(point.x(), point.y()))
 
     def _draw_platform_zones(self, painter: QPainter, project, scale: float) -> None:
         rings = [
@@ -324,7 +354,7 @@ class IcebergMapWidget(QWidget):
         start = project(-heading_east * 10.0, -heading_north * 10.0)
         end = project(heading_east * max_forward, heading_north * max_forward)
 
-        painter.setPen(QPen(QColor("#151515"), 3))
+        painter.setPen(QPen(QColor("#ffd166"), 3))
         painter.drawLine(start, end)
 
         angle = math.atan2(end.y() - start.y(), end.x() - start.x())
@@ -342,17 +372,19 @@ class IcebergMapWidget(QWidget):
                 ),
             ]
         )
-        painter.setBrush(QColor("#151515"))
+        painter.setBrush(QColor("#ffd166"))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawPolygon(arrow)
 
-        painter.setPen(QPen(QColor(21, 21, 21, 80), 1))
+        painter.setPen(QPen(QColor(255, 209, 102, 90), 1))
         if self._future_track_only:
             origin = project(0.0, 0.0)
             painter.drawLine(start, origin)
 
     def _draw_platforms(self, painter: QPainter, project) -> None:
         painter.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
+        metrics = painter.fontMetrics()
+        placed_label_rects: list[QRectF] = []
         for assessment in self._assessments:
             point = project(assessment.geometry.east_nm, assessment.geometry.north_nm)
             surface_color = _level_color(assessment.surface_level)
@@ -367,18 +399,33 @@ class IcebergMapWidget(QWidget):
             painter.drawEllipse(QRectF(point.x() - 6, point.y() - 6, 12, 12))
 
             label = assessment.platform.name
-            metrics = painter.fontMetrics()
-            text_rect = QRectF(
-                point.x() + 10.0,
-                point.y() - 20.0,
-                metrics.horizontalAdvance(label) + 16.0,
-                22.0,
-            )
-            painter.setBrush(QColor(255, 255, 255, 225))
-            painter.setPen(QPen(QColor(21, 24, 32, 95), 1))
-            painter.drawRoundedRect(text_rect, 6.0, 6.0)
-            painter.setPen(QColor("#151820"))
-            painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, label)
+            label_rect = self._place_platform_label(point, metrics, label, placed_label_rects)
+            placed_label_rects.append(label_rect)
+            painter.setBrush(QColor(7, 24, 39, 220))
+            painter.setPen(QPen(QColor(255, 255, 255, 120), 1))
+            painter.drawRoundedRect(label_rect, 6.0, 6.0)
+            painter.setPen(QColor("#f3f9ff"))
+            painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, label)
+
+    def _place_platform_label(self, point: QPointF, metrics, label: str, placed: list[QRectF]) -> QRectF:
+        """Choose a label box near the marker that avoids previously placed boxes."""
+        width = metrics.horizontalAdvance(label) + 16.0
+        height = 21.0
+        # Candidate anchors: right, left, above, below the marker.
+        candidates = [
+            QRectF(point.x() + 12.0, point.y() - height / 2.0, width, height),
+            QRectF(point.x() - 12.0 - width, point.y() - height / 2.0, width, height),
+            QRectF(point.x() - width / 2.0, point.y() - 16.0 - height, width, height),
+            QRectF(point.x() - width / 2.0, point.y() + 16.0, width, height),
+        ]
+        for rect in candidates:
+            if not any(rect.intersects(other) for other in placed):
+                return rect
+        # All anchors collide: stack downward from the first until clear.
+        rect = QRectF(candidates[0])
+        while any(rect.intersects(other) for other in placed):
+            rect.translate(0.0, height + 3.0)
+        return rect
 
     def _draw_iceberg(self, painter: QPainter, project) -> None:
         center = project(0.0, 0.0)
@@ -395,38 +442,12 @@ class IcebergMapWidget(QWidget):
         right = QPointF(center.x() - screen_dx * 10.0 - perp_x * 9.0, center.y() - screen_dy * 10.0 - perp_y * 9.0)
         marker = QPolygonF([tip, left, right])
 
-        painter.setBrush(QColor("#151515"))
-        painter.setPen(QPen(QColor("#ffffff"), 2))
+        painter.setBrush(QColor("#f2f8ff"))
+        painter.setPen(QPen(QColor("#0a2740"), 2))
         painter.drawPolygon(marker)
         painter.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
-        painter.setPen(QColor("#151515"))
+        painter.setPen(QColor("#eaf3fb"))
         painter.drawText(QRectF(center.x() + 15.0, center.y() + 7.0, 120.0, 24.0), Qt.AlignmentFlag.AlignLeft, "Iceberg")
-
-    def _draw_legend(self, painter: QPainter) -> None:
-        entries = [
-            ("Surface fill", QColor("#eef6fb")),
-            ("Subsea ring", QColor("#eef6fb")),
-            ("5 / 10 / 25 NM zones", QColor("#a9c8dc")),
-        ]
-        width = 190
-        height = 22 + len(entries) * 18
-        x = self.width() - width - 92
-        y = self.height() - height - 22
-        rect = QRectF(x, y, width, height)
-        painter.setBrush(QColor(255, 255, 255, 230))
-        painter.setPen(QPen(QColor(21, 24, 32, 75), 1))
-        painter.drawRoundedRect(rect, 7.0, 7.0)
-        painter.setFont(QFont("Segoe UI", 8, QFont.Weight.DemiBold))
-        painter.setPen(QColor("#151820"))
-        painter.drawText(QRectF(x + 10, y + 5, width - 20, 18), Qt.AlignmentFlag.AlignLeft, "Threat Map")
-        painter.setFont(QFont("Segoe UI", 8))
-        for index, (label, color) in enumerate(entries):
-            row_y = y + 25 + index * 18
-            painter.setPen(QPen(color, 2))
-            painter.drawLine(x + 12, row_y + 8, x + 34, row_y + 8)
-            painter.setPen(QColor("#27354a"))
-            painter.drawText(QRectF(x + 42, row_y, width - 52, 18), Qt.AlignmentFlag.AlignLeft, label)
-
 
 class IcebergTrackingWindow(QMainWindow):
     """Operator window for entering iceberg data and reviewing threat results."""
@@ -442,12 +463,20 @@ class IcebergTrackingWindow(QMainWindow):
         self._last_coordinate_mode = "dms"
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
         input_scroll = vertical_scroll_area(self._build_input_panel())
-        input_scroll.setMinimumWidth(340)
-        input_scroll.setMaximumWidth(460)
-        splitter.addWidget(input_scroll)
-        splitter.addWidget(self._build_results_panel())
-        splitter.setSizes([390, 890])
+        # Keep the floor low enough that the whole window still fits a small
+        # screen; the default split below gives the sheet enough room for the
+        # spaced-out DMS fields on a normal competition laptop.
+        input_scroll.setMinimumWidth(330)
+        input_scroll.setMaximumWidth(560)
+        splitter.addWidget(input_scroll)          # entry sheet
+        splitter.addWidget(self._build_map_panel())   # tall ocean threat map
+        splitter.addWidget(self._build_info_panel())  # results table + report
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 1)
+        splitter.setSizes([450, 415, 415])
 
         container = QWidget()
         container.setObjectName("icebergTrackingRoot")
@@ -463,8 +492,8 @@ class IcebergTrackingWindow(QMainWindow):
     def _build_input_panel(self) -> QWidget:
         panel = QFrame()
         panel.setObjectName("trackingPanel")
-        panel.setMinimumWidth(340)
-        panel.setMaximumWidth(440)
+        panel.setMinimumWidth(420)
+        panel.setMaximumWidth(560)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
@@ -488,13 +517,13 @@ class IcebergTrackingWindow(QMainWindow):
         self.coordinate_format_combo.addItem("Degrees minutes seconds", "dms")
         self.coordinate_format_combo.addItem("Decimal degrees", "decimal")
 
-        self.latitude_spin = self._make_spinbox(-90.0, 90.0, 46.50000, 5, 0.0001)
-        self.longitude_spin = self._make_spinbox(-180.0, 180.0, -48.45000, 5, 0.0001)
-        self.latitude_dms_widget = self._make_dms_coordinate_widget("lat", 46.50000)
-        self.longitude_dms_widget = self._make_dms_coordinate_widget("lon", -48.45000)
-        self.heading_spin = self._make_spinbox(0.0, 359.9, 180.0, 1, 1.0, suffix=" deg")
+        self.latitude_spin = self._make_spinbox(-90.0, 90.0, 0.0, 5, 0.0001)
+        self.longitude_spin = self._make_spinbox(-180.0, 180.0, 0.0, 5, 0.0001)
+        self.latitude_dms_widget = self._make_dms_coordinate_widget("lat")
+        self.longitude_dms_widget = self._make_dms_coordinate_widget("lon")
+        self.heading_spin = self._make_spinbox(0.0, 359.9, 0.0, 1, 1.0)
         self.heading_spin.setWrapping(True)
-        self.keel_depth_spin = self._make_spinbox(0.0, 500.0, 90.0, 1, 1.0, suffix=" m")
+        self.keel_depth_spin = self._make_spinbox(0.0, 500.0, 0.0, 1, 1.0)
         self.future_track_check = QCheckBox("Forward heading only")
         self.future_track_check.setChecked(True)
         self.future_track_check.setToolTip("Use the future iceberg track from its current location instead of the infinite heading line.")
@@ -504,8 +533,8 @@ class IcebergTrackingWindow(QMainWindow):
         self.longitude_dms_label = self._add_labeled_widget(sheet_layout, 2, "Longitude", self.longitude_dms_widget)
         self.latitude_decimal_label = self._add_labeled_widget(sheet_layout, 3, "Latitude", self.latitude_spin)
         self.longitude_decimal_label = self._add_labeled_widget(sheet_layout, 4, "Longitude", self.longitude_spin)
-        self._add_labeled_widget(sheet_layout, 5, "Heading", self.heading_spin)
-        self._add_labeled_widget(sheet_layout, 6, "Keel depth", self.keel_depth_spin)
+        self._add_labeled_widget(sheet_layout, 5, "Heading (°true)", self.heading_spin)
+        self._add_labeled_widget(sheet_layout, 6, "Keel depth (m)", self.keel_depth_spin)
         sheet_layout.addWidget(self.future_track_check, 7, 1)
         self._refresh_coordinate_format_visibility()
         layout.addWidget(sheet_frame)
@@ -549,14 +578,16 @@ class IcebergTrackingWindow(QMainWindow):
         layout.addStretch(1)
         return panel
 
-    def _build_results_panel(self) -> QWidget:
+    def _build_map_panel(self) -> QWidget:
+        self.map_widget = IcebergMapWidget()
+        self.map_widget.setMinimumWidth(220)
+        return self.map_widget
+
+    def _build_info_panel(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
-
-        self.map_widget = IcebergMapWidget()
-        layout.addWidget(self.map_widget, 2)
 
         self.result_table = QTableWidget(0, 8)
         self.result_table.setObjectName("trackingTable")
@@ -604,7 +635,7 @@ class IcebergTrackingWindow(QMainWindow):
         *,
         suffix: str = "",
     ) -> QDoubleSpinBox:
-        spin = QDoubleSpinBox()
+        spin = BlankZeroDoubleSpinBox()
         spin.setDecimals(decimals)
         spin.setRange(minimum, maximum)
         spin.setSingleStep(step)
@@ -613,38 +644,59 @@ class IcebergTrackingWindow(QMainWindow):
         spin.setMinimumWidth(126)
         return spin
 
-    def _make_dms_coordinate_widget(self, coordinate: str, value: float) -> QWidget:
+    def _make_dms_coordinate_widget(self, coordinate: str, value: float | None = None) -> QWidget:
         coordinate_type = str(coordinate).strip().lower()
         max_degrees = 90 if coordinate_type == "lat" else 180
         container = QWidget()
         row = QHBoxLayout(container)
         row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(4)
+        row.setSpacing(2)
+        # Pin the row to its content width so the grid can never squeeze the
+        # fields together (which is how seconds got mistaken for minutes).
+        row.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
 
-        degree_spin = QSpinBox()
+        def _make_dms_spin(spin, width: int, tooltip: str):
+            # DMS values are typed, not stepped: drop the arrows to free space
+            # and remove a source of accidental changes.
+            spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+            spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            spin.setFixedWidth(width)
+            spin.setToolTip(tooltip)
+            return spin
+
+        degree_spin = _make_dms_spin(BlankZeroSpinBox(), 44, "Degrees")
         degree_spin.setRange(0, max_degrees)
-        degree_spin.setFixedWidth(58)
-        minute_spin = QSpinBox()
+        minute_spin = _make_dms_spin(BlankZeroSpinBox(), 40, "Minutes")
         minute_spin.setRange(0, 59)
-        minute_spin.setFixedWidth(48)
-        second_spin = QDoubleSpinBox()
+        second_spin = _make_dms_spin(BlankZeroDoubleSpinBox(), 58, "Seconds")
         second_spin.setRange(0.0, 59.99)
         second_spin.setDecimals(2)
         second_spin.setSingleStep(1.0)
-        second_spin.setFixedWidth(72)
         hemisphere_combo = QComboBox()
         if coordinate_type == "lat":
             hemisphere_combo.addItems(["N", "S"])
         else:
             hemisphere_combo.addItems(["W", "E"])
-        hemisphere_combo.setFixedWidth(54)
+        hemisphere_combo.setFixedWidth(52)
+        hemisphere_combo.setToolTip("Hemisphere")
 
+        def _unit(symbol: str) -> QLabel:
+            unit = QLabel(symbol)
+            unit.setObjectName("dmsUnit")
+            unit.setFixedWidth(14)
+            return unit
+
+        # Group each value with its unit and leave clear gaps between the
+        # degree / minute / second groups so they are never confused.
         row.addWidget(degree_spin)
-        row.addWidget(QLabel("o"))
+        row.addWidget(_unit("°"))
+        row.addSpacing(13)
         row.addWidget(minute_spin)
-        row.addWidget(QLabel("'"))
+        row.addWidget(_unit("′"))
+        row.addSpacing(13)
         row.addWidget(second_spin)
-        row.addWidget(QLabel("\""))
+        row.addWidget(_unit("″"))
+        row.addSpacing(13)
         row.addWidget(hemisphere_combo)
         row.addStretch(1)
 
@@ -658,7 +710,10 @@ class IcebergTrackingWindow(QMainWindow):
             self.longitude_minute_spin = minute_spin
             self.longitude_second_spin = second_spin
             self.longitude_hemisphere_combo = hemisphere_combo
-        self._set_dms_widgets_from_decimal(coordinate_type, value)
+        # Leave the degree/minute/second fields blank until the operator enters
+        # a value, so a fresh sheet never looks pre-filled.
+        if value is not None:
+            self._set_dms_widgets_from_decimal(coordinate_type, value)
         return container
 
     @staticmethod
@@ -797,10 +852,20 @@ class IcebergTrackingWindow(QMainWindow):
     def _survey_numbers(self) -> list[int | None]:
         return [combo.currentData() for combo in self.survey_combos]
 
+    def _position_entered(self) -> bool:
+        """True once a real iceberg position is set (both coordinates non-zero)."""
+        return abs(self._current_latitude_deg()) > 1.0e-6 and abs(self._current_longitude_deg()) > 1.0e-6
+
     def _recalculate(self, *_args) -> None:
+        self._survey_status = evaluate_survey_numbers(self._survey_numbers())
+        if not self._position_entered():
+            self._assessments = []
+            self.map_widget.set_awaiting_position()
+            self._show_awaiting_state()
+            return
+
         latitude = self._current_latitude_deg()
         longitude = self._current_longitude_deg()
-        self._survey_status = evaluate_survey_numbers(self._survey_numbers())
         self._assessments = assess_all_platforms(
             iceberg_latitude_deg=latitude,
             iceberg_longitude_deg=longitude,
@@ -819,6 +884,20 @@ class IcebergTrackingWindow(QMainWindow):
         self._update_status_cards()
         self._update_result_table()
         self._update_report_preview()
+
+    def _show_awaiting_state(self) -> None:
+        """Neutral state shown before an iceberg position is entered."""
+        self.survey_status_label.setText(self._survey_status.message)
+        self._set_card_tone(self.survey_status_label, "ok" if self._survey_status.complete else "warn")
+        self.surface_count_label.setText("Surface: awaiting position")
+        self.subsea_count_label.setText("Subsea: awaiting position")
+        self.nearest_label.setText("Nearest: enter the iceberg position")
+        for card in (self.surface_count_label, self.subsea_count_label, self.nearest_label):
+            self._set_card_tone(card, "info")
+        self.result_table.setRowCount(0)
+        self.report_preview.setPlainText(
+            "Enter the iceberg latitude, longitude, heading, and keel depth to generate the threat report."
+        )
 
     def _update_status_cards(self) -> None:
         self.survey_status_label.setText(self._survey_status.message)
@@ -968,6 +1047,11 @@ class IcebergTrackingWindow(QMainWindow):
             }
             QLabel#trackingFormLabel {
                 color: #cdd3df;
+            }
+            QLabel#dmsUnit {
+                color: #aeb8c8;
+                font-size: 14px;
+                font-weight: 800;
             }
             QLabel#trackingStatusCard {
                 background: #151821;

@@ -42,6 +42,7 @@ from triton_analysis.edna.analysis import (
     total_seen,
 )
 from triton_analysis.gui.responsive import horizontal_scroll_area, resize_to_available_screen
+from triton_analysis.gui.widgets import BlankZeroSpinBox
 
 
 COMPACT_SPECIES_ROW_HEIGHT = 33
@@ -311,7 +312,11 @@ class EDNAAnalysisWindow(QMainWindow):
 
         panel_title = QLabel("Count Entry")
         panel_title.setObjectName("ednaPanelTitle")
+        panel_hint = QLabel("Type the number seen for each species. Empty = none.")
+        panel_hint.setObjectName("ednaPanelHint")
+        panel_hint.setWordWrap(True)
         layout.addWidget(panel_title)
+        layout.addWidget(panel_hint)
 
         self.input_table = QTableWidget(len(DEFAULT_SPECIES), 3)
         self.input_table.setObjectName("ednaInputTable")
@@ -339,10 +344,11 @@ class EDNAAnalysisWindow(QMainWindow):
             self.input_table.setItem(row_index, 0, species_item)
             self.input_table.setRowHeight(row_index, COMPACT_SPECIES_ROW_HEIGHT)
 
-            spin = QSpinBox()
+            spin = BlankZeroSpinBox()
             spin.setRange(0, 9999)
             spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
             spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.PlusMinus)
+            spin.setToolTip(f"Number of {species.common_name} seen. Leave blank for none.")
             spin.valueChanged.connect(self._count_changed)
             self._count_spins.append(spin)
             self.input_table.setCellWidget(row_index, 1, spin)
@@ -351,6 +357,11 @@ class EDNAAnalysisWindow(QMainWindow):
             percent_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self._percent_items.append(percent_item)
             self.input_table.setItem(row_index, 2, percent_item)
+
+        # Chain Tab between count fields so values can be entered top-to-bottom
+        # straight off a spreadsheet without reaching for the mouse.
+        for earlier, later in zip(self._count_spins, self._count_spins[1:]):
+            self.setTabOrder(earlier, later)
 
         self._fit_input_table_height()
         layout.addWidget(self.input_table, 1)
@@ -407,9 +418,13 @@ class EDNAAnalysisWindow(QMainWindow):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
 
-        label = QLabel("Output Preview")
+        label = QLabel("Judge Display Preview")
         label.setObjectName("ednaPanelTitle")
+        hint = QLabel("Exactly what the detached judge display shows. Updates live.")
+        hint.setObjectName("ednaPanelHint")
+        hint.setWordWrap(True)
         layout.addWidget(label)
+        layout.addWidget(hint)
 
         self.judge_preview = JudgeDisplayWidget(panel, compact=True)
         self.judge_preview.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -571,6 +586,11 @@ class EDNAAnalysisWindow(QMainWindow):
                 color: #f6f8fb;
                 font-size: 13px;
                 font-weight: 800;
+            }
+            QLabel#ednaPanelHint {
+                color: #97a1b3;
+                font-size: 11px;
+                padding-bottom: 2px;
             }
             QLabel#ednaSummaryCard {
                 background: #141821;

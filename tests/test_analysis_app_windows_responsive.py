@@ -683,6 +683,76 @@ def test_unified_analysis_stays_usable_when_pilot_network_is_unavailable(tmp_pat
         app.processEvents()
 
 
+def test_edna_count_fields_start_blank():
+    app = _app()
+    from triton_analysis.gui.edna_analysis_window import EDNAAnalysisWindow
+
+    window = EDNAAnalysisWindow()
+    try:
+        window.show()
+        app.processEvents()
+
+        first = window._count_spins[0]
+        assert first.value() == 0
+        assert first.text().strip() == ""
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_iceberg_tracking_starts_blank_and_awaits_position():
+    app = _app()
+    from triton_analysis.gui.iceberg_tracking_window import IcebergTrackingWindow
+
+    window = IcebergTrackingWindow()
+    try:
+        window.show()
+        app.processEvents()
+
+        assert window.heading_spin.value() == 0
+        assert window.heading_spin.text().strip() == ""
+        assert window.keel_depth_spin.value() == 0
+        assert window.keel_depth_spin.text().strip() == ""
+        assert window.latitude_degree_spin.text().strip() == ""
+        assert window.heading_spin.suffix() == ""
+        assert window.keel_depth_spin.suffix() == ""
+
+        # No position yet: nothing computed, map shows the prompt.
+        assert window.result_table.rowCount() == 0
+        assert window.map_widget._awaiting_position is True
+        assert "awaiting" in window.surface_count_label.text().lower()
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_iceberg_tracking_lists_platforms_in_mate_order():
+    app = _app()
+    from triton_analysis.gui.iceberg_tracking_window import IcebergTrackingWindow
+
+    window = IcebergTrackingWindow()
+    try:
+        window.show()
+        app.processEvents()
+
+        window.coordinate_format_combo.setCurrentIndex(1)  # decimal degrees
+        window.latitude_spin.setValue(46.5)
+        window.longitude_spin.setValue(-48.45)
+        window.heading_spin.setValue(180.0)
+        window.keel_depth_spin.setValue(90.0)
+        app.processEvents()
+
+        assert window.map_widget._awaiting_position is False
+        order = [window.result_table.item(row, 0).text() for row in range(window.result_table.rowCount())]
+        assert order == ["Hibernia", "Hebron", "Sea Rose", "Terra Nova"]
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
 def test_edna_input_and_output_rows_are_visible_without_table_scroll():
     app = _app()
     from triton_analysis.edna.analysis import DEFAULT_SPECIES
