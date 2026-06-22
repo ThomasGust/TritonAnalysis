@@ -202,3 +202,105 @@ def test_thumbnail_file_dialog_opens_highlighted_child_folder(tmp_path):
     finally:
         dialog.deleteLater()
         app.processEvents()
+
+
+def _wait_for_rows(dialog: ThumbnailFileDialog, count: int):
+    for _attempt in range(100):
+        _app().processEvents()
+        if dialog._entry_model.rowCount() >= count:
+            return
+        QTest.qWait(5)
+    pytest.fail(f"Directory listing did not reach {count} rows")
+
+
+def _rows(dialog: ThumbnailFileDialog) -> list[str]:
+    return [dialog._entry_model.item(i).text() for i in range(dialog._entry_model.rowCount())]
+
+
+def test_directory_listing_sorts_folders_first_then_alphabetical(tmp_path):
+    app = _app()
+    for name in ("zebra", "alpha", "Mango"):
+        (tmp_path / name).mkdir()
+    for name in ("readme.txt", "banana.txt", "Apple.txt"):
+        (tmp_path / name).write_text("x", encoding="utf-8")
+    dialog = ThumbnailFileDialog(None, "Open", str(tmp_path), "All files (*)")
+    try:
+        _wait_for_rows(dialog, 6)
+        assert _rows(dialog) == ["alpha", "Mango", "zebra", "Apple.txt", "banana.txt", "readme.txt"]
+    finally:
+        dialog.deleteLater()
+        app.processEvents()
+
+
+def test_quick_filter_narrows_listing_without_rescanning(tmp_path):
+    app = _app()
+    (tmp_path / "Mango").mkdir()
+    (tmp_path / "alpha").mkdir()
+    for name in ("banana.txt", "Apple.txt"):
+        (tmp_path / name).write_text("x", encoding="utf-8")
+    dialog = ThumbnailFileDialog(None, "Open", str(tmp_path), "All files (*)")
+    try:
+        _wait_for_rows(dialog, 4)
+
+        dialog.quick_filter_edit.setText("an")
+        for _attempt in range(100):
+            app.processEvents()
+            rows = _rows(dialog)
+            if rows and all("an" in row.lower() for row in rows):
+                break
+            QTest.qWait(5)
+        assert set(_rows(dialog)) == {"Mango", "banana.txt"}
+        assert "of 4 shown" in dialog.status_label.text()
+
+        dialog.quick_filter_edit.clear()
+        _wait_for_rows(dialog, 4)
+        assert len(_rows(dialog)) == 4
+    finally:
+        dialog.deleteLater()
+        app.processEvents()
+
+
+def test_thumbnail_preview_renders_grid_before_decode_finishes(tmp_path):
+    app = _app()
+    image_path = tmp_path / "frame_0001.png"
+    _write_test_image(image_path)
+
+    preview = DirectoryThumbnailPreview()
+    try:
+        preview.set_directory(tmp_path)
+        # The tile and final status appear immediately, before the off-thread
+        # decode has had a chance to run.
+        assert preview.thumbnail_list.count() == 1
+        assert not preview.status_label.text().startswith("Loading")
+
+        for _attempt in range(100):
+            app.processEvents()
+            if image_path.resolve() in preview._icon_cache:
+                break
+            QTest.qWait(5)
+        assert image_path.resolve() in preview._icon_cache
+    finally:
+        preview.deleteLater()
+        app.processEvents()
+
+
+def test_places_sidebar_lists_home_and_navigates(tmp_path):
+    app = _app()
+    child = tmp_path / "destination"
+    child.mkdir()
+    dialog = ThumbnailFileDialog(None, "Open", str(tmp_path))
+    try:
+        labels = [dialog.places_list.item(i).text() for i in range(dialog.places_list.count())]
+        assert "Quick access" in labels
+        assert "Home" in labels
+
+        home_item = next(
+            dialog.places_list.item(i)
+            for i in range(dialog.places_list.count())
+            if dialog.places_list.item(i).text() == "Home"
+        )
+        dialog._on_place_activated(home_item)
+        assert Path(dialog.directory().absolutePath()).resolve() == Path.home().resolve()
+    finally:
+        dialog.deleteLater()
+        app.processEvents()

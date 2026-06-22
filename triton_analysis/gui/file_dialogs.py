@@ -7,8 +7,20 @@ import os
 from fnmatch import fnmatch
 from pathlib import Path
 
-from PyQt6.QtCore import QDir, QItemSelectionModel, QModelIndex, QSize, QTimer, Qt, pyqtSignal
-from PyQt6.QtGui import QIcon, QImageReader, QPixmap, QStandardItem, QStandardItemModel
+from PyQt6.QtCore import (
+    QDir,
+    QItemSelectionModel,
+    QModelIndex,
+    QObject,
+    QRunnable,
+    QSettings,
+    QSize,
+    QThreadPool,
+    QTimer,
+    Qt,
+    pyqtSignal,
+)
+from PyQt6.QtGui import QColor, QIcon, QImage, QImageReader, QPixmap, QStandardItem, QStandardItemModel
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -39,6 +51,44 @@ GRID_SIZE = QSize(128, 132)
 IMAGE_SUFFIXES = {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
 PATH_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 IS_DIR_ROLE = int(Qt.ItemDataRole.UserRole) + 2
+RECENT_DIRS_LIMIT = 8
+
+
+class _ThumbnailSignals(QObject):
+    """Carries a decoded thumbnail back to the GUI thread.
+
+    Kept unparented and shared across decode tasks so it outlives the preview
+    widget if a worker is still running when the dialog closes; Qt drops the
+    queued ``done`` delivery once the connected preview is destroyed.
+    """
+
+    done = pyqtSignal(int, str, object)  # generation, path, QImage
+
+
+class _ThumbnailDecodeTask(QRunnable):
+    """Decode one scaled thumbnail off the GUI thread.
+
+    A *generation* token lets the preview discard work for folders the operator
+    has already navigated away from, so rapid browsing never piles up stale
+    decodes on the thread pool.
+    """
+
+    def __init__(self, generation: int, path: Path, size: QSize, signals: _ThumbnailSignals, is_current):
+        super().__init__()
+        self._generation = generation
+        self._path = path
+        self._size = size
+        self._signals = signals
+        self._is_current = is_current
+        self.setAutoDelete(True)
+
+    def run(self) -> None:
+        if not self._is_current(self._generation):
+            return
+        image = _thumbnail_image(self._path, self._size)
+        if image.isNull() or not self._is_current(self._generation):
+            return
+        self._signals.done.emit(self._generation, str(self._path), image)
 
 
 class DirectoryThumbnailPreview(QFrame):
@@ -52,13 +102,21 @@ class DirectoryThumbnailPreview(QFrame):
         self._directory: Path | None = None
         self._image_cache: dict[Path, tuple[list[Path], str]] = {}
         self._icon_cache: dict[Path, QIcon] = {}
-        self._pending_thumbnail_directory: Path | None = None
-        self._pending_thumbnail_images: list[Path] = []
-        self._pending_thumbnail_source_label = ""
-        self._pending_thumbnail_total = 0
-        self._thumbnail_timer = QTimer(self)
-        self._thumbnail_timer.setInterval(1)
-        self._thumbnail_timer.timeout.connect(self._add_next_thumbnail)
+        self._thumb_items: dict[str, QListWidgetItem] = {}
+        self._thumb_generation = 0
+        # A per-widget pool (not the global one) so its destructor blocks until
+        # in-flight decodes finish, preventing a worker from emitting into a
+        # half-destroyed preview when the dialog closes mid-load.  It is created
+        # before the signals object so that, during teardown, child destruction
+        # drains the pool's tasks before the signals object they emit on is gone.
+        self._thumb_pool = QThreadPool(self)
+        self._thumb_pool.setMaxThreadCount(4)
+        # Parented to self so it is destroyed deterministically with the preview
+        # (while the QApplication is still alive) rather than lingering until the
+        # interpreter-shutdown GC, which races QApplication teardown.
+        self._thumb_signals = _ThumbnailSignals(self)
+        self._thumb_signals.done.connect(self._on_thumbnail_decoded)
+        self._placeholder_icon = _placeholder_thumbnail_icon()
         self.setMinimumWidth(280)
         self.setMaximumWidth(380)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
@@ -105,10 +163,15 @@ class DirectoryThumbnailPreview(QFrame):
         if self._directory is not None:
             self.openRequested.emit(self._directory)
 
+    def _begin_new_generation(self) -> int:
+        """Invalidate in-flight decodes and reset per-folder thumbnail state."""
+        self._thumb_generation += 1
+        self._thumb_items = {}
+        self.thumbnail_list.clear()
+        return self._thumb_generation
+
     def show_pending_directory(self, value: str | Path) -> None:
-        self._thumbnail_timer.stop()
-        self._pending_thumbnail_images = []
-        self._pending_thumbnail_directory = None
+        self._begin_new_generation()
         directory = Path(value).expanduser()
         if directory.is_file():
             directory = directory.parent
@@ -119,7 +182,6 @@ class DirectoryThumbnailPreview(QFrame):
 
         self._directory = None
         self.path_label.setText(directory.name or str(directory))
-        self.thumbnail_list.clear()
         self.status_label.setText("Loading thumbnails...")
 
     def set_directory(self, value: str | Path) -> None:
@@ -136,12 +198,9 @@ class DirectoryThumbnailPreview(QFrame):
         if directory == self._directory:
             return
 
-        self._thumbnail_timer.stop()
-        self._pending_thumbnail_images = []
-        self._pending_thumbnail_directory = None
+        generation = self._begin_new_generation()
         self._directory = directory
         self.path_label.setText(directory.name or str(directory))
-        self.thumbnail_list.clear()
 
         cached = self._image_cache.get(directory)
         if cached is None:
@@ -158,36 +217,46 @@ class DirectoryThumbnailPreview(QFrame):
             self.status_label.setText("No image files in this folder.")
             return
 
-        self._pending_thumbnail_directory = directory
-        self._pending_thumbnail_images = list(images[:MAX_THUMBNAILS])
-        self._pending_thumbnail_source_label = source_label
-        self._pending_thumbnail_total = len(images)
-        self.status_label.setText(f"Loading thumbnails for {min(len(images), MAX_THUMBNAILS)} {source_label}...")
-        self._thumbnail_timer.start()
+        # Lay out every tile immediately with a placeholder (or cached icon) so
+        # the grid appears instantly; real thumbnails stream in from the pool.
+        for image_path in images[:MAX_THUMBNAILS]:
+            cached_icon = self._icon_cache.get(image_path)
+            item = QListWidgetItem(cached_icon or self._placeholder_icon, _display_name(directory, image_path))
+            item.setToolTip(str(image_path))
+            self.thumbnail_list.addItem(item)
+            self._thumb_items[str(image_path)] = item
+            if cached_icon is None:
+                self._dispatch_thumbnail_decode(generation, image_path)
 
-    def _add_next_thumbnail(self) -> None:
-        directory = self._pending_thumbnail_directory
-        if directory is None or directory != self._directory:
-            self._thumbnail_timer.stop()
-            return
-        if not self._pending_thumbnail_images:
-            self._thumbnail_timer.stop()
-            if self._pending_thumbnail_total > MAX_THUMBNAILS:
-                self.status_label.setText(
-                    f"Showing first {MAX_THUMBNAILS} {self._pending_thumbnail_source_label}."
-                )
-            else:
-                self.status_label.setText(f"{self._pending_thumbnail_total} {self._pending_thumbnail_source_label}.")
-            return
+        total = len(images)
+        if total > MAX_THUMBNAILS:
+            self.status_label.setText(f"Showing first {MAX_THUMBNAILS} {source_label}.")
+        else:
+            self.status_label.setText(f"{total} {source_label}.")
 
-        image_path = self._pending_thumbnail_images.pop(0)
-        icon = self._icon_cache.get(image_path)
-        if icon is None:
-            icon = QIcon(_thumbnail_pixmap(image_path))
-            self._icon_cache[image_path] = icon
-        item = QListWidgetItem(icon, _display_name(directory, image_path))
-        item.setToolTip(str(image_path))
-        self.thumbnail_list.addItem(item)
+    def _dispatch_thumbnail_decode(self, generation: int, image_path: Path) -> None:
+        task = _ThumbnailDecodeTask(
+            generation,
+            image_path,
+            THUMBNAIL_SIZE,
+            self._thumb_signals,
+            self._is_thumbnail_generation_current,
+        )
+        self._thumb_pool.start(task)
+
+    def _is_thumbnail_generation_current(self, generation: int) -> bool:
+        return generation == self._thumb_generation
+
+    def _on_thumbnail_decoded(self, generation: int, path_str: str, image: object) -> None:
+        if generation != self._thumb_generation:
+            return
+        if not isinstance(image, QImage) or image.isNull():
+            return
+        icon = QIcon(QPixmap.fromImage(image))
+        self._icon_cache[Path(path_str)] = icon
+        item = self._thumb_items.get(path_str)
+        if item is not None:
+            item.setIcon(icon)
 
 
 def _thumbnail_images_for_directory(directory: Path) -> tuple[list[Path], str]:
@@ -298,17 +367,28 @@ def _display_name(directory: Path, path: Path) -> str:
         return path.name
 
 
-def _thumbnail_pixmap(path: Path) -> QPixmap:
+def _thumbnail_image(path: Path, size: QSize = THUMBNAIL_SIZE) -> QImage:
+    """Decode an image scaled to fit *size*. Safe to call off the GUI thread."""
     reader = QImageReader(str(path))
     reader.setAutoTransform(True)
-    size = reader.size()
-    if size.isValid():
-        size.scale(THUMBNAIL_SIZE, Qt.AspectRatioMode.KeepAspectRatio)
-        reader.setScaledSize(size)
-    image = reader.read()
+    source_size = reader.size()
+    if source_size.isValid():
+        source_size.scale(size, Qt.AspectRatioMode.KeepAspectRatio)
+        reader.setScaledSize(source_size)
+    return reader.read()
+
+
+def _thumbnail_pixmap(path: Path) -> QPixmap:
+    image = _thumbnail_image(path)
     if image.isNull():
         return QPixmap()
     return QPixmap.fromImage(image)
+
+
+def _placeholder_thumbnail_icon() -> QIcon:
+    pixmap = QPixmap(THUMBNAIL_SIZE)
+    pixmap.fill(QColor(0x24, 0x24, 0x2C))
+    return QIcon(pixmap)
 
 
 def _resolve_path(path: Path) -> Path:
@@ -389,13 +469,20 @@ class ThumbnailFileDialog(QDialog):
         self._selected_name_filter = self._name_filters[0][0]
         self._pending_preview_path: Path | None = None
         self._displayed_items: dict[str, QStandardItem] = {}
-        self._directory_iterator = None
-        self._directory_iterator_path: Path | None = None
+        # Sorted (folders-first) scan of the current folder, plus the queue the
+        # batch timer renders from after the quick filter is applied.
+        self._all_entries: list[tuple[str, Path, bool]] = []
+        self._render_queue: list[tuple[str, Path, bool]] = []
+        self._render_index = 0
+        self._filter_text = ""
         self._directory_initialized = False
+        self._dialog_settings = QSettings("TritonAnalysis", "FileDialog")
 
+        # Decoding now runs off-thread, so the preview can react quickly without
+        # stalling rapid keyboard/mouse browsing.
         self._preview_timer = QTimer(self)
         self._preview_timer.setSingleShot(True)
-        self._preview_timer.setInterval(250)
+        self._preview_timer.setInterval(120)
         self._preview_timer.timeout.connect(self._apply_pending_preview)
 
         self._entry_model = QStandardItemModel(self)
@@ -440,6 +527,19 @@ class ThumbnailFileDialog(QDialog):
 
         body_layout = QHBoxLayout()
         body_layout.setSpacing(10)
+
+        self.places_list = self._build_places_sidebar()
+        body_layout.addWidget(self.places_list)
+
+        center_column = QVBoxLayout()
+        center_column.setContentsMargins(0, 0, 0, 0)
+        center_column.setSpacing(6)
+        self.quick_filter_edit = QLineEdit()
+        self.quick_filter_edit.setClearButtonEnabled(True)
+        self.quick_filter_edit.setPlaceholderText("Filter this folder...")
+        self.quick_filter_edit.textChanged.connect(self._on_quick_filter_changed)
+        center_column.addWidget(self.quick_filter_edit)
+
         self.file_view = QTreeView()
         self._file_views = [self.file_view]
         self.file_view.setModel(self._entry_model)
@@ -454,7 +554,9 @@ class ThumbnailFileDialog(QDialog):
         self.file_view.clicked.connect(self._select_index)
         self.file_view.doubleClicked.connect(self._open_or_accept_index)
         self.file_view.activated.connect(self._open_or_accept_index)
-        body_layout.addWidget(self.file_view, 1)
+        center_column.addWidget(self.file_view, 1)
+        body_layout.addLayout(center_column, 1)
+
         body_layout.addWidget(self._thumbnail_preview)
         main_layout.addLayout(body_layout, 1)
 
@@ -533,32 +635,55 @@ class ThumbnailFileDialog(QDialog):
         lowered = name.lower()
         return any(fnmatch(lowered, pattern) for pattern in patterns)
 
-    def _close_directory_iterator(self) -> None:
-        iterator = self._directory_iterator
-        self._directory_iterator = None
-        close = getattr(iterator, "close", None)
-        if callable(close):
-            close()
-
     def _restart_directory_listing(self) -> None:
         if not hasattr(self, "file_view"):
             return
+        if not self._scan_directory():
+            return
+        self._render_entries()
+
+    def _scan_directory(self) -> bool:
+        """Read the current folder once and sort folders-first, alphabetical."""
         self._directory_load_timer.stop()
-        self._close_directory_iterator()
+        entries: list[tuple[str, Path, bool]] = []
+        try:
+            with os.scandir(self._current_dir) as iterator:
+                for entry in iterator:
+                    visible, is_dir = self._entry_is_visible(entry)
+                    if visible:
+                        entries.append((entry.name, Path(entry.path), is_dir))
+        except OSError as exc:
+            self._all_entries = []
+            self._entry_model.clear()
+            self._displayed_items.clear()
+            self.status_label.setText(f"Could not read folder: {exc}")
+            return False
+        entries.sort(key=lambda record: (not record[2], record[0].lower()))
+        self._all_entries = entries
+        return True
+
+    def _render_entries(self) -> None:
+        """Rebuild the visible rows from the scan, applying the quick filter."""
+        self._directory_load_timer.stop()
         self._entry_model.clear()
         self._displayed_items.clear()
         self._selected_files = []
         self._selected_directory = None
-        self._directory_iterator_path = self._current_dir
 
-        try:
-            self._directory_iterator = os.scandir(self._current_dir)
-        except OSError as exc:
-            self.status_label.setText(f"Could not read folder: {exc}")
-            return
+        needle = self._filter_text.strip().lower()
+        if needle:
+            self._render_queue = [record for record in self._all_entries if needle in record[0].lower()]
+        else:
+            self._render_queue = list(self._all_entries)
+        self._render_index = 0
 
-        self.status_label.setText("Loading folder...")
-        self._directory_load_timer.start()
+        if not self.status_label.text().startswith("Choose a valid"):
+            if needle and self._all_entries:
+                self.status_label.setText(f"{len(self._render_queue)} of {len(self._all_entries)} shown.")
+            else:
+                self.status_label.setText("")
+        if self._render_queue:
+            self._directory_load_timer.start()
 
     def _entry_is_visible(self, entry) -> tuple[bool, bool]:
         name = str(getattr(entry, "name", "") or "")
@@ -580,9 +705,8 @@ class ThumbnailFileDialog(QDialog):
             return False, False
         return True, False
 
-    def _append_directory_entry(self, entry, *, is_dir: bool) -> None:
-        path = Path(entry.path)
-        item = QStandardItem(self._folder_icon if is_dir else self._file_icon, entry.name)
+    def _append_directory_entry(self, name: str, path: Path, *, is_dir: bool) -> None:
+        item = QStandardItem(self._folder_icon if is_dir else self._file_icon, name)
         item.setEditable(False)
         item.setData(str(path), PATH_ROLE)
         item.setData(bool(is_dir), IS_DIR_ROLE)
@@ -590,35 +714,19 @@ class ThumbnailFileDialog(QDialog):
         self._displayed_items[self._path_key(path)] = item
 
     def _load_next_directory_batch(self) -> None:
-        if self._directory_iterator is None:
-            self._directory_load_timer.stop()
-            return
-        if self._directory_iterator_path != self._current_dir:
-            self._directory_load_timer.stop()
-            self._close_directory_iterator()
-            return
-
         added = 0
-        while added < DIRECTORY_LOAD_BATCH_SIZE:
-            try:
-                entry = next(self._directory_iterator)
-            except StopIteration:
-                self._directory_load_timer.stop()
-                self._close_directory_iterator()
-                if not self.status_label.text().startswith("Choose a valid"):
-                    self.status_label.setText("")
-                return
-            except OSError as exc:
-                self._directory_load_timer.stop()
-                self._close_directory_iterator()
-                self.status_label.setText(f"Could not read folder: {exc}")
-                return
-
-            visible, is_dir = self._entry_is_visible(entry)
-            if not visible:
-                continue
-            self._append_directory_entry(entry, is_dir=is_dir)
+        while added < DIRECTORY_LOAD_BATCH_SIZE and self._render_index < len(self._render_queue):
+            name, path, is_dir = self._render_queue[self._render_index]
+            self._render_index += 1
+            self._append_directory_entry(name, path, is_dir=is_dir)
             added += 1
+        if self._render_index >= len(self._render_queue):
+            self._directory_load_timer.stop()
+
+    def _on_quick_filter_changed(self, text: str) -> None:
+        self._filter_text = str(text or "")
+        if self._directory_initialized:
+            self._render_entries()
 
     def _source_index(self, index: QModelIndex) -> QModelIndex:
         if not index.isValid():
@@ -836,10 +944,109 @@ class ThumbnailFileDialog(QDialog):
         self._current_dir = _resolve_path(path)
         self.path_edit.setText(str(self._current_dir))
         self._directory_initialized = True
+        self._reset_quick_filter()
         self.file_view.setRootIndex(QModelIndex())
         self.file_view.setColumnWidth(0, 320)
         self._restart_directory_listing()
+        self._record_recent_directory(self._current_dir)
+        self._refresh_places()
         self._queue_preview_path(self._current_dir)
+
+    def _reset_quick_filter(self) -> None:
+        if not hasattr(self, "quick_filter_edit"):
+            return
+        if self.quick_filter_edit.text():
+            blocked = self.quick_filter_edit.blockSignals(True)
+            self.quick_filter_edit.clear()
+            self.quick_filter_edit.blockSignals(blocked)
+        self._filter_text = ""
+
+    # ------------------------------------------------------------------
+    # Places / recent sidebar
+    # ------------------------------------------------------------------
+    def _build_places_sidebar(self) -> QListWidget:
+        places = QListWidget()
+        places.setObjectName("placesSidebar")
+        places.setFixedWidth(184)
+        places.setFrameShape(QFrame.Shape.NoFrame)
+        places.setUniformItemSizes(False)
+        places.itemActivated.connect(self._on_place_activated)
+        places.itemClicked.connect(self._on_place_activated)
+        return places
+
+    def _add_place_header(self, text: str) -> None:
+        item = QListWidgetItem(text)
+        item.setFlags(Qt.ItemFlag.NoItemFlags)
+        font = item.font()
+        font.setBold(True)
+        item.setFont(font)
+        item.setForeground(QColor(0x9A, 0x9A, 0xB0))
+        self.places_list.addItem(item)
+
+    def _add_place(self, label: str, path: Path, icon_pixmap: QStyle.StandardPixmap) -> None:
+        if not path.is_dir():
+            return
+        item = QListWidgetItem(self.style().standardIcon(icon_pixmap), label)
+        item.setData(Qt.ItemDataRole.UserRole, str(path))
+        item.setToolTip(str(path))
+        self.places_list.addItem(item)
+
+    def _refresh_places(self) -> None:
+        if not hasattr(self, "places_list"):
+            return
+        self.places_list.clear()
+        self._add_place_header("Quick access")
+        self._add_place("Home", Path.home(), QStyle.StandardPixmap.SP_DirHomeIcon)
+
+        for label, path in self._workspace_places():
+            self._add_place(label, path, QStyle.StandardPixmap.SP_DirIcon)
+
+        drives = [Path(info.absoluteFilePath()) for info in QDir.drives()]
+        if drives:
+            self._add_place_header("Drives")
+            for drive in drives:
+                self._add_place(str(drive), drive, QStyle.StandardPixmap.SP_DriveHDIcon)
+
+        recent = [Path(text) for text in self._recent_directories()]
+        recent = [path for path in recent if path != self._current_dir and path.is_dir()]
+        if recent:
+            self._add_place_header("Recent")
+            for path in recent:
+                self._add_place(path.name or str(path), path, QStyle.StandardPixmap.SP_DirOpenIcon)
+
+    @staticmethod
+    def _workspace_places() -> list[tuple[str, Path]]:
+        """Workspace shortcuts (incoming/pilot, results, ...) when discoverable."""
+        try:
+            from triton_analysis.workspace import workspace_paths
+
+            workspace = workspace_paths(create=False)
+        except Exception:
+            return []
+        candidates = [
+            ("Pilot incoming", getattr(workspace, "pilot_incoming", None)),
+            ("Results", getattr(workspace, "results", None)),
+            ("Reports", getattr(workspace, "reports", None)),
+            ("Calibrations", getattr(workspace, "calibrations", None)),
+        ]
+        return [(label, Path(path)) for label, path in candidates if path is not None and Path(path).is_dir()]
+
+    def _on_place_activated(self, item: QListWidgetItem) -> None:
+        path_text = item.data(Qt.ItemDataRole.UserRole)
+        if path_text:
+            self._open_directory(str(path_text))
+
+    def _recent_directories(self) -> list[str]:
+        raw = self._dialog_settings.value("recent_dirs", [])
+        if isinstance(raw, str):
+            raw = [raw]
+        return [str(entry) for entry in (raw or []) if str(entry).strip()]
+
+    def _record_recent_directory(self, path: Path) -> None:
+        text = str(path)
+        recent = [entry for entry in self._recent_directories() if entry.lower() != text.lower()]
+        recent.insert(0, text)
+        self._dialog_settings.setValue("recent_dirs", recent[:RECENT_DIRS_LIMIT])
 
     def directory(self) -> QDir:
         return QDir(str(self._current_dir))
