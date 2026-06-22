@@ -32,6 +32,7 @@ from triton_analysis.gui.file_dialogs import ThumbnailFileDialog as QFileDialog
 
 from triton_analysis.workspace import latest_pilot_stereo_sessions_dir, workspace_paths
 from triton_analysis.gui.image_preview import ImagePreviewPanel
+from triton_analysis.gui.job_center import JobReporter
 from triton_analysis.gui.responsive import resize_to_available_screen, vertical_scroll_area
 from triton_analysis.stereo.calibration import (
     CHARUCO_DICTIONARIES,
@@ -174,11 +175,12 @@ class _CalibrationWorker(QThread):
         self._emit_progress(progress, message, busy=bool(event.get("busy")))
 
 
-class StereoCalibrationWindow(QMainWindow):
+class StereoCalibrationWindow(JobReporter, QMainWindow):
     """Standalone stereo calibration applet for saved left/right image pairs."""
 
-    def __init__(self, manifest_path: str | None = None, parent=None):
+    def __init__(self, manifest_path: str | None = None, *, job_center=None, parent=None):
         super().__init__(parent)
+        self.attach_job_center(job_center, "stereo-calibration")
         self.setWindowTitle("Stereo Calibration")
         self.manifest_paths: list[Path] = []
         self.manifest: dict = {}
@@ -654,6 +656,7 @@ class StereoCalibrationWindow(QMainWindow):
         self._worker.progress.connect(self._set_calibration_progress)
         self._worker.finished.connect(lambda: self.calibrate_btn.setEnabled(bool(self.image_pairs)))
         self.calibrate_btn.setEnabled(False)
+        self._begin_job(f"Stereo Calibration · {len(self.image_pairs)} pairs")
         self._set_calibration_progress(0, "Starting stereo calibration")
         self.result_lbl.setText("Running stereo calibration...")
         self.statusBar().showMessage("Stereo calibration running", 3000)
@@ -671,6 +674,7 @@ class StereoCalibrationWindow(QMainWindow):
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(value)
         self.progress_bar.setFormat("Ready" if value == 0 and text == "Ready" else f"{value}%")
+        self._report_progress(text, value)
 
     def _on_calibration_completed(self, artifact: dict, output_path: str) -> None:
         self._set_calibration_progress(100, f"Calibration saved: {output_path}")
@@ -693,12 +697,17 @@ class StereoCalibrationWindow(QMainWindow):
         self._populate_quality_table(artifact)
         self._populate_rejections(artifact.get("rejected_observations") or [])
         self.statusBar().showMessage(f"Calibration saved: {output_path}", 7000)
+        self._finish_job(
+            ok=True,
+            detail=f"stereo RMS {float(rms.get('stereo', 0.0)):.3f} px",
+        )
 
     def _on_calibration_failed(self, error: str) -> None:
         self._set_calibration_progress(max(self.progress_bar.value(), 1), "Calibration failed")
         self.result_lbl.setText(f"Calibration failed: {error}")
         self.quality_table.setRowCount(0)
         self.statusBar().showMessage(f"Calibration failed: {error}", 7000)
+        self._fail_job(str(error))
 
     def _format_float(self, value, decimals: int = 3, suffix: str = "") -> str:
         if value is None:

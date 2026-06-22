@@ -122,6 +122,13 @@ Backup Coral Measurement, Backup Iceberg Measurement, and SSH. The standalone ap
 available as backups.
 The status bar includes automatic TritonPilot media sync status and the active
 destination folder.
+Long-running analysis jobs (Coral Reconstruction, Crab Counter, Crab Dataset,
+and Stereo Calibration) report into a shared activity tracker so simultaneous
+runs are never lost across tabs: each tab shows a status dot (running, done, or
+failed), a finished job on a background tab raises a click-to-open toast, and the
+`Activity` button (top-right) lists every running and recently finished job. The
+`Notifications` menu flashes the taskbar when a job finishes while the window is
+unfocused and can play an optional finish sound.
 The SSH tab includes a `Triton Pi` preset for `triton@tritonpi.local` with the
 shared field password already filled.
 

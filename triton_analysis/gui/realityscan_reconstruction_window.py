@@ -36,6 +36,7 @@ from PyQt6.QtWidgets import (
 
 from triton_analysis.gui.file_dialogs import ThumbnailFileDialog as QFileDialog
 
+from triton_analysis.gui.job_center import JobReporter
 from triton_analysis.gui.realityscan_model_viewer_window import RealityScanModelViewerPanel
 from triton_analysis.gui.responsive import resize_to_available_screen, vertical_scroll_area
 from triton_analysis.workspace import fresh_output_subdir, latest_pilot_stereo_sessions_dir, safe_output_slug, workspace_paths
@@ -136,13 +137,22 @@ class _SectionCard(QFrame):
         layout.addLayout(self.body)
 
 
-class RealityScanReconstructionWindow(QMainWindow):
+class RealityScanReconstructionWindow(JobReporter, QMainWindow):
     """Run and monitor the stereo photogrammetry pipeline from TritonAnalysis."""
 
-    def __init__(self, session_path: str | None = None, calibration_path: str | None = None, parent=None):
+    def __init__(
+        self,
+        session_path: str | None = None,
+        calibration_path: str | None = None,
+        *,
+        job_center=None,
+        parent=None,
+    ):
         super().__init__(parent)
+        self.attach_job_center(job_center, "coral-reconstruction")
         self.setWindowTitle("RealityScan Stereo Reconstruction")
         self._process: QProcess | None = None
+        self._cancel_requested = False
         self._line_buffer = ""
         self._workspace_path: Path | None = None
         self._output_paths: dict[str, Path] = {}
@@ -905,7 +915,9 @@ class RealityScanReconstructionWindow(QMainWindow):
         process.finished.connect(self._on_process_finished)
         process.errorOccurred.connect(self._on_process_error)
         self._process = process
+        self._cancel_requested = False
         self._set_running(True)
+        self._begin_job("Coral Reconstruction")
         self._set_status("Running", "running")
         self._set_stage("Starting pipeline", 2)
         process.start()
@@ -913,6 +925,7 @@ class RealityScanReconstructionWindow(QMainWindow):
     def _cancel_pipeline(self) -> None:
         if self._process is None or self._process.state() == QProcess.ProcessState.NotRunning:
             return
+        self._cancel_requested = True
         self._append_log("\nCancel requested.\n")
         self._set_stage("Stopping pipeline", max(self.progress_bar.value(), 1))
         self._process.terminate()
@@ -1014,19 +1027,31 @@ class RealityScanReconstructionWindow(QMainWindow):
             self._line_buffer = ""
         self._populate_known_workspace_outputs()
         self._set_running(False)
-        if int(exit_code) == 0:
+        if self._cancel_requested:
+            self._cancel_requested = False
+            self._set_status("Cancelled", "warn")
+            self._set_stage("Pipeline cancelled", max(self.progress_bar.value(), 1))
+            self.statusBar().showMessage("RealityScan reconstruction cancelled.", 6000)
+            job = getattr(self, "_active_job", None)
+            if job is not None:
+                job.warn("Reconstruction cancelled")
+                self._active_job = None
+        elif int(exit_code) == 0:
             self._set_status("Complete", "ok")
             self._set_stage("Pipeline complete", 100)
             self.statusBar().showMessage("RealityScan reconstruction complete.", 6000)
+            self._finish_job(ok=True, detail="Reconstruction complete")
         else:
             self._set_status(f"Failed ({int(exit_code)})", "alert")
             self._set_stage("Pipeline failed", max(self.progress_bar.value(), 1))
             self.statusBar().showMessage(f"RealityScan reconstruction failed: exit {int(exit_code)}", 8000)
+            self._fail_job(f"Pipeline failed (exit {int(exit_code)})")
 
     def _on_process_error(self, error: QProcess.ProcessError) -> None:
         self._set_running(False)
         self._set_status("Process Error", "alert")
         self._set_stage(str(error), max(self.progress_bar.value(), 1))
+        self._fail_job(f"Process error: {error}")
 
     def _set_workspace(self, path: Path) -> None:
         self._workspace_path = Path(path)
@@ -1127,3 +1152,4 @@ class RealityScanReconstructionWindow(QMainWindow):
         self.stage_label.setToolTip(str(text))
         if progress is not None:
             self.progress_bar.setValue(max(0, min(100, int(progress))))
+        self._report_progress(str(text), progress)

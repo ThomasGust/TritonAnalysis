@@ -6,9 +6,10 @@ import os
 import time
 from pathlib import Path
 
-from PyQt6.QtCore import QSettings, Qt, QThread, QTimer, QUrl
+from PyQt6.QtCore import QPoint, QSettings, Qt, QThread, QTimer, QUrl
 from PyQt6.QtGui import QAction, QDesktopServices
 from PyQt6.QtWidgets import (
+    QApplication,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -25,6 +26,8 @@ from PyQt6.QtWidgets import (
 
 from triton_analysis.gui.file_dialogs import ThumbnailFileDialog as QFileDialog
 
+from triton_analysis.gui.job_center import JobCenter, state_priority
+from triton_analysis.gui.job_notifications import ActivityPanel, JobStatusTabBar, ToastStack
 from triton_analysis.workspace import AnalysisWorkspace, set_active_workspace_root, workspace_paths
 from triton_analysis.gui.edna_analysis_window import EDNAAnalysisWindow
 from triton_analysis.gui.crab_counter_window import CrabCounterWindow
@@ -107,6 +110,11 @@ class TritonAnalysisWindow(QMainWindow):
         self.setWindowTitle("TritonAnalysis")
         self._windows: dict[str, QMainWindow] = {}
         self._settings = QSettings("TritonAnalysis", "UnifiedApp")
+        self._job_center = JobCenter(self)
+        self._notify_sound_enabled = self._setting_truthy(
+            self._settings.value("notifications/sound", "0"), default=False
+        )
+        self._notify_sound_act: QAction | None = None
         stored_workspace = str(self._settings.value("workspace/root", "") or "").strip()
         if _looks_like_transient_workspace(stored_workspace):
             stored_workspace = ""
@@ -174,6 +182,7 @@ class TritonAnalysisWindow(QMainWindow):
         central_layout.addWidget(self._pilot_sync_panel, 0)
 
         self.tabs = QTabWidget()
+        self.tabs.setTabBar(JobStatusTabBar(self.tabs))
         self.tabs.setDocumentMode(False)
         self.tabs.setMovable(True)
         self.tabs.setElideMode(Qt.TextElideMode.ElideRight)
@@ -200,6 +209,7 @@ class TritonAnalysisWindow(QMainWindow):
             RealityScanReconstructionWindow(
                 session_path=reconstruction_text,
                 calibration_path=calibration_text,
+                job_center=self._job_center,
                 parent=self,
             ),
         )
@@ -230,6 +240,7 @@ class TritonAnalysisWindow(QMainWindow):
             "Crab Counter",
             CrabCounterWindow(
                 workspace_root=self._workspace.root,
+                job_center=self._job_center,
                 parent=self,
             ),
         )
@@ -238,6 +249,7 @@ class TritonAnalysisWindow(QMainWindow):
             "Crab Dataset",
             CrabDatasetGeneratorWindow(
                 workspace_root=self._workspace.root,
+                job_center=self._job_center,
                 parent=self,
             ),
         )
@@ -246,6 +258,7 @@ class TritonAnalysisWindow(QMainWindow):
             "Stereo Calibration",
             StereoCalibrationWindow(
                 manifest_path=manifest_text,
+                job_center=self._job_center,
                 parent=self,
             ),
         )
@@ -289,6 +302,7 @@ class TritonAnalysisWindow(QMainWindow):
             "terminal": "ssh",
         }
         self._set_advanced_tabs_visible(False)
+        self._build_notifications()
 
         self._pilot_sync_label = QLabel()
         self._pilot_sync_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -439,6 +453,174 @@ class TritonAnalysisWindow(QMainWindow):
         url_act = QAction("Set Pilot URL...", self)
         url_act.triggered.connect(self._choose_pilot_sync_url)
         transfer_menu.addAction(url_act)
+
+        notify_menu = self.menuBar().addMenu("&Notifications")
+
+        show_activity_act = QAction("Show Activity", self)
+        show_activity_act.triggered.connect(self._toggle_activity_panel)
+        notify_menu.addAction(show_activity_act)
+
+        self._notify_sound_act = QAction("Play Sound On Finish", self)
+        self._notify_sound_act.setCheckable(True)
+        self._notify_sound_act.setChecked(bool(self._notify_sound_enabled))
+        self._notify_sound_act.toggled.connect(self._set_notify_sound_enabled)
+        notify_menu.addAction(self._notify_sound_act)
+
+        clear_jobs_act = QAction("Clear Finished Jobs", self)
+        clear_jobs_act.triggered.connect(self._job_center.clear_finished)
+        notify_menu.addAction(clear_jobs_act)
+
+    # ------------------------------------------------------------------
+    # Job activity notifications
+    # ------------------------------------------------------------------
+    def _build_notifications(self) -> None:
+        """Create the toast overlay, Activity popup, and wire job signals."""
+        self._toast_stack = ToastStack(self)
+        self._toast_stack.toastClicked.connect(self._on_toast_clicked)
+
+        self._activity_panel = ActivityPanel(self)
+        self._activity_panel.jobActivated.connect(self._on_activity_job_activated)
+        self._activity_panel.clearRequested.connect(self._job_center.clear_finished)
+
+        self._activity_button = QToolButton(self)
+        self._activity_button.setObjectName("activityButton")
+        self._activity_button.setText("Activity")
+        self._activity_button.setAutoRaise(True)
+        self._activity_button.setToolTip("Show running and recently finished analysis jobs.")
+        self._activity_button.clicked.connect(self._toggle_activity_panel)
+        self.menuBar().setCornerWidget(self._activity_button, Qt.Corner.TopRightCorner)
+
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+        self.tabs.tabBar().tabMoved.connect(lambda *_a: self._refresh_tab_badges())
+
+        self._job_center.jobStarted.connect(self._on_job_started)
+        self._job_center.jobUpdated.connect(self._on_job_updated)
+        self._job_center.jobFinished.connect(self._on_job_finished)
+        self._job_center.jobsChanged.connect(self._on_jobs_changed)
+        self._refresh_tab_badges()
+
+    def _window_key_for_index(self, index: int) -> str:
+        widget = self.tabs.widget(index)
+        for key, window in self._windows.items():
+            if window is widget:
+                return key
+        return ""
+
+    def _tone_for_key(self, key: str) -> str:
+        best_state = None
+        best_priority = -1
+        for job in self._job_center.jobs_for(key):
+            if job.is_running:
+                state = job.state
+            elif not job.acknowledged:
+                state = job.state
+            else:
+                continue
+            priority = state_priority(state)
+            if priority > best_priority:
+                best_priority = priority
+                best_state = state
+        return best_state.value if best_state is not None else ""
+
+    def _refresh_tab_badges(self) -> None:
+        tab_bar = self.tabs.tabBar()
+        if not isinstance(tab_bar, JobStatusTabBar):
+            return
+        tones: dict[int, str] = {}
+        for key, window in self._windows.items():
+            tone = self._tone_for_key(key)
+            if not tone:
+                continue
+            index = self.tabs.indexOf(window)
+            if index >= 0:
+                tones[index] = tone
+        tab_bar.set_index_tones(tones)
+        self._update_activity_button()
+
+    def _update_activity_button(self) -> None:
+        button = getattr(self, "_activity_button", None)
+        if button is None:
+            return
+        active = self._job_center.active_count()
+        button.setText(f"Activity ({active})" if active else "Activity")
+
+    def _on_tab_changed(self, index: int) -> None:
+        key = self._window_key_for_index(index)
+        if key:
+            self._job_center.acknowledge_key(key)
+        self._refresh_tab_badges()
+
+    def _on_job_started(self, _job: object) -> None:
+        self._refresh_tab_badges()
+
+    def _on_job_updated(self, _job: object) -> None:
+        self._refresh_activity_panel_if_visible()
+
+    def _operator_is_watching(self, key: str) -> bool:
+        """Whether the operator is already looking at *key*'s tab right now."""
+        current_key = self._window_key_for_index(self.tabs.currentIndex())
+        return bool(key) and key == current_key and self.isActiveWindow()
+
+    def _on_job_finished(self, job: object) -> None:
+        key = getattr(job, "key", "")
+        if self._operator_is_watching(key):
+            setattr(job, "acknowledged", True)
+        else:
+            self._toast_stack.show_job(job)
+            self._alert_attention()
+        self._refresh_tab_badges()
+
+    def _on_jobs_changed(self) -> None:
+        self._refresh_tab_badges()
+        self._refresh_activity_panel_if_visible()
+
+    def _alert_attention(self) -> None:
+        if not self.isActiveWindow():
+            app = QApplication.instance()
+            if app is not None:
+                app.alert(self, 0)
+        if self._notify_sound_enabled:
+            QApplication.beep()
+
+    def _on_toast_clicked(self, key: str) -> None:
+        if key and self.focus_tab(key):
+            self.activateWindow()
+            self.raise_()
+
+    def _on_activity_job_activated(self, key: str) -> None:
+        self._activity_panel.hide()
+        if key:
+            self.focus_tab(key)
+
+    def _set_notify_sound_enabled(self, enabled: bool) -> None:
+        self._notify_sound_enabled = bool(enabled)
+        self._settings.setValue("notifications/sound", "1" if self._notify_sound_enabled else "0")
+        if self._notify_sound_act is not None and self._notify_sound_act.isChecked() != self._notify_sound_enabled:
+            self._notify_sound_act.setChecked(self._notify_sound_enabled)
+
+    def _refresh_activity_panel(self) -> None:
+        self._activity_panel.set_jobs(self._job_center.recent_jobs(limit=12))
+
+    def _refresh_activity_panel_if_visible(self) -> None:
+        if getattr(self, "_activity_panel", None) is not None and self._activity_panel.isVisible():
+            self._refresh_activity_panel()
+
+    def _toggle_activity_panel(self) -> None:
+        if self._activity_panel.isVisible():
+            self._activity_panel.hide()
+            return
+        self._refresh_activity_panel()
+        self._activity_panel.adjustSize()
+        button = self._activity_button
+        anchor = button.mapToGlobal(QPoint(button.width(), button.height()))
+        anchor.setX(anchor.x() - self._activity_panel.width())
+        self._activity_panel.popup_at(anchor)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        super().resizeEvent(event)
+        toast_stack = getattr(self, "_toast_stack", None)
+        if toast_stack is not None:
+            toast_stack.reposition()
 
     def _set_pilot_sync_label_tone(self, tone: str | None) -> None:
         for label in (self._pilot_sync_label, self._pilot_sync_state_panel_label):

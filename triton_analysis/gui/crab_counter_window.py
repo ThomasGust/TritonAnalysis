@@ -70,6 +70,7 @@ from triton_analysis.crab.counter import (
 )
 from triton_analysis.crab.synthetic import CRAB_CLASS_NAMES, IMAGE_EXTENSIONS
 from triton_analysis.gui.file_dialogs import ThumbnailFileDialog as QFileDialog
+from triton_analysis.gui.job_center import JobReporter
 from triton_analysis.gui.responsive import resize_to_available_screen
 from triton_analysis.workspace import fresh_output_subdir, latest_pilot_run_dir, recent_pilot_run_dirs, workspace_paths
 
@@ -570,7 +571,7 @@ class CrabCounterWorker(QObject):
         )
 
 
-class CrabCounterWindow(QMainWindow):
+class CrabCounterWindow(JobReporter, QMainWindow):
     """Count European green crabs on a saved MATE board image."""
 
     def __init__(
@@ -578,9 +579,11 @@ class CrabCounterWindow(QMainWindow):
         *,
         image_path: str | Path | None = None,
         workspace_root: str | Path | None = None,
+        job_center=None,
         parent=None,
     ):
         super().__init__(parent)
+        self.attach_job_center(job_center, "crab-counter")
         self.setWindowTitle("Crab Counter")
         self._workspace = workspace_paths(workspace_root, create=True)
         self._analysis_thread: QThread | None = None
@@ -1421,6 +1424,13 @@ class CrabCounterWindow(QMainWindow):
         self.count_label.setText("Count: ...")
         self.detection_list.clear()
         if ensemble_run:
+            job_title = f"Crab Counter · {len(ensemble_images)}-sample ensemble"
+        elif benchmark:
+            job_title = "Crab Counter · benchmark"
+        else:
+            job_title = "Crab Counter"
+        self._begin_job(job_title)
+        if ensemble_run:
             names = ", ".join(path.name for path in ensemble_images)
             prep = f" via {preprocess_mode}" if preprocess_mode != "none" else ""
             self._set_running_status(
@@ -1486,6 +1496,7 @@ class CrabCounterWindow(QMainWindow):
             self.count_label.setText("Count: -")
             self.progress_bar.setVisible(False)
             self.statusBar().showMessage(message, 8000)
+            self._fail_job(message)
             return
         outputs = data.get("outputs")
         preprocess_result = data.get("preprocess_result")
@@ -1499,6 +1510,7 @@ class CrabCounterWindow(QMainWindow):
             return
         if not isinstance(outputs, CrabCounterOutputs):
             self.status_label.setText("Crab counter returned an unexpected result.")
+            self._fail_job("Unexpected result")
             return
         self._last_outputs = outputs
         self._last_output_dir = outputs.output_dir
@@ -1521,6 +1533,7 @@ class CrabCounterWindow(QMainWindow):
         self.open_annotated_btn.setEnabled(True)
         self.progress_bar.setVisible(False)
         self.statusBar().showMessage(f"European green crabs: {result.count}", 8000)
+        self._finish_job(ok=True, detail=f"{result.count} European green crab(s)")
 
     def _finish_ensemble(self, outputs: CrabEnsembleOutputs) -> None:
         self._last_outputs = outputs.final_outputs
@@ -1562,6 +1575,7 @@ class CrabCounterWindow(QMainWindow):
             f"Ensemble selected {outputs.selection.selected_run_id}: {result.count} European green crab(s)",
             8000,
         )
+        self._finish_job(ok=True, detail=f"{result.count} European green crab(s) (ensemble)")
 
     def _finish_benchmark(self, outputs: CrabBenchmarkOutputs) -> None:
         self._last_benchmark_outputs = outputs
@@ -1591,6 +1605,7 @@ class CrabCounterWindow(QMainWindow):
         self.open_annotated_btn.setEnabled(True)
         self.progress_bar.setVisible(False)
         self.statusBar().showMessage(f"Benchmark complete: {outputs.output_dir}", 8000)
+        self._finish_job(ok=True, detail="Benchmark complete")
 
     def _set_preprocess_result(self, result: CrabPreprocessResult) -> None:
         self._last_preprocess_result = result
@@ -2006,6 +2021,7 @@ class CrabCounterWindow(QMainWindow):
     def _set_running_status(self, message: str) -> None:
         self._run_base_status = message
         self.status_label.setText(message)
+        self._report_progress(message)
         self._update_running_status()
 
     def _update_running_status(self) -> None:

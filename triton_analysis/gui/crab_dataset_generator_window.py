@@ -36,6 +36,7 @@ from triton_analysis.crab.plane_dataset import (
 )
 from triton_analysis.crab.synthetic import CRAB_CLASS_NAMES
 from triton_analysis.gui.file_dialogs import ThumbnailFileDialog as QFileDialog
+from triton_analysis.gui.job_center import JobReporter
 from triton_analysis.gui.responsive import resize_to_available_screen
 from triton_analysis.workspace import fresh_output_subdir, workspace_paths
 
@@ -234,11 +235,12 @@ class CrabDatasetGenerationWorker(QObject):
         )
 
 
-class CrabDatasetGeneratorWindow(QMainWindow):
+class CrabDatasetGeneratorWindow(JobReporter, QMainWindow):
     """Annotate empty boards and generate crab detector datasets."""
 
-    def __init__(self, *, workspace_root: str | Path | None = None, parent=None):
+    def __init__(self, *, workspace_root: str | Path | None = None, job_center=None, parent=None):
         super().__init__(parent)
+        self.attach_job_center(job_center, "crab-dataset")
         self.setWindowTitle("Crab Dataset Generator")
         self._workspace = workspace_paths(workspace_root, create=True)
         self._image_dir = self._workspace.root / "data" / "base images"
@@ -586,6 +588,7 @@ class CrabDatasetGeneratorWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self.generate_status_label.setText(f"Writing {output_dir}")
         self.generate_btn.setEnabled(False)
+        self._begin_job(f"Crab Dataset · {int(self.count_spin.value())} images")
 
         worker = CrabDatasetGenerationWorker(config)
         thread = QThread(self)
@@ -608,6 +611,7 @@ class CrabDatasetGeneratorWindow(QMainWindow):
         self.progress_bar.setValue(int(index / total * 100))
         source = Path(str(data.get("source") or "")).name
         self.generate_status_label.setText(f"Generated {index}/{total} from {source}")
+        self._report_progress(f"Generated {index}/{total}", int(index / total * 100))
 
     def _finish_generation(self, payload: object) -> None:
         self.generate_btn.setEnabled(True)
@@ -616,6 +620,7 @@ class CrabDatasetGeneratorWindow(QMainWindow):
             message = str(data.get("error") or "dataset generation failed")
             self.generate_status_label.setText(message)
             self.statusBar().showMessage(message, 8000)
+            self._fail_job(message)
             return
         self.progress_bar.setValue(100)
         output_dir = str(data.get("output_dir") or "")
@@ -623,6 +628,7 @@ class CrabDatasetGeneratorWindow(QMainWindow):
         val_images = int(data.get("val_images") or 0)
         self.generate_status_label.setText(f"Dataset ready: {output_dir}")
         self.statusBar().showMessage(f"Generated crab dataset: train={train_images} val={val_images}", 8000)
+        self._finish_job(ok=True, detail=f"train={train_images} val={val_images}")
 
     def _clear_generation_thread(self, thread: QThread) -> None:
         if self._generation_thread is thread:
