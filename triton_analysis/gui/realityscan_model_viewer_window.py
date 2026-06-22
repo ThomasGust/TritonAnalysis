@@ -1825,7 +1825,12 @@ def _viewer_html(*, model_url: str, model_name: str) -> str:
         return;
       }}
       const normal = surfaceNormalFromHit(hit);
-      const scale = Math.max(modelRadius * 0.006, camera.position.distanceTo(hit.point) * 0.0045, 0.0008);
+      // Scale purely by camera distance so the hover marker keeps a constant
+      // on-screen size at every zoom level (perspective camera => world size
+      // proportional to distance is constant in pixels). A model-radius floor
+      // used to pin it to a fixed world size, which made it balloon and cover
+      // the surface when zoomed in close for precise picking.
+      const scale = Math.max(camera.position.distanceTo(hit.point) * 0.0045, 1e-5);
       hoverMarker.position.copy(hit.point).addScaledVector(normal, scale * 0.35);
       hoverMarker.scale.setScalar(scale);
       hoverRing.quaternion.copy(camera.quaternion);
