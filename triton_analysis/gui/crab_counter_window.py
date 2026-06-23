@@ -61,6 +61,7 @@ from triton_analysis.crab.counter import (
     benchmark_crab_image_pipeline,
     default_output_dir,
     discover_crab_board_reference_paths,
+    discover_crab_detector_reference_paths,
     discover_counter_reference_atlas_paths,
     discover_counter_reference_paths,
     missing_reference_classes,
@@ -1403,6 +1404,7 @@ class CrabCounterWindow(JobReporter, QMainWindow):
             target_confidence_threshold=self.threshold_spin.value(),
             target_margin_threshold=self.margin_spin.value(),
             reference_atlas_paths=discover_counter_reference_atlas_paths(self._workspace.root),
+            detector_reference_paths=discover_crab_detector_reference_paths(self._workspace.root),
         )
         ensemble_configs = tuple(
             replace(config, image_path=image, output_dir=output_dir / f"image_{index}")

@@ -37,7 +37,7 @@ CANDIDATE_CLASSES = tuple(CRAB_CLASS_NAMES) + (UNCERTAIN_CLASS,)
 NON_TARGET_CLASSES = tuple(class_name for class_name in CRAB_CLASS_NAMES if class_name != TARGET_CLASS)
 DEFAULT_MODEL = os.environ.get("TRITON_ANALYSIS_CRAB_MODEL", "gpt-5.5")
 REASONING_EFFORTS = ("none", "low", "medium", "high", "xhigh")
-REFERENCE_ATLAS_MAX_EXAMPLES_PER_CLASS = 4
+REFERENCE_ATLAS_MAX_EXAMPLES_PER_CLASS = 8
 DEFAULT_REASONING_EFFORT = os.environ.get("TRITON_ANALYSIS_CRAB_REASONING_EFFORT", "xhigh").strip().lower() or "xhigh"
 DEFAULT_HOMOGRAPHY_MODEL = os.environ.get("TRITON_ANALYSIS_CRAB_HOMOGRAPHY_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
 DEFAULT_HOMOGRAPHY_REASONING_EFFORT = (
@@ -48,6 +48,20 @@ DEFAULT_DETECTOR_REASONING_EFFORT = (
 )
 BOARD_REFERENCE_IMAGE_ENV = "TRITON_ANALYSIS_CRAB_BOARD_REFERENCE_IMAGES"
 BOARD_REFERENCE_MAX_IMAGES = 4
+DETECTOR_REFERENCE_IMAGE_ENV = "TRITON_ANALYSIS_CRAB_DETECTOR_REFERENCE_IMAGES"
+DETECTOR_REFERENCE_MAX_IMAGES = 8
+# Repo-anchored reference root that only the OpenAI counter stages read. It is deliberately
+# separate from data/crab/templates (which feeds the synthetic dataset generator and needs
+# clean alpha-masked cut-outs) so extracted board-background crops never pollute generation.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CRAB_REFERENCE_ROOT = REPO_ROOT / "data" / "crab" / "references"
+CRAB_REFERENCE_WORKSPACE_REL = Path("data") / "crab" / "references"
+REFERENCE_ATLAS_DESCRIPTION = (
+    "Reference atlas: rows are labeled with the crab class; columns are example appearances. "
+    "Examples mix clean catalog photos with real underwater printed-board crops, so judge species "
+    "from silhouette, leg and claw layout, body proportions, and internal markings rather than color "
+    "or texture, both of which shift heavily underwater."
+)
 try:
     DEFAULT_TARGET_MATCH_THRESHOLD = float(os.environ.get("TRITON_ANALYSIS_CRAB_TARGET_THRESHOLD", "0.85"))
 except ValueError:
@@ -296,6 +310,7 @@ class CrabCounterConfig:
     target_confidence_threshold: float = DEFAULT_TARGET_MATCH_THRESHOLD
     target_margin_threshold: float = DEFAULT_TARGET_MARGIN_THRESHOLD
     reference_atlas_paths: Mapping[str, Sequence[Path]] | None = None
+    detector_reference_paths: Sequence[Path] = ()
 
 
 def discover_counter_reference_paths(workspace_root: str | Path | None = None) -> dict[str, Path | None]:
@@ -310,12 +325,52 @@ def discover_counter_reference_paths(workspace_root: str | Path | None = None) -
     return references
 
 
+def discover_crab_classification_reference_paths(
+    workspace_root: str | Path | None = None,
+) -> dict[str, tuple[Path, ...]]:
+    """Return per-class crab crops from the dedicated counter reference root.
+
+    These are atlas-only references (e.g. real underwater printed-board crops produced by
+    ``tools/crab_extract_references.py``); they never feed the synthetic dataset generator.
+    """
+
+    refs: dict[str, list[Path]] = {name: [] for name in CRAB_CLASS_NAMES}
+    roots = [CRAB_REFERENCE_ROOT / "classification"]
+    workspace = workspace_paths(workspace_root, create=False)
+    roots.append(workspace.root / CRAB_REFERENCE_WORKSPACE_REL / "classification")
+    for root in roots:
+        for class_name in CRAB_CLASS_NAMES:
+            refs[class_name].extend(_discover_image_paths(root / class_name))
+    return {class_name: tuple(_sort_by_reference_confidence(_dedupe_paths(paths))) for class_name, paths in refs.items()}
+
+
 def discover_counter_reference_atlas_paths(workspace_root: str | Path | None = None) -> dict[str, tuple[Path, ...]]:
     """Return all available reference images that can be folded into the model atlas."""
 
     workspace = workspace_paths(workspace_root, create=False)
     discovered = discover_default_crab_template_paths(workspace.root)
-    return {class_name: tuple(paths) for class_name, paths in discovered.items()}
+    extra = discover_crab_classification_reference_paths(workspace_root)
+    merged: dict[str, tuple[Path, ...]] = {}
+    for class_name in CRAB_CLASS_NAMES:
+        paths = list(discovered.get(class_name, [])) + list(extra.get(class_name, ()))
+        merged[class_name] = tuple(_dedupe_paths(paths))
+    return merged
+
+
+def discover_crab_detector_reference_paths(workspace_root: str | Path | None = None) -> tuple[Path, ...]:
+    """Return single-crab example crops that teach the detector its "one box, one crab" unit."""
+
+    candidates: list[Path] = []
+    for raw in os.environ.get(DETECTOR_REFERENCE_IMAGE_ENV, "").split(os.pathsep):
+        candidates.extend(_discover_image_paths(Path(raw).expanduser()) if raw.strip() else [])
+    workspace = workspace_paths(workspace_root, create=False)
+    for root in (
+        CRAB_REFERENCE_ROOT / "detector",
+        workspace.root / CRAB_REFERENCE_WORKSPACE_REL / "detector",
+    ):
+        candidates.extend(_discover_image_paths(root))
+    ranked = _sort_by_reference_confidence(_dedupe_paths(candidates))
+    return tuple(_diversify_detector_references(ranked)[:DETECTOR_REFERENCE_MAX_IMAGES])
 
 
 def missing_reference_classes(reference_paths: Mapping[str, Path | None]) -> list[str]:
@@ -465,8 +520,10 @@ def discover_crab_board_reference_paths(workspace_root: str | Path | None = None
     candidates: list[Path] = []
     for raw in os.environ.get(BOARD_REFERENCE_IMAGE_ENV, "").split(os.pathsep):
         candidates.extend(_discover_image_paths(Path(raw).expanduser()) if raw.strip() else [])
+    candidates.extend(_discover_image_paths(CRAB_REFERENCE_ROOT / "board"))
     workspace = workspace_paths(workspace_root, create=False)
     for rel in (
+        CRAB_REFERENCE_WORKSPACE_REL / "board",
         Path("data") / "crab board references",
         Path("data") / "board references",
         Path("data") / "blank boards",
@@ -732,6 +789,7 @@ def detect_crab_candidates(
     *,
     model: str = DEFAULT_MODEL,
     reasoning_effort: str = DEFAULT_DETECTOR_REASONING_EFFORT,
+    detector_reference_paths: Sequence[str | Path] | None = None,
     client: Any | None = None,
     artifact_root: str | Path | None = None,
 ) -> tuple[CrabCandidateDetectionResult, Path]:
@@ -743,6 +801,7 @@ def detect_crab_candidates(
     image_size = image_dimensions(target_path)
     selected_model = str(model or DEFAULT_MODEL)
     selected_effort = _normalize_reasoning_effort(reasoning_effort)
+    references = _dedupe_paths(tuple(Path(path).expanduser() for path in detector_reference_paths or ()))
     output_root = Path(output_dir).expanduser()
     output_root.mkdir(parents=True, exist_ok=True)
     artifact_parent = Path(artifact_root).expanduser() if artifact_root is not None else output_root
@@ -752,11 +811,13 @@ def detect_crab_candidates(
         image_size=image_size,
         model=selected_model,
         reasoning_effort=selected_effort,
+        detector_reference_paths=references,
         client=client,
         artifact_root=artifact_parent,
         artifact_context={
             "image_path": target_path,
             "image_size": list(image_size),
+            "detector_reference_paths": list(references),
         },
     )
     result = _parse_candidate_detection_response(
@@ -1398,6 +1459,7 @@ def _run_candidate_detection_stage(
         output_dir / "pipeline",
         model=str(config.model or DEFAULT_MODEL),
         reasoning_effort=DEFAULT_DETECTOR_REASONING_EFFORT,
+        detector_reference_paths=config.detector_reference_paths,
         client=client,
         artifact_root=output_dir,
     )
@@ -2086,6 +2148,50 @@ def _discover_image_paths(path: Path) -> list[Path]:
     )
 
 
+def _reference_confidence_key(path: Path) -> float:
+    """Parse a ``conf###`` token (e.g. ``conf093`` -> 0.93) from a reference filename."""
+
+    import re
+
+    match = re.search(r"conf(\d{1,3})", path.stem.lower())
+    if not match:
+        return -1.0
+    return min(1.0, int(match.group(1)) / 100.0)
+
+
+def _sort_by_reference_confidence(paths: Sequence[Path]) -> list[Path]:
+    """Order reference crops best-first, keeping filename order as a stable tiebreaker."""
+
+    indexed = list(enumerate(paths))
+    indexed.sort(key=lambda item: (-_reference_confidence_key(item[1]), item[0]))
+    return [path for _index, path in indexed]
+
+
+def _reference_species_key(path: Path) -> str:
+    """Best-effort species token embedded in an extracted reference filename."""
+
+    stem = path.stem.lower()
+    for class_name in (*CRAB_CLASS_NAMES, UNCERTAIN_CLASS):
+        if class_name in stem:
+            return class_name
+    return "crab"
+
+
+def _diversify_detector_references(paths: Sequence[Path]) -> list[Path]:
+    """Round-robin across species so the detector montage shows the full range of one-crab shapes."""
+
+    groups: dict[str, list[Path]] = {}
+    for path in paths:  # `paths` already arrives best-first.
+        groups.setdefault(_reference_species_key(path), []).append(path)
+    ordered: list[Path] = []
+    while any(groups.values()):
+        for species in list(groups):
+            bucket = groups[species]
+            if bucket:
+                ordered.append(bucket.pop(0))
+    return ordered
+
+
 def _normalize_preprocess_mode(value: object) -> str:
     text = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
     aliases = {
@@ -2212,7 +2318,7 @@ def _create_openai_response(
     content.append(
         {
             "type": "input_text",
-            "text": "Reference atlas: rows are labeled with the crab class; columns are example appearances.",
+            "text": REFERENCE_ATLAS_DESCRIPTION,
         }
     )
     content.append({"type": "input_image", "image_url": _reference_atlas_data_url(reference_atlas_paths), "detail": "high"})
@@ -2222,7 +2328,7 @@ def _create_openai_response(
     request_kwargs: dict[str, object] = {
         "model": model,
         "reasoning": {"effort": reasoning_effort},
-        "prompt_cache_key": "triton_analysis_crab_counter_v2",
+        "prompt_cache_key": "triton_analysis_crab_counter_v3",
         "input": [
             {
                 "role": "user",
@@ -2257,7 +2363,8 @@ def _create_openai_candidate_detection_response(
     image_size: tuple[int, int],
     model: str,
     reasoning_effort: str,
-    client: Any | None,
+    detector_reference_paths: Sequence[Path] = (),
+    client: Any | None = None,
     artifact_root: Path | None = None,
     artifact_context: Mapping[str, object] | None = None,
 ) -> Any:
@@ -2271,14 +2378,32 @@ def _create_openai_candidate_detection_response(
         raise RuntimeError("OpenAI client does not expose the Responses API. Install openai>=2.0.0.")
 
     width, height = image_size
-    content: list[dict[str, object]] = [
-        {"type": "input_text", "text": _build_candidate_detection_prompt(width=width, height=height)},
-        {"type": "input_image", "image_url": _image_data_url(image_path), "detail": "high"},
+    references = _dedupe_paths(tuple(Path(path).expanduser() for path in detector_reference_paths))[
+        :DETECTOR_REFERENCE_MAX_IMAGES
     ]
+    content: list[dict[str, object]] = [
+        {"type": "input_text", "text": _build_candidate_detection_prompt(width=width, height=height, has_references=bool(references))},
+    ]
+    if references:
+        content.append(
+            {
+                "type": "input_text",
+                "text": (
+                    "Single-crab reference montage: each cell shows exactly one printed crab at a typical board "
+                    "scale. Use it to calibrate what counts as one crab and how big one crab tends to be, so you "
+                    "split merged clusters and reject sub-crab fragments. Do not return any coordinates from it."
+                ),
+            }
+        )
+        content.append(
+            {"type": "input_image", "image_url": _detector_reference_montage_data_url(references), "detail": "high"}
+        )
+    content.append({"type": "input_text", "text": "Target frame to detect crab candidate boxes in:"})
+    content.append({"type": "input_image", "image_url": _image_data_url(image_path), "detail": "high"})
     request_kwargs: dict[str, object] = {
         "model": model,
         "reasoning": {"effort": reasoning_effort},
-        "prompt_cache_key": "triton_analysis_crab_candidate_detector_v3",
+        "prompt_cache_key": "triton_analysis_crab_candidate_detector_v4",
         "input": [
             {
                 "role": "user",
@@ -2328,10 +2453,10 @@ def _create_openai_homography_response(
         raise RuntimeError("OpenAI client does not expose the Responses API. Install openai>=2.0.0.")
 
     width, height = image_size
-    content: list[dict[str, object]] = [
-        {"type": "input_text", "text": _build_homography_prompt(width=width, height=height)},
-    ]
     references = _dedupe_paths(tuple(Path(path).expanduser() for path in board_reference_paths))[:BOARD_REFERENCE_MAX_IMAGES]
+    content: list[dict[str, object]] = [
+        {"type": "input_text", "text": _build_homography_prompt(width=width, height=height, has_references=bool(references))},
+    ]
     if references:
         content.append(
             {
@@ -2349,7 +2474,7 @@ def _create_openai_homography_response(
     request_kwargs: dict[str, object] = {
         "model": model,
         "reasoning": {"effort": reasoning_effort},
-        "prompt_cache_key": "triton_analysis_crab_board_homography_v1",
+        "prompt_cache_key": "triton_analysis_crab_board_homography_v2",
         "input": [
             {
                 "role": "user",
@@ -2415,7 +2540,7 @@ def _create_openai_candidate_classification_response(
         },
         {
             "type": "input_text",
-            "text": "Reference atlas: rows are labeled with the crab class; columns are example appearances.",
+            "text": REFERENCE_ATLAS_DESCRIPTION,
         },
         {"type": "input_image", "image_url": _reference_atlas_data_url(reference_atlas_paths), "detail": "high"},
         {"type": "input_text", "text": "Numbered candidate crop contact sheet to classify:"},
@@ -2424,7 +2549,7 @@ def _create_openai_candidate_classification_response(
     request_kwargs: dict[str, object] = {
         "model": model,
         "reasoning": {"effort": reasoning_effort},
-        "prompt_cache_key": "triton_analysis_crab_candidate_classifier_v1",
+        "prompt_cache_key": "triton_analysis_crab_candidate_classifier_v2",
         "input": [
             {
                 "role": "user",
@@ -2587,9 +2712,16 @@ def _ensemble_selection_json_schema(run_ids: Sequence[str]) -> dict[str, object]
     }
 
 
-def _build_candidate_detection_prompt(*, width: int, height: int) -> str:
+def _build_candidate_detection_prompt(*, width: int, height: int, has_references: bool = False) -> str:
+    reference_note = (
+        "A single-crab reference montage is provided before the target frame; treat each montage cell as one "
+        "crab so you match that granularity and never merge two printed crabs into one box. "
+        if has_references
+        else ""
+    )
     return (
         "Find every visible printed crab candidate on this MATE crab-board image. This is a detector-only stage: "
+        f"{reference_note}"
         "do not classify species and do not decide which crabs are European green crabs. Return one tight bounding "
         "box for each printed crab image of any class. Include European green crab, native rock crab, Jonah crab, "
         "small crabs, rotated crabs, partially glared crabs, and partly clipped crabs. High recall is more "
@@ -2647,9 +2779,17 @@ def _candidate_detection_json_schema() -> dict[str, object]:
     }
 
 
-def _build_homography_prompt(*, width: int, height: int) -> str:
+def _build_homography_prompt(*, width: int, height: int, has_references: bool = False) -> str:
+    reference_note = (
+        "Board-appearance reference images are provided before the target image; use them to learn how this white "
+        "sheet looks under pool lighting and caustics so you separate the board from the similarly bright pool floor, "
+        "but never copy coordinates from them. "
+        if has_references
+        else ""
+    )
     return (
         "Locate the outer boundary of the white rectangular MATE crab board or laminated white sheet in the image. "
+        f"{reference_note}"
         "The board may contain printed crab pictures or may look mostly blank under pool lighting. Return exactly "
         "the four physical board corners in full-image pixel "
         f"coordinates for this image, width={width}, height={height}. Use the order top_left, top_right, "
@@ -3100,6 +3240,42 @@ def _build_reference_atlas(reference_atlas_paths: Mapping[str, Sequence[Path]]) 
             source_label = Path(path).stem[:24]
             cv2.putText(atlas, source_label, (x0 + 8, y1 - 14), cv2.FONT_HERSHEY_SIMPLEX, 0.38, text_color, 1, cv2.LINE_AA)
     return atlas
+
+
+def _detector_reference_montage_data_url(reference_paths: Sequence[Path]) -> str:
+    montage = _build_detector_reference_montage(reference_paths)
+    ok, encoded = cv2.imencode(".png", montage)
+    if not ok:
+        raise OSError("could not encode crab detector reference montage")
+    data = base64.b64encode(encoded.tobytes()).decode("ascii")
+    return f"data:image/png;base64,{data}"
+
+
+def _build_detector_reference_montage(reference_paths: Sequence[Path]) -> np.ndarray:
+    paths = [Path(path).expanduser() for path in reference_paths][:DETECTOR_REFERENCE_MAX_IMAGES]
+    cell = 200
+    header_height = 34
+    columns = max(1, min(4, len(paths) or 1))
+    rows = max(1, int(np.ceil(len(paths) / float(columns)))) if paths else 1
+    montage = np.full((header_height + rows * cell, columns * cell, 3), 245, dtype=np.uint8)
+    text_color = (35, 35, 35)
+    grid_color = (210, 210, 210)
+    cv2.putText(montage, "Single printed crab = one box", (12, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2, cv2.LINE_AA)
+    for index, path in enumerate(paths):
+        row = index // columns
+        col = index % columns
+        x0 = col * cell
+        y0 = header_height + row * cell
+        cv2.rectangle(montage, (x0, y0), (x0 + cell - 1, y0 + cell - 1), grid_color, 1)
+        image = _read_image(path)
+        if image is None:
+            continue
+        fitted = _fit_image_to_box(image, cell - 20, cell - 20)
+        fh, fw = fitted.shape[:2]
+        px = x0 + (cell - fw) // 2
+        py = y0 + (cell - fh) // 2
+        montage[py : py + fh, px : px + fw] = fitted
+    return montage
 
 
 def _fit_image_to_box(image: np.ndarray, max_width: int, max_height: int) -> np.ndarray:

@@ -705,18 +705,26 @@ class StereoSegmentMeasurementWindow(QMainWindow):
         reference_card.body.addLayout(reference_form)
         controls_layout.addWidget(reference_card)
 
-        repeats_card = _SectionCard("Repeats")
+        repeats_card = _SectionCard("Ensemble")
         self.repeat_summary_lbl = self._value_label()
         repeats_card.body.addWidget(self.repeat_summary_lbl)
-        self.results_table = QTableWidget(0, 6)
-        self.results_table.setHorizontalHeaderLabels(["#", "Pair", "Length", "1px Sens", "Y Err", "Disp"])
+        self.repeat_average_lbl = self._value_label()
+        repeats_card.body.addWidget(self.repeat_average_lbl)
+        self.results_table = QTableWidget(0, 7)
+        self.results_table.setHorizontalHeaderLabels(["#", "Pair", "Length", "Line", "1px Sens", "Y Err", "Disp"])
         self.results_table.verticalHeader().hide()
         self.results_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.results_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.results_table.setWordWrap(False)
         repeats_card.body.addWidget(self.results_table)
+        ensemble_buttons = QHBoxLayout()
+        self.average_results_btn = QPushButton("Average")
+        self.average_results_btn.clicked.connect(self._copy_average_results)
         self.clear_results_btn = QPushButton("Clear Results")
         self.clear_results_btn.clicked.connect(self._clear_results)
-        repeats_card.body.addWidget(self.clear_results_btn)
+        ensemble_buttons.addWidget(self.average_results_btn)
+        ensemble_buttons.addWidget(self.clear_results_btn)
+        repeats_card.body.addLayout(ensemble_buttons)
         controls_layout.addWidget(repeats_card)
         controls_layout.addStretch(1)
 
@@ -787,6 +795,8 @@ class StereoSegmentMeasurementWindow(QMainWindow):
         if self.manifest_paths:
             display = self.manifest_paths[0] if len(self.manifest_paths) == 1 else self.manifest_paths[0].parent
             self.manifest_edit.setText(str(display))
+        self.saved_results.clear()
+        self._populate_results_table()
         self._populate_loaded_labels()
         self._populate_pairs_table()
         default_calibration = self._default_calibration_path()
@@ -1103,6 +1113,33 @@ class StereoSegmentMeasurementWindow(QMainWindow):
             f"X {point[0]:.1f}, Y {point[1]:.1f}, Z {point[2]:.1f} {self._units()}"
         ).strip()
 
+    @staticmethod
+    def _format_pixel(point: tuple[int, int]) -> str:
+        return f"({int(point[0])}, {int(point[1])})"
+
+    def _format_result_line(self, record: dict) -> str:
+        result = record["result"]
+        start_label = str(record.get("start_label") or preset_by_key(result.preset_key).start_label)
+        end_label = str(record.get("end_label") or preset_by_key(result.preset_key).end_label)
+        return (
+            f"{start_label} L{self._format_pixel(result.start.left_pixel)} "
+            f"R{self._format_pixel(result.start.right_pixel)} -> "
+            f"{end_label} L{self._format_pixel(result.end.left_pixel)} "
+            f"R{self._format_pixel(result.end.right_pixel)}"
+        )
+
+    def _format_summary_length(self, value_units: float | None, value_cm: float | None) -> str:
+        if value_cm is not None:
+            return f"{value_cm:.1f} cm ({value_cm / 100.0:.3f} m)"
+        return self._format_distance(value_units)
+
+    def _average_results_text(self) -> str:
+        if not self.saved_results:
+            return "-"
+        summary = summarize_segment_measurements([record["result"] for record in self.saved_results])
+        average_text = self._format_summary_length(summary.mean_length_units, summary.mean_length_cm)
+        return f"Average: {average_text} from {summary.count} result(s)"
+
     def _clear_points(self) -> None:
         self.current_result = None
         self.reference_result = None
@@ -1139,6 +1176,8 @@ class StereoSegmentMeasurementWindow(QMainWindow):
             "pair_index": row + 1,
             "stem": str(frame.get("stem") or ""),
             "delta_ms": float(frame.get("pair_delta_ms", 0.0)),
+            "start_label": self.active_preset.start_label,
+            "end_label": self.active_preset.end_label,
             "result": self.current_result,
         }
         self.saved_results.append(record)
@@ -1155,36 +1194,55 @@ class StereoSegmentMeasurementWindow(QMainWindow):
                 str(row + 1),
                 str(record["pair_index"]),
                 self._format_result_length(result),
+                self._format_result_line(record),
                 self._format_sensitivity(result),
                 f"{result.max_vertical_error_px:.2f} px",
                 f"{result.min_abs_disparity_px:.1f} px",
             ]
             for col, value in enumerate(values):
                 item = QTableWidgetItem(value)
-                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                item.setTextAlignment(
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                    if col == 3
+                    else Qt.AlignmentFlag.AlignCenter
+                )
+                if col == 3:
+                    item.setToolTip(value)
                 self.results_table.setItem(row, col, item)
-        self.results_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        header = self.results_table.horizontalHeader()
+        for col in range(self.results_table.columnCount()):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        if self.results_table.columnCount() > 3:
+            header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self._update_repeat_summary()
 
     def _update_repeat_summary(self) -> None:
         results = [record["result"] for record in self.saved_results]
         if not results:
-            self.repeat_summary_lbl.setText("-")
+            self.repeat_summary_lbl.setText("Add measurements from this stereo session to build an ensemble.")
+            self.repeat_average_lbl.setText("Average: -")
             return
         summary = summarize_segment_measurements(results)
-        median_text = self._format_distance(summary.median_length_units)
-        spread_text = self._format_distance(summary.spread_units)
-        if summary.median_length_cm is not None and summary.spread_cm is not None:
-            median_text = f"{summary.median_length_cm:.1f} cm ({summary.median_length_m:.3f} m)"
-            spread_text = f"{summary.spread_cm:.1f} cm"
+        average_text = self._format_summary_length(summary.mean_length_units, summary.mean_length_cm)
+        median_text = self._format_summary_length(summary.median_length_units, summary.median_length_cm)
+        spread_text = self._format_summary_length(summary.spread_units, summary.spread_cm)
         self.repeat_summary_lbl.setText(
-            f"{summary.count} result(s) | median {median_text} | spread {spread_text}"
+            f"{summary.count} result(s) | average {average_text} | median {median_text} | spread {spread_text}"
         )
+        self.repeat_average_lbl.setText(f"Average: {average_text}")
 
     def _clear_results(self) -> None:
         self.saved_results.clear()
         self._populate_results_table()
         self._refresh_controls()
+
+    def _copy_average_results(self) -> None:
+        if not self.saved_results:
+            return
+        text = self._average_results_text()
+        QApplication.clipboard().setText(text)
+        self.repeat_average_lbl.setText(text)
+        self.statusBar().showMessage("Ensemble average copied.", 4000)
 
     def _copy_report(self) -> None:
         QApplication.clipboard().setText(self._report_text())
@@ -1224,14 +1282,20 @@ class StereoSegmentMeasurementWindow(QMainWindow):
                 lines.append(f"Reference-adjusted length: {self._format_adjusted_length(self.reference_check)}")
         if self.saved_results:
             summary = summarize_segment_measurements([record["result"] for record in self.saved_results])
+            average_text = self._format_summary_length(summary.mean_length_units, summary.mean_length_cm)
+            median_text = self._format_summary_length(summary.median_length_units, summary.median_length_cm)
+            spread_text = self._format_summary_length(summary.spread_units, summary.spread_cm)
             lines.extend(
                 [
                     "",
-                    f"Repeated results: {summary.count}",
-                    f"Median: {self._format_distance(summary.median_length_units)}",
-                    f"Spread: {self._format_distance(summary.spread_units)}",
+                    f"Ensemble results: {summary.count}",
+                    f"Average: {average_text}",
+                    f"Median: {median_text}",
+                    f"Spread: {spread_text}",
                 ]
             )
+            if summary.mean_length_cm is not None:
+                lines.append(f"Average cm/m: {summary.mean_length_cm:.1f} cm / {summary.mean_length_m:.3f} m")
             if summary.median_length_cm is not None and summary.spread_cm is not None:
                 lines.append(f"Median cm/m: {summary.median_length_cm:.1f} cm / {summary.median_length_m:.3f} m")
                 lines.append(f"Spread cm: {summary.spread_cm:.1f} cm")
@@ -1240,6 +1304,7 @@ class StereoSegmentMeasurementWindow(QMainWindow):
                 lines.append(
                     f"{index}. pair {record['pair_index']} {record['stem']} "
                     f"{self._format_result_length(result)} "
+                    f"line={self._format_result_line(record)} "
                     f"sens={self._format_sensitivity(result)} "
                     f"yerr={result.max_vertical_error_px:.2f}px disp={result.min_abs_disparity_px:.1f}px"
                 )
@@ -1343,6 +1408,7 @@ class StereoSegmentMeasurementWindow(QMainWindow):
             or self.reference_result is not None
             or bool(self.saved_results)
         )
+        self.average_results_btn.setEnabled(bool(self.saved_results))
         self.clear_results_btn.setEnabled(bool(self.saved_results))
 
 

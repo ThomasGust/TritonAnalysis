@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import pytest
 
@@ -112,10 +114,78 @@ def test_stereo_segment_series_reports_median_and_spread():
     summary = summarize_segment_measurements(results)
 
     assert summary.count == 3
+    assert summary.mean_length_units == pytest.approx(31.0 / 3.0)
+    assert summary.mean_length_cm == pytest.approx(31.0 / 30.0)
+    assert summary.mean_length_m == pytest.approx(31.0 / 3000.0)
     assert summary.median_length_units == pytest.approx(10.0)
     assert summary.spread_units == pytest.approx(3.0)
     assert summary.median_length_cm == pytest.approx(1.0)
     assert summary.spread_cm == pytest.approx(0.3)
+
+
+def test_stereo_segment_window_ensemble_shows_line_history_and_average():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PyQt6")
+    from PyQt6.QtWidgets import QApplication
+
+    from triton_analysis.gui.stereo_iceberg_measurement_window import StereoSegmentMeasurementWindow
+
+    app = QApplication.instance() or QApplication([])
+    window = StereoSegmentMeasurementWindow(preset_key="iceberg")
+    try:
+        first = measure_stereo_segment(
+            q=_q_matrix(),
+            start_left_pixel=(4, 3),
+            start_right_pixel=(-6, 3),
+            end_left_pixel=(14, 3),
+            end_right_pixel=(4, 3),
+            units="mm",
+            preset_key="iceberg",
+        )
+        second = measure_stereo_segment(
+            q=_q_matrix(),
+            start_left_pixel=(4, 3),
+            start_right_pixel=(-6, 3),
+            end_left_pixel=(16, 3),
+            end_right_pixel=(6, 3),
+            units="mm",
+            preset_key="iceberg",
+        )
+        window.saved_results = [
+            {
+                "pair_index": 1,
+                "stem": "pair_000001",
+                "delta_ms": 0.0,
+                "start_label": "Keel top",
+                "end_label": "Keel bottom",
+                "result": first,
+            },
+            {
+                "pair_index": 1,
+                "stem": "pair_000001",
+                "delta_ms": 0.0,
+                "start_label": "Keel top",
+                "end_label": "Keel bottom",
+                "result": second,
+            },
+        ]
+
+        window._populate_results_table()
+        app.processEvents()
+
+        line_item = window.results_table.item(0, 3)
+        assert line_item is not None
+        assert line_item.text() == "Keel top L(4, 3) R(-6, 3) -> Keel bottom L(14, 3) R(4, 3)"
+        assert "average 1.1 cm (0.011 m)" in window.repeat_summary_lbl.text()
+
+        window._copy_average_results()
+
+        assert window.repeat_average_lbl.text() == "Average: 1.1 cm (0.011 m) from 2 result(s)"
+        assert QApplication.clipboard().text() == window.repeat_average_lbl.text()
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
 
 
 def test_reference_scale_check_reports_error_and_corrected_target():

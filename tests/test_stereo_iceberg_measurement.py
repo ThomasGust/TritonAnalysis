@@ -65,6 +65,9 @@ def test_stereo_keel_series_reports_median_and_spread():
     summary = summarize_keel_measurements(results)
 
     assert summary.count == 3
+    assert summary.mean_length_units == pytest.approx(61.0 / 3.0)
+    assert summary.mean_length_cm == pytest.approx(61.0 / 30.0)
+    assert summary.mean_length_m == pytest.approx(61.0 / 3000.0)
     assert summary.median_length_units == pytest.approx(20.0)
     assert summary.spread_units == pytest.approx(3.0)
     assert summary.median_length_cm == pytest.approx(2.0)

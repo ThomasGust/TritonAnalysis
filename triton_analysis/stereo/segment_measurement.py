@@ -9,7 +9,7 @@ endpoints.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from statistics import median
+from statistics import fmean, median
 from typing import Sequence
 
 import numpy as np
@@ -169,12 +169,20 @@ class StereoSegmentMeasurementSeries:
     spread_units: float
     median_length_cm: float | None
     spread_cm: float | None
+    mean_length_units: float = 0.0
+    mean_length_cm: float | None = None
 
     @property
     def median_length_m(self) -> float | None:
         if self.median_length_cm is None:
             return None
         return self.median_length_cm / 100.0
+
+    @property
+    def mean_length_m(self) -> float | None:
+        if self.mean_length_cm is None:
+            return None
+        return self.mean_length_cm / 100.0
 
 
 @dataclass(frozen=True)
@@ -387,7 +395,7 @@ def evaluate_reference_scale_check(
 def summarize_segment_measurements(
     results: Sequence[StereoSegmentMeasurementResult],
 ) -> StereoSegmentMeasurementSeries:
-    """Return median and spread for repeated segment measurements."""
+    """Return mean, median, and spread for repeated segment measurements."""
 
     if not results:
         raise ValueError("At least one segment measurement is required")
@@ -398,6 +406,7 @@ def summarize_segment_measurements(
     max_length = max(values)
     scale = unit_scale_to_cm(units)
     median_length = float(median(values))
+    mean_length = float(fmean(values))
     spread = max_length - min_length
     return StereoSegmentMeasurementSeries(
         count=len(results),
@@ -408,4 +417,6 @@ def summarize_segment_measurements(
         spread_units=spread,
         median_length_cm=None if scale is None else median_length * scale,
         spread_cm=None if scale is None else spread * scale,
+        mean_length_units=mean_length,
+        mean_length_cm=None if scale is None else mean_length * scale,
     )
