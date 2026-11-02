@@ -1,5 +1,19 @@
 # TritonAnalysis
 
+Mission-analysis tools for the underwater robot (ROV) built by Triton Robotics, a student team from Seattle that competes in the [MATE ROV Competition](https://materovcompetition.org/) (Ranger class). The team used these tools at the 2026 MATE ROV World Championship, where it placed 2nd overall. They turn the ROV's camera footage into the measurements and models that competition tasks are scored on: stereo depth and length measurements, 3D reconstructions, and corrected underwater images.
+
+The vehicle's software is split across three repositories:
+
+| Repository | Runs on | Role |
+| --- | --- | --- |
+| [TritonOS](https://github.com/ThomasGust/TritonOS) | Raspberry Pi on the ROV | Control loop, thruster output, sensor telemetry, camera streams |
+| [TritonPilot](https://github.com/ThomasGust/TritonPilot) | Pilot computer | Controller input, live video and telemetry, logging |
+| **TritonAnalysis** (this repo) | Separate analysis laptop | Stereo measurement, 3D reconstruction, mission tools |
+
+Written and maintained by Thomas Gust, Triton's software and electrical lead.
+
+## Overview
+
 TritonAnalysis contains standalone mission-analysis tools for Triton's
 competition workflow. These applets run on an analysis laptop against saved
 images, saved videos, or manually entered task data.
